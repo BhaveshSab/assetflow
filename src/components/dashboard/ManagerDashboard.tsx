@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package, ArrowLeftRight, CalendarCheck, Wrench, Clock, AlertTriangle,
-  CheckCircle2, Boxes, Activity, Bell, LogOut, RefreshCw, ChevronRight,
+  CheckCircle2, Boxes, Activity, Bell, RefreshCw, ChevronRight,
   X, Zap, Plus, ClipboardCheck, ShieldCheck, Hourglass, FileWarning,
 } from "lucide-react";
 import {
@@ -10,12 +10,8 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import { getSession, type AuthResponse } from "@/lib/auth";
-import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
-
-// =============================================
-// CONFIG
-// =============================================
-const BASE_URL = "http://localhost:5000/api";
+import { apiGet, apiSend, unwrapList } from "@/lib/api";
+import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
 
 // =============================================
 // TYPES
@@ -33,8 +29,8 @@ interface ManagerKPI {
 
 interface ChartPoint { date: string; allocated: number; available: number; }
 interface PieSlice { name: string; value: number; color: string; }
-interface PendingTransfer { id: number; assetTag: string; assetName: string; from: string; to: string; dept: string; requested: string; }
-interface MaintenanceReq { id: number; assetTag: string; assetName: string; issue: string; priority: string; requestedBy: string; status: string; }
+interface PendingTransfer { id: number; _id?: string; assetTag: string; assetName: string; from: string; to: string; dept: string; requested: string; }
+interface MaintenanceReq { id: number; _id?: string; assetTag: string; assetName: string; issue: string; priority: string; requestedBy: string; status: string; }
 interface OverdueAsset { id: number; assetTag: string; assetName: string; employee: string; daysOverdue: number; dept: string; }
 interface ActivityItem { id: number; text: string; time: string; status: "success" | "danger" | "warning" | "info"; }
 interface Toast { msg: string; type: string; }
@@ -45,78 +41,149 @@ interface ManagerDashboardProps {
 }
 
 // =============================================
-// DUMMY / FALLBACK DATA
+// API SERVICE (real backend — no fake data; failures surface as errors)
 // =============================================
-const DUMMY_KPI: ManagerKPI = {
-  assetsAvailable: 142, assetsAllocated: 87, maintenanceToday: 6, activeBookings: 23,
-  pendingTransfers: 9, upcomingReturns: 14, overdueReturns: 5,
-  kpiTrends: {
-    assetsAvailable: "+8 vs last week", assetsAllocated: "+3 vs last week",
-    maintenanceToday: "Active repairs today", activeBookings: "+5 vs last week",
-    pendingTransfers: "Awaiting your approval", upcomingReturns: "Next 7 days",
-    overdueReturns: "Needs immediate action",
-  },
+const timeAgo = (iso: string) => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 };
 
-const DUMMY_CHART: ChartPoint[] = [
-  { date: "16/07", allocated: 340, available: 260 }, { date: "17/07", allocated: 410, available: 220 },
-  { date: "18/07", allocated: 300, available: 290 }, { date: "19/07", allocated: 320, available: 210 },
-  { date: "20/07", allocated: 390, available: 240 }, { date: "21/07", allocated: 290, available: 170 },
-  { date: "22/07", allocated: 410, available: 250 }, { date: "23/07", allocated: 370, available: 230 },
-];
+const statusForAction = (action: string): ActivityItem["status"] => {
+  if (action.includes("overdue") || action.includes("reject")) return "danger";
+  if (action.includes("maintenance") || action.includes("transfer")) return "warning";
+  if (action.includes("booking")) return "info";
+  return "success";
+};
 
-const DUMMY_PIE: PieSlice[] = [
-  { name: "Available", value: 142, color: "#10b981" }, { name: "Allocated", value: 87, color: "#3b82f6" },
-  { name: "Under Maintenance", value: 12, color: "#f59e0b" }, { name: "Reserved", value: 18, color: "#8b5cf6" },
-  { name: "Lost / Retired", value: 4, color: "#ef4444" },
-];
+const prettyAction = (action: string) =>
+  action.replace(/\./g, " ").replace(/(^|\s)\w/g, (m) => m.toUpperCase());
 
-const DUMMY_TRANSFERS: PendingTransfer[] = [
-  { id: 1, assetTag: "AF-0114", assetName: "Dell Laptop", from: "Priya Sharma", to: "Raj Mehta", dept: "Engineering", requested: "2h ago" },
-  { id: 2, assetTag: "AF-0078", assetName: "Canon Camera", from: "Sara Ali", to: "Vikram Nair", dept: "Marketing", requested: "5h ago" },
-  { id: 3, assetTag: "AF-0033", assetName: "HP Printer", from: "Amit Verma", to: "Pooja Singh", dept: "HR", requested: "1d ago" },
-  { id: 4, assetTag: "AF-0091", assetName: "iPad Pro", from: "Kiran Das", to: "Ananya Das", dept: "Sales", requested: "1d ago" },
-  { id: 5, assetTag: "AF-0055", assetName: "Projector", from: "Ravi Kumar", to: "Meera Joshi", dept: "Operations", requested: "2d ago" },
-];
+const MT_STATUS_DISPLAY: Record<string, string> = {
+  PENDING: "Pending",
+  APPROVED: "Approved",
+  TECHNICIAN_ASSIGNED: "Assigned",
+  IN_PROGRESS: "In Progress",
+  RESOLVED: "Resolved",
+  REJECTED: "Rejected",
+};
 
-const DUMMY_MAINTENANCE: MaintenanceReq[] = [
-  { id: 1, assetTag: "AF-0022", assetName: "AC Unit", issue: "Not cooling", priority: "High", requestedBy: "Amit V.", status: "Pending" },
-  { id: 2, assetTag: "AF-0047", assetName: "Laser Printer", issue: "Paper jam error", priority: "Medium", requestedBy: "Sara A.", status: "Pending" },
-  { id: 3, assetTag: "AF-0011", assetName: "Server Rack #3", issue: "Overheating", priority: "High", requestedBy: "Kiran D.", status: "InProgress" },
-  { id: 4, assetTag: "AF-0063", assetName: "Office Desk Fan", issue: "Making noise", priority: "Low", requestedBy: "Pooja S.", status: "Pending" },
-];
-
-const DUMMY_OVERDUE: OverdueAsset[] = [
-  { id: 1, assetTag: "AF-0052", assetName: "Dell Monitor", employee: "Raj Mehta", daysOverdue: 3, dept: "Engineering" },
-  { id: 2, assetTag: "AF-0078", assetName: "Canon Camera", employee: "Sara Ali", daysOverdue: 7, dept: "Marketing" },
-  { id: 3, assetTag: "AF-0101", assetName: "iPad Pro", employee: "Kiran Das", daysOverdue: 1, dept: "Sales" },
-  { id: 4, assetTag: "AF-0033", assetName: "HP Laptop", employee: "Amit Verma", daysOverdue: 5, dept: "HR" },
-  { id: 5, assetTag: "AF-0066", assetName: "Office Chair", employee: "Pooja Singh", daysOverdue: 2, dept: "Operations" },
-];
-
-const DUMMY_ACTIVITY: ActivityItem[] = [
-  { id: 1, text: "Laptop AF-0114 allocated to Priya Sharma", time: "2 min ago", status: "success" },
-  { id: 2, text: "Monitor AF-0052 overdue \u2014 Raj Mehta (3 days late)", time: "15 min ago", status: "danger" },
-  { id: 3, text: "Maintenance approved for Printer AF-0033", time: "1 hr ago", status: "warning" },
-  { id: 4, text: "Transfer request: Tablet AF-0091 awaiting approval", time: "2 hr ago", status: "warning" },
-  { id: 5, text: "Camera AF-0017 returned by Vikram Nair", time: "5 hr ago", status: "success" },
-  { id: 6, text: "New asset AF-0145 registered \u2014 MacBook Pro", time: "6 hr ago", status: "info" },
-];
-
-// =============================================
-// API SERVICE (falls back to dummy data)
-// =============================================
 const apiService = {
-  getKPIs: async (): Promise<ManagerKPI> => { try { const r = await fetch(`${BASE_URL}/dashboard/manager/kpis`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_KPI; } },
-  getChartData: async (): Promise<ChartPoint[]> => { try { const r = await fetch(`${BASE_URL}/dashboard/manager/chart`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_CHART; } },
-  getPieData: async (): Promise<PieSlice[]> => { try { const r = await fetch(`${BASE_URL}/dashboard/manager/asset-status`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_PIE; } },
-  getPendingTransfers: async (): Promise<PendingTransfer[]> => { try { const r = await fetch(`${BASE_URL}/transfers?status=Pending`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_TRANSFERS; } },
-  getMaintenanceRequests: async (): Promise<MaintenanceReq[]> => { try { const r = await fetch(`${BASE_URL}/maintenance?status=Pending,InProgress`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_MAINTENANCE; } },
-  getOverdueAssets: async (): Promise<OverdueAsset[]> => { try { const r = await fetch(`${BASE_URL}/dashboard/manager/overdue`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_OVERDUE; } },
-  getActivity: async (): Promise<ActivityItem[]> => { try { const r = await fetch(`${BASE_URL}/dashboard/manager/activity`, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return await r.json(); } catch { return DUMMY_ACTIVITY; } },
-  approveTransfer: async (id: number): Promise<boolean> => { try { const r = await fetch(`${BASE_URL}/transfers/${id}/approve`, { method: "PATCH", headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return true; } catch { return false; } },
-  rejectTransfer: async (id: number): Promise<boolean> => { try { const r = await fetch(`${BASE_URL}/transfers/${id}/reject`, { method: "PATCH", headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return true; } catch { return false; } },
-  approveMaintenance: async (id: number): Promise<boolean> => { try { const r = await fetch(`${BASE_URL}/maintenance/${id}/approve`, { method: "PATCH", headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); if (!r.ok) throw new Error(); return true; } catch { return false; } },
+  getKPIs: async (): Promise<ManagerKPI> => {
+    const d = await apiGet<Record<string, number>>("/reports/dashboard");
+    return {
+      assetsAvailable: d.assetsAvailable ?? 0,
+      assetsAllocated: d.assetsAllocated ?? 0,
+      maintenanceToday: d.maintenanceToday ?? 0,
+      activeBookings: d.activeBookings ?? 0,
+      pendingTransfers: d.pendingTransfers ?? 0,
+      upcomingReturns: d.upcomingReturns ?? 0,
+      overdueReturns: d.overdueReturns ?? 0,
+      kpiTrends: {
+        assetsAvailable: `${d.assetsAvailable ?? 0} ready to assign`,
+        assetsAllocated: `${d.assetsAllocated ?? 0} in use`,
+        maintenanceToday: `${d.assetsUnderMaintenance ?? 0} under maintenance`,
+        activeBookings: `${d.activeBookings ?? 0} right now`,
+        pendingTransfers: "Awaiting your approval",
+        upcomingReturns: "Next 7 days",
+        overdueReturns: "Needs immediate action",
+      },
+    };
+  },
+  getChartData: async (): Promise<ChartPoint[]> => {
+    const data = await apiGet<ChartPoint[]>("/reports/asset-activity");
+    return Array.isArray(data) ? data : [];
+  },
+  getPieData: async (): Promise<PieSlice[]> => {
+    const data = await apiGet<PieSlice[]>("/reports/asset-status");
+    return Array.isArray(data) ? data : [];
+  },
+  getPendingTransfers: async (): Promise<PendingTransfer[]> => {
+    const data = await apiGet<{ items: Array<{
+      id: string; asset?: { assetTag: string; name: string };
+      requestedBy?: { name: string };
+      toUser?: { name: string } | null;
+      toDepartment?: { name: string } | null;
+      createdAt: string;
+    }> }>("/transfers?status=REQUESTED");
+    return unwrapList(data as never).map((t: any, i: number) => ({
+      id: i + 1,
+      assetTag: t.asset?.assetTag ?? "",
+      assetName: t.asset?.name ?? "Asset",
+      from: t.requestedBy?.name ?? "—",
+      to: t.toUser?.name ?? t.toDepartment?.name ?? "—",
+      dept: t.toDepartment?.name ?? "—",
+      requested: timeAgo(t.createdAt),
+      _id: t.id,
+    }));
+  },
+  getMaintenanceRequests: async (): Promise<MaintenanceReq[]> => {
+    const data = await apiGet<{ items: Array<{
+      id: string; description: string; priority: string; status: string;
+      asset?: { assetTag: string; name: string };
+      raisedBy?: { name: string };
+    }> }>("/maintenance?status=PENDING,TECHNICIAN_ASSIGNED,IN_PROGRESS");
+    return unwrapList(data as never).map((r: any, i: number) => ({
+      id: i + 1,
+      assetTag: r.asset?.assetTag ?? "",
+      assetName: r.asset?.name ?? "Asset",
+      issue: r.description ?? "",
+      priority: r.priority ?? "Medium",
+      requestedBy: r.raisedBy?.name ?? "—",
+      status: MT_STATUS_DISPLAY[r.status] ?? r.status,
+      _id: r.id,
+    }));
+  },
+  getOverdueAssets: async (): Promise<OverdueAsset[]> => {
+    const d = await apiGet<{ overdueList?: Array<{
+      id: string; expectedReturnDate: string;
+      asset?: { assetTag: string; name: string };
+      holderUser?: { name: string; departmentId?: string | null };
+      department?: { name: string } | null;
+    }> }>("/reports/dashboard");
+    const list = d.overdueList ?? [];
+    return list.map((o, i) => ({
+      id: i + 1,
+      assetTag: o.asset?.assetTag ?? "",
+      assetName: o.asset?.name ?? "Asset",
+      employee: o.holderUser?.name ?? o.department?.name ?? "—",
+      daysOverdue: Math.max(1, Math.floor((Date.now() - new Date(o.expectedReturnDate).getTime()) / 86400000)),
+      dept: o.holderUser?.departmentId ?? o.department?.name ?? "—",
+    }));
+  },
+  getActivity: async (): Promise<ActivityItem[]> => {
+    const data = await apiGet<{ items: Array<{
+      action: string; createdAt: string; actor?: { name: string } | null;
+    }> }>("/activity?take=12");
+    return data.items.map((a, i) => ({
+      id: i + 1,
+      text: `${a.actor?.name ?? "System"} ${prettyAction(a.action)}`,
+      time: timeAgo(a.createdAt),
+      status: statusForAction(a.action),
+    }));
+  },
+  approveTransfer: async (id: string | number): Promise<boolean> => {
+    try {
+      await apiSend(`/transfers/${id}/approve`, "POST");
+      return true;
+    } catch { return false; }
+  },
+  rejectTransfer: async (id: string | number): Promise<boolean> => {
+    try {
+      await apiSend(`/transfers/${id}/reject`, "POST");
+      return true;
+    } catch { return false; }
+  },
+  approveMaintenance: async (id: string | number): Promise<boolean> => {
+    try {
+      await apiSend(`/maintenance/${id}/approve`, "POST");
+      return true;
+    } catch { return false; }
+  },
 };
 
 // =============================================
@@ -223,12 +290,13 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
   const [overdue, setOverdue] = useState<OverdueAsset[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showNotif, setShowNotif] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [actionLoading, setActionLoading] = useState<Record<string, string | null>>({});
   const [toast, setToast] = useState<Toast | null>(null);
-  const [showAllocate, setShowAllocate] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
 
   const isManager =
     session?.user?.role === "ASSET_MANAGER" ||
@@ -238,6 +306,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
 
   const fetchAll = useCallback(async () => {
     setRefreshing(true);
+    setDataError(null);
     try {
       const [k, chart, pie, transfers, maint, ov, act] = await Promise.all([
         apiService.getKPIs(), apiService.getChartData(), apiService.getPieData(),
@@ -247,6 +316,12 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
       setKpi(k); setChartData(chart); setPieData(pie);
       setPendingTransfers(transfers); setMaintenanceReqs(maint);
       setOverdue(ov); setActivity(act); setLastUpdated(new Date());
+    } catch (err) {
+      setDataError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load dashboard data. Check that the backend is running.",
+      );
     } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -258,24 +333,24 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
   }, [isManager, fetchAll]);
 
   // Inline transfer approve/reject
-  const handleTransferAction = async (id: number, action: string) => {
-    setActionLoading((p) => ({ ...p, [id]: action }));
+  const handleTransferAction = async (id: string | number, action: string) => {
+    setActionLoading((p) => ({ ...p, [String(id)]: action }));
     const ok = action === "approve" ? await apiService.approveTransfer(id) : await apiService.rejectTransfer(id);
     if (ok) {
-      setPendingTransfers((p) => p.filter((t) => t.id !== id));
+      setPendingTransfers((p) => p.filter((t) => String(t.id) !== String(id) && t._id !== id));
       setKpi((p) => p ? { ...p, pendingTransfers: Math.max(0, (p.pendingTransfers || 1) - 1) } : p);
       showToast(`Transfer ${action === "approve" ? "approved" : "rejected"} successfully`);
     } else { showToast("Action failed. Please try again.", "error"); }
-    setActionLoading((p) => ({ ...p, [id]: null }));
+    setActionLoading((p) => ({ ...p, [String(id)]: null }));
   };
 
   // Inline maintenance approve
-  const handleMaintenanceApprove = async (id: number) => {
-    const key = `m${id}`;
+  const handleMaintenanceApprove = async (id: string | number) => {
+    const key = `m${String(id)}`;
     setActionLoading((p) => ({ ...p, [key]: "approve" }));
     const ok = await apiService.approveMaintenance(id);
     if (ok) {
-      setMaintenanceReqs((p) => p.map((r) => r.id === id ? { ...r, status: "Approved" } : r));
+      setMaintenanceReqs((p) => p.map((r) => (String(r.id) === String(id) || r._id === id) ? { ...r, status: "Approved" } : r));
       showToast("Maintenance request approved");
     } else { showToast("Approval failed.", "error"); }
     setActionLoading((p) => ({ ...p, [key]: null }));
@@ -309,7 +384,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
   ];
 
   const quickActions = [
-    { icon: Plus, label: "Register Asset", badge: 0, desc: "Log new equipment into the system", color: "bg-emerald-500/20 text-emerald-400", onClick: () => setShowAllocate(true), delay: 0.05 },
+    { icon: Plus, label: "Register Asset", badge: 0, desc: "Log new equipment into the system", color: "bg-emerald-500/20 text-emerald-400", onClick: () => setShowRegister(true), delay: 0.05 },
     { icon: ShieldCheck, label: "Approve Transfers", badge: kpi?.pendingTransfers ?? 0, desc: "Review & approve pending transfer requests", color: "bg-amber-500/20 text-amber-400", onClick: () => onNavigate("transfers"), delay: 0.1 },
     { icon: ClipboardCheck, label: "Approve Maintenance", badge: maintenanceReqs.filter((m) => m.status === "Pending").length, desc: "Approve pending repair requests", color: "bg-blue-500/20 text-blue-400", onClick: () => onNavigate("maintenance"), delay: 0.15 },
     { icon: CalendarCheck, label: "Book a Resource", badge: 0, desc: "Reserve shared spaces & equipment", color: "bg-purple-500/20 text-purple-400", onClick: () => onNavigate("booking"), delay: 0.2 },
@@ -326,6 +401,20 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
           >{toast.type === "error" ? <X size={14} className="inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}{toast.msg}</motion.div>
         )}
       </AnimatePresence>
+
+      {/* Data Error Banner */}
+      {dataError && (
+        <div className="flex items-center gap-3 bg-red-950/40 border border-red-500/30 rounded-2xl px-5 py-3">
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-300 flex-1">{dataError}</p>
+          <button
+            onClick={fetchAll}
+            className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Welcome Bar + Controls */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -378,12 +467,12 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
 
       {/* Chart + Pie + Quick Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="lg:col-span-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="lg:col-span-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
             <div><h2 className="text-sm font-semibold text-white">Asset Activity Overview</h2><p className="text-xs text-gray-500">Allocated vs Available &mdash; last 8 days</p></div>
             <span className="text-[11px] text-gray-600 bg-[#0f111a] border border-[#2a2d3e] px-2 py-1 rounded-lg">{new Date().toLocaleString("default", { month: "long", year: "numeric" })}</span>
           </div>
-          <ResponsiveContainer width="100%" height={200}><BarChart data={chartData} barGap={4}><CartesianGrid strokeDasharray="3 3" stroke="#1e2235" vertical={false} /><XAxis dataKey="date" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip content={<ChartTooltip />} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} formatter={(v) => <span style={{ color: "#9ca3af" }}>{v}</span>} /><Bar dataKey="allocated" name="Allocated" fill="#3b82f6" radius={[4, 4, 0, 0]} /><Bar dataKey="available" name="Available" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.7} /></BarChart></ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={160}><BarChart data={chartData} barGap={4} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" stroke="#1e2235" vertical={false} /><XAxis dataKey="date" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip content={<ChartTooltip />} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 6 }} formatter={(v) => <span style={{ color: "#9ca3af" }}>{v}</span>} /><Bar dataKey="allocated" name="Allocated" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={18} /><Bar dataKey="available" name="Available" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.7} maxBarSize={18} /></BarChart></ResponsiveContainer>
         </motion.div>
         <div className="flex flex-col gap-4">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.42 }} className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-5">
@@ -417,8 +506,8 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
                     <p className="text-[10px] text-gray-600 mt-0.5">{t.requested}</p>
                   </div>
                   <div className="flex gap-1.5 flex-shrink-0">
-                    <button disabled={!!actionLoading[t.id]} onClick={() => handleTransferAction(t.id, "approve")} className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 transition-colors disabled:opacity-50">{actionLoading[t.id] === "approve" ? "..." : "Approve"}</button>
-                    <button disabled={!!actionLoading[t.id]} onClick={() => handleTransferAction(t.id, "reject")} className="px-2.5 py-1 text-[11px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-colors disabled:opacity-50">{actionLoading[t.id] === "reject" ? "..." : "Reject"}</button>
+                    <button disabled={!!actionLoading[String(t.id)]} onClick={() => handleTransferAction(t._id ?? t.id, "approve")} className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/30 transition-colors disabled:opacity-50">{actionLoading[String(t.id)] === "approve" ? "..." : "Approve"}</button>
+                    <button disabled={!!actionLoading[String(t.id)]} onClick={() => handleTransferAction(t._id ?? t.id, "reject")} className="px-2.5 py-1 text-[11px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-colors disabled:opacity-50">{actionLoading[String(t.id)] === "reject" ? "..." : "Reject"}</button>
                   </div>
                 </div>
               </div>
@@ -443,7 +532,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
                   </div>
                   <div className="flex-shrink-0">
                     {m.status === "Pending" ? (
-                      <button disabled={!!actionLoading[`m${m.id}`]} onClick={() => handleMaintenanceApprove(m.id)} className="px-2.5 py-1 text-[11px] font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50">{actionLoading[`m${m.id}`] ? "..." : "Approve"}</button>
+                      <button disabled={!!actionLoading[`m${m.id}`]} onClick={() => handleMaintenanceApprove(m._id ?? m.id)} className="px-2.5 py-1 text-[11px] font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50">{actionLoading[`m${m.id}`] ? "..." : "Approve"}</button>
                     ) : (
                       <span className="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-lg">{m.status}</span>
                     )}
@@ -477,16 +566,15 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
         </motion.div>
       </div>
 
-      {/* Allocate Asset Modal */}
-      <AllocateAssetModal
-        open={showAllocate}
-        onClose={() => setShowAllocate(false)}
-        onSuccess={(allocationId) => {
-          setShowAllocate(false);
-          showToast(`Asset allocated! ID: ${allocationId}`);
+      {/* Register Asset Modal */}
+      <RegisterAssetModal
+        open={showRegister}
+        onClose={() => setShowRegister(false)}
+        onSuccess={(asset) => {
+          setShowRegister(false);
+          showToast(`"${asset.name}" registered with tag ${asset.assetTag}`);
           fetchAll();
         }}
-        currentUserId={session?.user?.id ?? "manager-001"}
       />
 
       {/* Footer */}

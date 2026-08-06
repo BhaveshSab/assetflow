@@ -2,19 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package, CalendarCheck, Wrench, AlertTriangle, Clock, CheckCircle2,
-  Boxes, Settings, Activity, Bell, LogOut, Zap, ChevronRight, X,
+  Boxes, Settings, Activity, Bell, Zap, ChevronRight, X,
   RefreshCw, Plus,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { getSession, type AuthResponse } from "@/lib/auth";
-import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
-
-// =============================================
-// CONFIG
-// =============================================
-const BASE_URL = "http://localhost:5000/api"; // TODO: Replace with real backend URL
+import { apiGet } from "@/lib/api";
+import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
 
 // =============================================
 // TYPES
@@ -58,85 +54,81 @@ interface AdminDashboardProps {
 }
 
 // =============================================
-// DUMMY / FALLBACK DATA
+// API SERVICE (real backend — no fake data; failures surface as errors)
 // =============================================
-const DUMMY_KPI: KPIData = {
-  assetsAvailable: 142, assetsAllocated: 87, maintenanceToday: 6,
-  activeBookings: 23, upcomingReturns: 14, overdueReturns: 5,
-  kpiTrends: {
-    assetsAvailable: "+8 vs last week", assetsAllocated: "+3 vs last week",
-    maintenanceToday: "-2 vs yesterday", activeBookings: "+5 vs last week",
-    upcomingReturns: "Next 7 days", overdueReturns: "Needs attention",
-  },
+const timeAgo = (iso: string) => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 };
 
-const DUMMY_CHART: ChartPoint[] = [
-  { date: "16/07", allocated: 340, available: 260 },
-  { date: "17/07", allocated: 410, available: 220 },
-  { date: "18/07", allocated: 300, available: 290 },
-  { date: "19/07", allocated: 320, available: 210 },
-  { date: "20/07", allocated: 390, available: 240 },
-  { date: "21/07", allocated: 290, available: 170 },
-  { date: "22/07", allocated: 410, available: 250 },
-  { date: "23/07", allocated: 370, available: 230 },
-];
+const statusForAction = (action: string): ActivityItem["status"] => {
+  if (action.includes("overdue") || action.includes("reject")) return "danger";
+  if (action.includes("maintenance") || action.includes("transfer")) return "warning";
+  if (action.includes("booking")) return "info";
+  return "success";
+};
 
-const DUMMY_ACTIVITY: ActivityItem[] = [
-  { id: 1, type: "allocation", text: "Laptop AF-0114 allocated to Priya Sharma", time: "2 min ago", status: "success" },
-  { id: 2, type: "overdue", text: "Monitor AF-0052 overdue — Raj Mehta (3 days late)", time: "15 min ago", status: "danger" },
-  { id: 3, type: "maintenance", text: "Maintenance approved for Printer AF-0033", time: "1 hr ago", status: "warning" },
-  { id: 4, type: "booking", text: "Conference Room B2 booked by Ananya Das", time: "2 hr ago", status: "info" },
-  { id: 5, type: "transfer", text: "Transfer request: Tablet AF-0091 (Pending)", time: "3 hr ago", status: "warning" },
-  { id: 6, type: "return", text: "Camera AF-0017 returned by Vikram Nair", time: "5 hr ago", status: "success" },
-];
+const prettyAction = (action: string) =>
+  action.replace(/\./g, " ").replace(/(^|\s)\w/g, (m) => m.toUpperCase());
 
-const DUMMY_OVERDUE: OverdueAsset[] = [
-  { id: 1, assetTag: "AF-0052", assetName: "Dell Monitor", employee: "Raj Mehta", daysOverdue: 3, dept: "Engineering" },
-  { id: 2, assetTag: "AF-0078", assetName: "Canon Camera", employee: "Sara Ali", daysOverdue: 7, dept: "Marketing" },
-  { id: 3, assetTag: "AF-0101", assetName: "iPad Pro", employee: "Kiran Das", daysOverdue: 1, dept: "Sales" },
-  { id: 4, assetTag: "AF-0033", assetName: "HP Laptop", employee: "Amit Verma", daysOverdue: 5, dept: "HR" },
-  { id: 5, assetTag: "AF-0066", assetName: "Office Chair", employee: "Pooja Singh", daysOverdue: 2, dept: "Operations" },
-];
-
-// =============================================
-// API SERVICE (falls back to dummy data)
-// =============================================
 const apiService = {
   getKPIs: async (): Promise<KPIData> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/kpis`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error("API not ready");
-      return await res.json();
-    } catch { return DUMMY_KPI; }
+    const d = await apiGet<Record<string, number>>("/reports/dashboard");
+    return {
+      assetsAvailable: d.assetsAvailable ?? 0,
+      assetsAllocated: d.assetsAllocated ?? 0,
+      maintenanceToday: d.maintenanceToday ?? 0,
+      activeBookings: d.activeBookings ?? 0,
+      upcomingReturns: d.upcomingReturns ?? 0,
+      overdueReturns: d.overdueReturns ?? 0,
+      kpiTrends: {
+        assetsAvailable: `${d.assetsAvailable ?? 0} ready to assign`,
+        assetsAllocated: `${d.assetsAllocated ?? 0} in use`,
+        maintenanceToday: `${d.assetsUnderMaintenance ?? 0} under maintenance`,
+        activeBookings: `${d.activeBookings ?? 0} right now`,
+        upcomingReturns: "Next 7 days",
+        overdueReturns: "Needs immediate action",
+      },
+    };
   },
   getChartData: async (): Promise<ChartPoint[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/chart`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error("API not ready");
-      return await res.json();
-    } catch { return DUMMY_CHART; }
+    const data = await apiGet<ChartPoint[]>("/reports/asset-activity");
+    return Array.isArray(data) ? data : [];
   },
   getRecentActivity: async (): Promise<ActivityItem[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/activity`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error("API not ready");
-      return await res.json();
-    } catch { return DUMMY_ACTIVITY; }
+    const data = await apiGet<{ items: Array<{
+      id: string; action: string; entityType: string | null; entityId: string | null;
+      actor?: { name: string } | null; createdAt: string;
+    }> }>("/activity?take=12");
+    return data.items.map((a, i) => ({
+      id: i + 1,
+      type: (a.entityType ?? "activity").toLowerCase(),
+      text: `${a.actor?.name ?? "System"} ${prettyAction(a.action)}`,
+      time: timeAgo(a.createdAt),
+      status: statusForAction(a.action),
+    }));
   },
   getOverdueAssets: async (): Promise<OverdueAsset[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/overdue`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error("API not ready");
-      return await res.json();
-    } catch { return DUMMY_OVERDUE; }
+    const d = await apiGet<{ overdueList?: Array<{
+      id: string; expectedReturnDate: string;
+      asset?: { assetTag: string; name: string };
+      holderUser?: { name: string; departmentId?: string | null };
+      department?: { name: string } | null;
+    }> }>("/reports/dashboard");
+    const list = d.overdueList ?? [];
+    return list.map((o, i) => ({
+      id: i + 1,
+      assetTag: o.asset?.assetTag ?? "",
+      assetName: o.asset?.name ?? "Asset",
+      employee: o.holderUser?.name ?? o.department?.name ?? "—",
+      daysOverdue: Math.max(1, Math.floor((Date.now() - new Date(o.expectedReturnDate).getTime()) / 86400000)),
+      dept: o.holderUser?.departmentId ?? o.department?.name ?? "—",
+    }));
   },
 };
 
@@ -214,7 +206,7 @@ const QuickAction = ({ icon: Icon, label, desc, color, bg, onClick, delay }: {
   </motion.button>
 );
 
-const NotificationPanel = ({ onClose }: { onClose: () => void }) => (
+const NotificationPanel = ({ activity, onClose }: { activity: ActivityItem[]; onClose: () => void }) => (
   <motion.div
     initial={{ opacity: 0, y: -10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }}
     exit={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -225,7 +217,7 @@ const NotificationPanel = ({ onClose }: { onClose: () => void }) => (
       <button onClick={onClose}><X size={14} className="text-gray-400 hover:text-white" /></button>
     </div>
     <div className="max-h-72 overflow-y-auto divide-y divide-[#2a2d3e]">
-      {DUMMY_ACTIVITY.slice(0, 5).map((a) => (
+      {activity.slice(0, 6).map((a) => (
         <div key={a.id} className="px-4 py-3 hover:bg-[#22253a] transition-colors">
           <div className="flex items-start gap-2">
             <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${statusDot[a.status]}`} />
@@ -253,10 +245,11 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [overdue, setOverdue] = useState<OverdueAsset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [showNotif, setShowNotif] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [showAllocate, setShowAllocate] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
 
   const showToast = (msg: string, type = "success") => {
@@ -270,6 +263,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
   // Data fetcher — useCallback to avoid stale closures in setInterval
   const fetchAll = useCallback(async () => {
     setRefreshing(true);
+    setDataError(null);
     try {
       const [kpiData, chart, acts, ov] = await Promise.all([
         apiService.getKPIs(), apiService.getChartData(),
@@ -280,6 +274,12 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
       setActivity(acts);
       setOverdue(ov);
       setLastUpdated(new Date());
+    } catch (err) {
+      setDataError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load dashboard data. Check that the backend is running.",
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -321,7 +321,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
   ];
 
   const quickActions = [
-    { icon: Plus, label: "Register Asset", desc: "Allocate an available asset to an employee", color: "bg-emerald-500/20 text-emerald-400", bg: "bg-[#1a1d2e] hover:bg-[#1e2235]", onClick: () => setShowAllocate(true), delay: 0.05 },
+    { icon: Plus, label: "Register Asset", desc: "Add a new asset to the inventory", color: "bg-emerald-500/20 text-emerald-400", bg: "bg-[#1a1d2e] hover:bg-[#1e2235]", onClick: () => setShowRegister(true), delay: 0.05 },
     { icon: Settings, label: "System Setup / Employee Directory", desc: "Manage departments, categories & promote roles", color: "bg-blue-500/20 text-blue-400", bg: "bg-[#1a1d2e] hover:bg-[#1e2235]", onClick: () => onNavigate("organization"), delay: 0.1 },
     { icon: CalendarCheck, label: "Book a Resource", desc: "Reserve conference rooms, vehicles & equipment", color: "bg-purple-500/20 text-purple-400", bg: "bg-[#1a1d2e] hover:bg-[#1e2235]", onClick: () => onNavigate("booking"), delay: 0.15 },
     { icon: Wrench, label: "Raise Maintenance Request", desc: "Flag broken equipment for repair approval", color: "bg-amber-500/20 text-amber-400", bg: "bg-[#1a1d2e] hover:bg-[#1e2235]", onClick: () => onNavigate("maintenance"), delay: 0.2 },
@@ -369,7 +369,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
               )}
             </button>
             <AnimatePresence>
-              {showNotif && <NotificationPanel onClose={() => setShowNotif(false)} />}
+              {showNotif && <NotificationPanel activity={activity} onClose={() => setShowNotif(false)} />}
             </AnimatePresence>
           </div>
 
@@ -383,6 +383,20 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
           </div>
         </div>
       </div>
+
+      {/* ── Data Error Banner ── */}
+      {dataError && (
+        <div className="flex items-center gap-3 bg-red-950/40 border border-red-500/30 rounded-2xl px-5 py-3">
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-300 flex-1">{dataError}</p>
+          <button
+            onClick={fetchAll}
+            className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Overdue Alert Banner ── */}
       <AnimatePresence>
@@ -418,8 +432,8 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
 
       {/* ── Chart + Quick Actions ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="lg:col-span-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="lg:col-span-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
             <div>
               <h2 className="text-sm font-semibold text-white">Asset Activity Overview</h2>
               <p className="text-xs text-gray-500">Allocated vs Available — last 8 days</p>
@@ -428,15 +442,15 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
               {new Date().toLocaleString("default", { month: "long", year: "numeric" })}
             </span>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} barGap={4}>
+          <ResponsiveContainer width="100%" height={170}>
+            <BarChart data={chartData} barGap={4} barCategoryGap="28%">
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2235" vertical={false} />
               <XAxis dataKey="date" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#9ca3af", paddingTop: 8 }} formatter={(v) => <span style={{ color: "#9ca3af" }}>{v}</span>} />
-              <Bar dataKey="allocated" name="Allocated" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="available" name="Available" fill="#60a5fa" radius={[4, 4, 0, 0]} opacity={0.6} />
+              <Legend wrapperStyle={{ fontSize: 11, color: "#9ca3af", paddingTop: 6 }} formatter={(v) => <span style={{ color: "#9ca3af" }}>{v}</span>} />
+              <Bar dataKey="allocated" name="Allocated" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={18} />
+              <Bar dataKey="available" name="Available" fill="#60a5fa" radius={[4, 4, 0, 0]} opacity={0.6} maxBarSize={18} />
             </BarChart>
           </ResponsiveContainer>
         </motion.div>
@@ -531,16 +545,15 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
         </motion.div>
       </div>
 
-      {/* Allocate Asset Modal */}
-      <AllocateAssetModal
-        open={showAllocate}
-        onClose={() => setShowAllocate(false)}
-        onSuccess={(allocationId) => {
-          setShowAllocate(false);
-          showToast(`Asset allocated! ID: ${allocationId}`);
+      {/* Register Asset Modal */}
+      <RegisterAssetModal
+        open={showRegister}
+        onClose={() => setShowRegister(false)}
+        onSuccess={(asset) => {
+          setShowRegister(false);
+          showToast(`"${asset.name}" registered with tag ${asset.assetTag}`);
           fetchAll();
         }}
-        currentUserId={session?.user?.id ?? "admin-001"}
       />
 
       {/* ── Footer ── */}

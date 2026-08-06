@@ -5,7 +5,7 @@ import {
   Activity, Wrench, X, ChevronDown, User, Calendar,
   FileText, Loader2, Check, MoreVertical,
   Package, UserCheck, AlertCircle, Download,
-  ClipboardList, Camera, Filter,
+  ClipboardList, Camera,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────
@@ -44,126 +44,102 @@ interface AssetOption {
   name: string;
 }
 
-interface Technician {
-  id: string;
-  name: string;
-  specialty: string;
-}
-
 export interface MaintenanceProps {
   userRole?: "ADMIN" | "ASSET_MANAGER" | "EMPLOYEE";
   currentUser?: string;
+  currentUserId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────
-// SERVICE LAYER  (swap BASE_URL when backend is ready)
+// SERVICE LAYER (real backend)
 // ─────────────────────────────────────────────────────────────
-const BASE_URL = "http://localhost:5000/api";
+import { apiGet, apiSend } from "@/lib/api";
 
-const authHeaders = () => ({
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${localStorage.getItem("token")}`,
+// Backend statuses are SNAKE_CASE → the component's display statuses.
+const BACKEND_STATUS: Record<string, Status> = {
+  PENDING: "Pending",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  TECHNICIAN_ASSIGNED: "In Progress",
+  IN_PROGRESS: "In Progress",
+  RESOLVED: "Resolved",
+};
+
+const toRequest = (r: any): MaintenanceRequest => ({
+  id: r.id,
+  reqId: `REQ-${String(r.id ?? "").slice(-6).toUpperCase()}`,
+  assetName: r.asset?.name ?? "Asset",
+  assetTag: r.asset?.assetTag ?? "",
+  issue: r.description ?? "",
+  priority: r.priority ?? "MEDIUM",
+  status: BACKEND_STATUS[r.status] ?? "Pending",
+  requestedBy: r.raisedBy?.name ?? "—",
+  raisedOn: r.createdAt ? r.createdAt.slice(0, 10) : "",
+  technician: r.technicianName ?? undefined,
+  photo: r.photoUrl ?? undefined,
 });
 
-const DUMMY_REQUESTS: MaintenanceRequest[] = [
-  { id: "1", reqId: "REQ-082", assetName: "Sony A7IV Camera",           assetTag: "AF-005", issue: "Lens mount is loose and throwing error 0x99. Needs recalibration.", priority: "HIGH",   status: "Pending",     requestedBy: "Raj Patel",      raisedOn: "2026-07-12" },
-  { id: "2", reqId: "REQ-081", assetName: "Delivery Van (Ford Transit)", assetTag: "AF-002", issue: "Check engine light on, strange noise from transmission.",           priority: "HIGH",   status: "In Progress", requestedBy: "Logistics Dept", raisedOn: "2026-07-10", technician: "Mike Ross" },
-  { id: "3", reqId: "REQ-079", assetName: "MacBook Pro M2",             assetTag: "AF-001", issue: "Battery expanding slightly, trackpad getting stiff.",               priority: "MEDIUM", status: "Approved",    requestedBy: "Priya Sharma",  raisedOn: "2026-07-08" },
-  { id: "4", reqId: "REQ-075", assetName: "Conference Table",           assetTag: "AF-006", issue: "One leg is wobbly, needs tightening.",                              priority: "LOW",    status: "Resolved",    requestedBy: "Admin Team",    raisedOn: "2026-07-01" },
-  { id: "5", reqId: "REQ-070", assetName: "HP LaserJet Printer",       assetTag: "AF-011", issue: "Paper jam after every 3rd print. Roller may need replacement.",     priority: "MEDIUM", status: "Pending",     requestedBy: "Sara Ali",      raisedOn: "2026-07-11" },
-  { id: "6", reqId: "REQ-068", assetName: "Air Conditioning Unit",     assetTag: "AF-022", issue: "Not cooling below 26°C even at full blast.",                        priority: "HIGH",   status: "Approved",    requestedBy: "Amit Verma",    raisedOn: "2026-07-09" },
-];
-
-const DUMMY_ASSETS: AssetOption[] = [
-  { id: "a1", assetTag: "AF-001", name: "MacBook Pro M2"              },
-  { id: "a2", assetTag: "AF-002", name: "Delivery Van (Ford Transit)" },
-  { id: "a3", assetTag: "AF-005", name: "Sony A7IV Camera"            },
-  { id: "a4", assetTag: "AF-011", name: "HP LaserJet Printer"         },
-  { id: "a5", assetTag: "AF-022", name: "Air Conditioning Unit"       },
-  { id: "a6", assetTag: "AF-031", name: "Dell Monitor 27\""           },
-  { id: "a7", assetTag: "AF-044", name: "Toyota Innova"               },
-];
-
-const DUMMY_TECHNICIANS: Technician[] = [
-  { id: "t1", name: "Mike Ross",      specialty: "Electronics"  },
-  { id: "t2", name: "Harvey Specter", specialty: "Vehicles"     },
-  { id: "t3", name: "Rachel Zane",    specialty: "Furniture"    },
-  { id: "t4", name: "Louis Litt",     specialty: "IT / Servers" },
-];
-
 const maintenanceService = {
-  getAll: async (): Promise<MaintenanceRequest[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/maintenance`, { headers: authHeaders() });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch { return DUMMY_REQUESTS; }
+  getAll: async (mine = false): Promise<MaintenanceRequest[]> => {
+    const path = mine ? "/maintenance?mine=true" : "/maintenance";
+    const data = await apiGet<{ items: Array<Record<string, any>> }>(path);
+    return (data.items ?? []).map(toRequest);
   },
 
   raiseRequest: async (payload: RaiseRequestPayload) => {
-    try {
-      const res = await fetch(`${BASE_URL}/maintenance`, {
-        method: "POST", headers: authHeaders(), body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return {
-        id: `req-${Date.now()}`,
-        reqId: `REQ-${Math.floor(Math.random() * 900) + 100}`,
-        ...payload,
-        status: "Pending" as Status,
-        raisedOn: new Date().toISOString().split("T")[0],
-      };
-    }
+    const created = await apiSend<Record<string, any>>("/maintenance", "POST", {
+      assetId: payload.assetId,
+      description: payload.issue,
+      priority: payload.priority,
+      photoUrl: payload.photo ?? undefined,
+    });
+    return toRequest(created);
   },
 
   approve: async (id: string) => {
     try {
-      const res = await fetch(`${BASE_URL}/maintenance/${id}/approve`, {
-        method: "PATCH", headers: authHeaders(),
-      });
-      if (!res.ok) throw new Error();
+      await apiSend(`/maintenance/${id}/approve`, "POST", {});
       return true;
-    } catch { return true; }
+    } catch { return false; }
   },
 
-  reject: async (id: string, reason: string) => {
+  reject: async (id: string) => {
     try {
-      const res = await fetch(`${BASE_URL}/maintenance/${id}/reject`, {
-        method: "PATCH", headers: authHeaders(), body: JSON.stringify({ reason }),
-      });
-      if (!res.ok) throw new Error();
+      await apiSend(`/maintenance/${id}/reject`, "POST", {});
       return true;
-    } catch { return true; }
+    } catch { return false; }
   },
 
-  assignTechnician: async (id: string, technicianId: string) => {
+  assignTechnician: async (id: string, technicianName: string) => {
     try {
-      const res = await fetch(`${BASE_URL}/maintenance/${id}/assign-technician`, {
-        method: "PATCH", headers: authHeaders(), body: JSON.stringify({ technicianId }),
-      });
-      if (!res.ok) throw new Error();
+      await apiSend(`/maintenance/${id}/assign`, "POST", { technicianName });
       return true;
-    } catch { return true; }
+    } catch { return false; }
   },
 
   resolve: async (id: string, notes: string) => {
     try {
-      const res = await fetch(`${BASE_URL}/maintenance/${id}/resolve`, {
-        method: "PATCH", headers: authHeaders(), body: JSON.stringify({ resolutionNotes: notes }),
+      await apiSend(`/maintenance/${id}/resolve`, "POST", {
+        resolutionNotes: notes || undefined,
       });
-      if (!res.ok) throw new Error();
       return true;
-    } catch { return true; }
+    } catch { return false; }
   },
 
   getAssets: async (): Promise<AssetOption[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/assets`, { headers: authHeaders() });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch { return DUMMY_ASSETS; }
+    const data = await apiGet<{ items: Array<{ id: string; assetTag: string; name: string }> }>("/assets");
+    return (data.items ?? []).map((a) => ({
+      id: a.id,
+      assetTag: a.assetTag,
+      name: a.name,
+    }));
+  },
+
+  getTechnicians: async (): Promise<Array<{ id: string; name: string; email: string }>> => {
+    const data = await apiGet<{ items: Array<{ id: string; name: string; email: string }> }>(
+      "/org/employees?status=ACTIVE",
+    );
+    return data.items ?? [];
   },
 
   exportPdf: (requests: MaintenanceRequest[]) => {
@@ -276,6 +252,7 @@ const RaiseRequestModal = ({
   const [assetSearch, setAssetSearch] = useState("");
   const [assetOpen,   setAssetOpen]   = useState(false);
   const [errors,      setErrors]      = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -291,6 +268,7 @@ const RaiseRequestModal = ({
     maintenanceService.getAssets().then(setAssets).finally(() => setFetching(false));
     setForm({ asset: null, issue: "", priority: "MEDIUM", photo: "" });
     setErrors({});
+    setSubmitError("");
     setAssetSearch("");
   }, [open]);
 
@@ -317,6 +295,7 @@ const RaiseRequestModal = ({
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setSubmitting(true);
+    setSubmitError("");
     try {
       const payload: RaiseRequestPayload = {
         assetId:     form.asset!.id,
@@ -329,6 +308,8 @@ const RaiseRequestModal = ({
       };
       const result = await maintenanceService.raiseRequest(payload);
       onSuccess(result as MaintenanceRequest);
+    } catch (err: any) {
+      setSubmitError(err?.message ?? "Failed to raise request. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -372,6 +353,13 @@ const RaiseRequestModal = ({
             </div>
 
             <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+              {/* Global submit error */}
+              {submitError && (
+                <div className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+                  <AlertCircle size={14} className="flex-shrink-0" /> {submitError}
+                </div>
+              )}
+
               {/* Asset Selector */}
               <div>
                 <label className="block text-xs font-medium text-zinc-400 mb-1.5">
@@ -527,11 +515,22 @@ const RaiseRequestModal = ({
 // ─────────────────────────────────────────────────────────────
 const AssignTechnicianModal = ({
   open, request, onClose, onSuccess,
-}: { open: boolean; request: MaintenanceRequest | null; onClose: () => void; onSuccess: (id: string) => void }) => {
-  const [selected,   setSelected]   = useState("");
+}: { open: boolean; request: MaintenanceRequest | null; onClose: () => void; onSuccess: (name: string) => void }) => {
+  const [employees,  setEmployees]  = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [loadingEmps, setLoadingEmps] = useState(false);
+  const [selected,   setSelected]   = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => { if (open) setSelected(""); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    setSelected("");
+    setLoadingEmps(true);
+    maintenanceService
+      .getTechnicians()
+      .then(setEmployees)
+      .catch(() => setEmployees([]))
+      .finally(() => setLoadingEmps(false));
+  }, [open]);
 
   const handleAssign = async () => {
     if (!selected || !request) return;
@@ -540,6 +539,9 @@ const AssignTechnicianModal = ({
     setSubmitting(false);
     onSuccess(selected);
   };
+
+  const initials = (name: string) =>
+    name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "—";
 
   return (
     <AnimatePresence>
@@ -568,24 +570,38 @@ const AssignTechnicianModal = ({
               <button onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
             </div>
 
-            <div className="p-5 space-y-2">
-              {DUMMY_TECHNICIANS.map(t => (
-                <button key={t.id} onClick={() => setSelected(t.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left
-                    ${selected === t.id
-                      ? "border-blue-500/50 bg-blue-500/10 text-white"
-                      : "border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-white"}`}
-                >
-                  <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
-                    {t.name.split(" ").map(n => n[0]).join("")}
+            <div className="p-5">
+              <p className="text-xs text-zinc-500 mb-3">
+                Choose who will work on this request — the name is recorded on the request.
+              </p>
+              <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                {loadingEmps ? (
+                  <div className="py-6 flex items-center justify-center gap-2 text-zinc-500 text-sm">
+                    <Loader2 size={14} className="animate-spin text-blue-400" />
+                    Loading employees…
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{t.name}</p>
-                    <p className="text-[11px] text-zinc-500">{t.specialty}</p>
+                ) : employees.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-zinc-600">
+                    No active employees found. Create one in Organization Setup first.
                   </div>
-                  {selected === t.id && <Check size={14} className="text-blue-400" />}
-                </button>
-              ))}
+                ) : employees.map(e => (
+                  <button key={e.id} onClick={() => setSelected(e.name)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left
+                      ${selected === e.name
+                        ? "border-blue-500/50 bg-blue-500/10 text-white"
+                        : "border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-white"}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+                      {initials(e.name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{e.name}</p>
+                      <p className="text-[11px] text-zinc-500 truncate">{e.email}</p>
+                    </div>
+                    {selected === e.name && <Check size={14} className="text-blue-400" />}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
@@ -681,8 +697,8 @@ const ResolveModal = ({
 // THREE-DOT ACTION MENU
 // ─────────────────────────────────────────────────────────────
 const ActionMenu = ({
-  request, onExport, onClose,
-}: { request: MaintenanceRequest; onExport: () => void; onClose: () => void }) => (
+  onExport, onClose,
+}: { onExport: () => void; onClose: () => void }) => (
   <motion.div
     initial={{ opacity: 0, scale: 0.9, y: -8 }}
     animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -709,8 +725,8 @@ const MaintenanceCard = ({
   request, onApprove, onReject, onAssign, onResolve, userRole, delay, onExportSingle,
 }: {
   request: MaintenanceRequest;
-  onApprove: () => void;
-  onReject: () => void;
+  onApprove: () => void | Promise<void>;
+  onReject: () => void | Promise<void>;
   onAssign: () => void;
   onResolve: () => void;
   userRole: "ADMIN" | "ASSET_MANAGER" | "EMPLOYEE";
@@ -720,16 +736,23 @@ const MaintenanceCard = ({
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [menuOpen,      setMenuOpen]      = useState(false);
 
+  // Loading state is tied to the real API call, not a simulated delay.
   const handleApprove = async () => {
     setActionLoading("approve");
-    onApprove();
-    setTimeout(() => setActionLoading(null), 400);
+    try {
+      await onApprove();
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleReject = async () => {
     setActionLoading("reject");
-    onReject();
-    setTimeout(() => setActionLoading(null), 400);
+    try {
+      await onReject();
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const isManager = userRole === "ADMIN" || userRole === "ASSET_MANAGER";
@@ -759,7 +782,6 @@ const MaintenanceCard = ({
             <AnimatePresence>
               {menuOpen && (
                 <ActionMenu
-                  request={request}
                   onExport={onExportSingle}
                   onClose={() => setMenuOpen(false)}
                 />
@@ -855,6 +877,7 @@ const Maintenance = ({
 
   const [requests,     setRequests]     = useState<MaintenanceRequest[]>([]);
   const [loading,      setLoading]      = useState(true);
+  const [dataError,    setDataError]    = useState<string | null>(null);
   const [search,       setSearch]       = useState("");
   const [activeTab,    setActiveTab]    = useState<FilterTab>("All");
   const [toast,        setToast]        = useState<{ msg: string; type: string } | null>(null);
@@ -872,9 +895,20 @@ const Maintenance = ({
 
   const loadRequests = async () => {
     setLoading(true);
-    const data = await maintenanceService.getAll();
-    setRequests(data);
-    setLoading(false);
+    setDataError(null);
+    const isManager = userRole === "ADMIN" || userRole === "ASSET_MANAGER";
+    try {
+      const data = await maintenanceService.getAll(!isManager);
+      setRequests(data);
+    } catch (err) {
+      setDataError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load maintenance requests. Check that the backend is running.",
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { loadRequests(); }, []);
@@ -906,20 +940,19 @@ const Maintenance = ({
   };
 
   const handleReject = async (req: MaintenanceRequest) => {
-    await maintenanceService.reject(req.id, "Rejected by manager");
+    await maintenanceService.reject(req.id);
     setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "Rejected" } : r));
     showToast(`Request ${req.reqId} rejected`, "warning");
   };
 
-  const handleAssignSuccess = (technicianId: string) => {
-    const tech = DUMMY_TECHNICIANS.find(t => t.id === technicianId);
+  const handleAssignSuccess = (technicianName: string) => {
     if (!activeRequest) return;
     setRequests(prev => prev.map(r =>
-      r.id === activeRequest.id ? { ...r, status: "In Progress" as Status, technician: tech?.name } : r
+      r.id === activeRequest.id ? { ...r, status: "In Progress" as Status, technician: technicianName } : r
     ));
     setShowAssign(false);
     setActiveRequest(null);
-    showToast(`Technician ${tech?.name} assigned — status set to In Progress`);
+    showToast(`Technician ${technicianName} assigned — status set to In Progress`);
   };
 
   const handleResolveSuccess = () => {
@@ -1029,6 +1062,20 @@ const Maintenance = ({
           )}
         </div>
       </div>
+
+      {/* DATA ERROR BANNER */}
+      {dataError && (
+        <div className="flex items-center gap-3 bg-red-950/40 border border-red-500/30 rounded-2xl px-5 py-3 mb-6">
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-300 flex-1">{dataError}</p>
+          <button
+            onClick={loadRequests}
+            className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* CARDS GRID */}
       {loading ? (

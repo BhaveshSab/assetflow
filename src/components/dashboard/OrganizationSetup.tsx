@@ -5,13 +5,14 @@ import {
   CheckCircle2, XCircle, AlertCircle, Layers, Contact,
   Tag, Settings2, Box, Edit2, X, Loader2,
   User, UserCheck, UserX, Shield, ShieldCheck, ShieldAlert,
-  Crown, Briefcase, Mail, Filter, Trash2, ChevronDown, Check,
+  Crown, Briefcase, Mail, Trash2, ChevronDown, Check,
 } from "lucide-react";
 import {
   fetchDepartments, createDepartment, updateDepartment, toggleDepartmentStatus,
   fetchCategories, createCategory, updateCategory, toggleCategoryStatus,
   type Department, type AssetCategory, type DeptFormData, type CategoryFormData,
 } from "@/services/organizationService";
+import { apiGet, apiSend } from "@/lib/api";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -22,7 +23,7 @@ const itemVariants = {
 // EMPLOYEE DIRECTORY — Types & Service
 // ─────────────────────────────────────────────────────────────
 interface Employee {
-  id: number;
+  id: string;
   name: string;
   email: string;
   department: string;
@@ -40,32 +41,102 @@ interface EmployeeFormData {
   status: string;
 }
 
-const employeeService = {
-  getAll: (): Promise<Employee[]> => Promise.resolve(DUMMY_EMPLOYEES),
-  create: (data: EmployeeFormData & { avatar: string }): Promise<Employee> =>
-    Promise.resolve({ ...data, id: Date.now(), joinedOn: new Date().toISOString().slice(0, 10) }),
-  update: (id: number, data: Partial<Employee>): Promise<Employee> =>
-    Promise.resolve({ id, ...data } as Employee),
-  delete: (_id: number): Promise<{ success: boolean }> =>
-    Promise.resolve({ success: true }),
-  promote: (id: number, role: string): Promise<{ id: number; role: string }> =>
-    Promise.resolve({ id, role }),
-  toggleStatus: (id: number, status: string): Promise<{ id: number; status: string }> =>
-    Promise.resolve({ id, status }),
+const ROLE_TO_ENUM: Record<string, string> = {
+  Employee: "EMPLOYEE",
+  "Department Head": "DEPARTMENT_HEAD",
+  "Asset Manager": "ASSET_MANAGER",
+  Admin: "ADMIN",
 };
 
-const DUMMY_EMPLOYEES: Employee[] = [
-  { id: 1,  name: "Bhavesh Cool",     email: "bhavesh.cool2005@gmail.com",    department: "IT",          role: "Admin",           status: "Active",   joinedOn: "2024-01-10", avatar: "BC" },
-  { id: 2,  name: "Bhavesh Sabnani",  email: "bhavesh.sabnani2005@gmail.com", department: "Operations",  role: "Asset Manager",   status: "Active",   joinedOn: "2024-02-14", avatar: "BS" },
-  { id: 3,  name: "Bhavesh Employee", email: "bhavesh@gmail.com",             department: "Engineering", role: "Employee",        status: "Active",   joinedOn: "2024-03-01", avatar: "BE" },
-  { id: 4,  name: "Priya Sharma",     email: "priya.sharma@company.com",      department: "Engineering", role: "Department Head", status: "Active",   joinedOn: "2024-01-20", avatar: "PS" },
-  { id: 5,  name: "Raj Mehta",        email: "raj.mehta@company.com",         department: "Marketing",   role: "Employee",        status: "Active",   joinedOn: "2024-04-05", avatar: "RM" },
-  { id: 6,  name: "Sara Ali",         email: "sara.ali@company.com",          department: "Marketing",   role: "Department Head", status: "Active",   joinedOn: "2024-02-28", avatar: "SA" },
-  { id: 7,  name: "Kiran Das",        email: "kiran.das@company.com",         department: "Sales",       role: "Employee",        status: "Inactive", joinedOn: "2024-05-10", avatar: "KD" },
-  { id: 8,  name: "Amit Verma",       email: "amit.verma@company.com",        department: "HR",          role: "Asset Manager",   status: "Active",   joinedOn: "2024-03-15", avatar: "AV" },
-  { id: 9,  name: "Pooja Singh",      email: "pooja.singh@company.com",       department: "Operations",  role: "Employee",        status: "Active",   joinedOn: "2024-06-01", avatar: "PJ" },
-  { id: 10, name: "Vikram Nair",      email: "vikram.nair@company.com",       department: "Finance",     role: "Employee",        status: "Inactive", joinedOn: "2024-07-01", avatar: "VN" },
-];
+const ENUM_TO_ROLE: Record<string, string> = {
+  EMPLOYEE: "Employee",
+  DEPARTMENT_HEAD: "Department Head",
+  ASSET_MANAGER: "Asset Manager",
+  ADMIN: "Admin",
+};
+
+const initialsOf = (name: string) =>
+  name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+const deptIdByName = async (name: string): Promise<string | undefined> => {
+  if (!name) return undefined;
+  const data = await apiGet<{ items: Array<{ id: string; name: string }> }>(
+    `/org/departments?q=${encodeURIComponent(name)}`,
+  );
+  return data.items.find((d) => d.name.toLowerCase() === name.toLowerCase())?.id;
+};
+
+const toEmployee = (e: Record<string, any>): Employee => ({
+  id: e.id,
+  name: e.name,
+  email: e.email,
+  department: e.department?.name ?? "—",
+  role: ENUM_TO_ROLE[e.role] ?? e.role,
+  status: e.status === "INACTIVE" ? "Inactive" : "Active",
+  joinedOn: e.createdAt ? e.createdAt.slice(0, 10) : "",
+  avatar: initialsOf(e.name ?? "??"),
+});
+
+const employeeService = {
+  getAll: async (): Promise<Employee[]> => {
+    const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/employees");
+    return (data.items ?? []).map(toEmployee);
+  },
+  create: async (data: EmployeeFormData & { avatar: string }): Promise<Employee> => {
+    const departmentId = await deptIdByName(data.department);
+    const created = await apiSend<Record<string, any>>("/org/employees", "POST", {
+      name: data.name,
+      email: data.email,
+      departmentId: departmentId ?? undefined,
+      role: ROLE_TO_ENUM[data.role] ?? "EMPLOYEE",
+    });
+    return toEmployee(created);
+  },
+  update: async (id: string, data: Partial<Employee>): Promise<Employee> => {
+    const payload: Record<string, any> = {
+      ...(data.name ? { name: data.name } : {}),
+      ...(data.status ? { status: data.status === "Active" ? "ACTIVE" : "INACTIVE" } : {}),
+    };
+    if (data.department) {
+      const departmentId = await deptIdByName(data.department);
+      if (departmentId) payload.departmentId = departmentId;
+    }
+    const updated = await apiSend<Record<string, any>>(`/org/employees/${id}`, "PATCH", payload);
+    // Role changes go through the dedicated role endpoint.
+    if (data.role && ENUM_TO_ROLE[updated.role] !== data.role) {
+      await apiSend(`/org/employees/${id}/role`, "PATCH", {
+        role: ROLE_TO_ENUM[data.role] ?? "EMPLOYEE",
+      });
+    }
+    return toEmployee({ ...updated, role: data.role ? ROLE_TO_ENUM[data.role] : updated.role });
+  },
+  delete: async (id: string): Promise<{ success: boolean }> => {
+    // No hard delete — deactivate the account instead.
+    await apiSend(`/org/employees/${id}`, "PATCH", { status: "INACTIVE" });
+    return { success: true };
+  },
+  promote: async (id: string, role: string): Promise<{ id: string; role: string }> => {
+    const updated = await apiSend<{ id: string; role: string }>(
+      `/org/employees/${id}/role`,
+      "PATCH",
+      { role: ROLE_TO_ENUM[role] ?? "EMPLOYEE" },
+    );
+    return { id: updated.id, role: ENUM_TO_ROLE[updated.role] ?? updated.role };
+  },
+  toggleStatus: async (id: string, status: string): Promise<{ id: string; status: string }> => {
+    const updated = await apiSend<{ id: string; status: string }>(
+      `/org/employees/${id}`,
+      "PATCH",
+      { status: status === "Active" ? "ACTIVE" : "INACTIVE" },
+    );
+    return { id: updated.id, status: updated.status === "INACTIVE" ? "Inactive" : "Active" };
+  },
+};
 
 const ROLES = ["Employee", "Department Head", "Asset Manager", "Admin"] as const;
 
@@ -81,9 +152,10 @@ const avatarColors = [
   "bg-blue-600", "bg-purple-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600",
   "bg-cyan-600", "bg-indigo-600", "bg-pink-600", "bg-teal-600", "bg-orange-600",
 ];
-const getAvatarColor = (id: number) => avatarColors[(id - 1) % avatarColors.length];
+const getAvatarColor = (id: string | number) =>
+  avatarColors[String(id).charCodeAt(0) % avatarColors.length];
 
-const validateEmployee = (form: EmployeeFormData, employees: Employee[], editingId?: number) => {
+const validateEmployee = (form: EmployeeFormData, employees: Employee[], editingId?: string) => {
   const errors: Record<string, string> = {};
   if (!form.name.trim()) errors.name = "Full name is required";
   if (!form.email.trim()) errors.email = "Email is required";
@@ -287,7 +359,7 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
 };
 
 const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
-  open: boolean; employee: Employee | null; onClose: () => void; onPromote: (id: number, role: string) => void; saving: boolean;
+  open: boolean; employee: Employee | null; onClose: () => void; onPromote: (id: string, role: string) => void; saving: boolean;
 }) => {
   const [selectedRole, setSelectedRole] = useState("");
   useEffect(() => { if (open && employee) setSelectedRole(employee.role); }, [open, employee]);
@@ -338,6 +410,7 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
 const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [filterRole, setFilterRole] = useState("All");
@@ -357,7 +430,11 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
 
   useEffect(() => {
     setLoading(true);
-    employeeService.getAll().then(setEmployees).finally(() => setLoading(false));
+    setLoadError("");
+    employeeService.getAll()
+      .then(setEmployees)
+      .catch((err: any) => setLoadError(err?.message ?? "Failed to load employees"))
+      .finally(() => setLoading(false));
   }, []);
 
   const filtered = useMemo(() => employees.filter((e) => {
@@ -391,7 +468,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       }
       setShowModal(false);
       setEditingEmployee(null);
-    } catch { showToast("Failed to save. Please try again.", "error"); }
+    } catch (err: any) { showToast(err?.message ?? "Failed to save. Please try again.", "error"); }
     finally { setSaving(false); }
   };
 
@@ -402,9 +479,13 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       danger: true, confirmLabel: "Delete",
       onConfirm: async () => {
         setConfirm(null);
-        await employeeService.delete(employee.id);
-        setEmployees((prev) => prev.filter((e) => e.id !== employee.id));
-        showToast(`${employee.name} removed from directory`);
+        try {
+          await employeeService.delete(employee.id);
+          setEmployees((prev) => prev.filter((e) => e.id !== employee.id));
+          showToast(`${employee.name} removed from directory`);
+        } catch (err: any) {
+          showToast(err?.message ?? "Failed to remove employee", "error");
+        }
       },
     });
   };
@@ -412,19 +493,23 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
   const handleToggleStatus = async (employee: Employee) => {
     const newStatus = employee.status === "Active" ? "Inactive" : "Active";
     if (employee.role === "Admin" && newStatus === "Inactive") { showToast("Cannot suspend an Admin account.", "warning"); return; }
-    await employeeService.toggleStatus(employee.id, newStatus);
-    setEmployees((prev) => prev.map((e) => e.id === employee.id ? { ...e, status: newStatus } : e));
-    showToast(`${employee.name} ${newStatus === "Active" ? "reactivated" : "suspended"}`);
+    try {
+      await employeeService.toggleStatus(employee.id, newStatus);
+      setEmployees((prev) => prev.map((e) => e.id === employee.id ? { ...e, status: newStatus } : e));
+      showToast(`${employee.name} ${newStatus === "Active" ? "reactivated" : "suspended"}`);
+    } catch (err: any) {
+      showToast(err?.message ?? "Failed to update status", "error");
+    }
   };
 
-  const handlePromote = async (id: number, role: string) => {
+  const handlePromote = async (id: string, role: string) => {
     setSaving(true);
     try {
       await employeeService.promote(id, role);
       setEmployees((prev) => prev.map((e) => e.id === id ? { ...e, role } : e));
       showToast(`Role updated to ${role}`);
       setShowPromote(false); setPromoteTarget(null);
-    } catch { showToast("Failed to update role.", "error"); }
+    } catch (err: any) { showToast(err?.message ?? "Failed to update role.", "error"); }
     finally { setSaving(false); }
   };
 
@@ -438,6 +523,13 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       <EmployeeConfirmDialog open={!!confirm} title={confirm?.title} message={confirm?.message}
         danger={confirm?.danger} confirmLabel={confirm?.confirmLabel ?? "Confirm"}
         onConfirm={confirm?.onConfirm ?? (() => {})} onCancel={() => setConfirm(null)} />
+
+      {/* Load error banner */}
+      {loadError && (
+        <div className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+          <AlertCircle size={15} className="flex-shrink-0" /> {loadError} — check that the backend is running.
+        </div>
+      )}
       <EmployeeModal open={showModal} onClose={() => { setShowModal(false); setEditingEmployee(null); }}
         onSave={handleSave} editingEmployee={editingEmployee} departments={departments} saving={saving} />
       <PromoteModal open={showPromote} employee={promoteTarget}

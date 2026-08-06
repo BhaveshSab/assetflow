@@ -4,10 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NotificationType, Prisma, Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 import { ActivityService } from '../activity/activity.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { UpdateEmployeeRoleDto } from './dto/update-employee-role.dto';
@@ -62,6 +64,67 @@ export class EmployeesService {
     ]);
 
     return { items, total };
+  }
+
+  /** GET /org/employees/directory — any authenticated user.
+   *  Minimal, safe projection (no roles/status) so employees can pick a
+   *  transfer target without seeing privileged directory data. */
+  async listDirectory() {
+    const users = await this.prisma.user.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        department: { select: { name: true } },
+      },
+    });
+    return users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      department: u.department?.name ?? null,
+    }));
+  }
+
+  /** POST /org/employees — ADMIN. Provision an account directly. */
+  async create(actorId: string, dto: CreateEmployeeDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException('Email already registered');
+
+    if (dto.departmentId) {
+      const dept = await this.prisma.department.findUnique({
+        where: { id: dto.departmentId },
+        select: { id: true },
+      });
+      if (!dept) throw new NotFoundException('Department not found');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password ?? 'password123', 10);
+    const user = await this.prisma.user.create({
+      data: {
+        name: dto.name,
+        email: dto.email,
+        passwordHash,
+        role: dto.role ?? Role.EMPLOYEE,
+        ...(dto.departmentId ? { departmentId: dto.departmentId } : {}),
+      },
+      select: EMPLOYEE_SELECT,
+    });
+
+    await this.activity.log({
+      actorId,
+      action: 'user.created',
+      entityType: 'User',
+      entityId: user.id,
+      metadata: { role: user.role, email: user.email },
+    });
+
+    return user;
   }
 
   /** GET /org/employees/:id — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */

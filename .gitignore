@@ -13,6 +13,9 @@ dist-ssr
 # Logs
 logs
 *.log
+
+# Freebuff local tooling
+.freebuff/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

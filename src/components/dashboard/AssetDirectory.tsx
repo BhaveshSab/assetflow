@@ -17,6 +17,7 @@ import {
 
 import { getAssets, type Asset } from "@/api/assetServices";
 import AllocateAssetModal, { type Asset as ModalAsset } from "@/components/dashboard/AllocateAssetModal";
+import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
 
 interface Toast { msg: string; type: string; }
 
@@ -66,6 +67,7 @@ export default function AssetDirectory() {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAllocate, setShowAllocate] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
   const [preSelectedAsset, setPreSelectedAsset] = useState<ModalAsset | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -136,7 +138,7 @@ export default function AssetDirectory() {
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
-          onClick={() => { setPreSelectedAsset(null); setShowAllocate(true); }}
+          onClick={() => setShowRegister(true)}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-blue-900/20 transition-colors"
         >
           <Plus size={16} />
@@ -348,6 +350,22 @@ export default function AssetDirectory() {
           getAssets().then(setAssets).catch(() => {});
         }}
         preSelectedAsset={preSelectedAsset}
+      />
+
+      {/* Register Asset Modal */}
+      <RegisterAssetModal
+        open={showRegister}
+        onClose={() => setShowRegister(false)}
+        onSuccess={(newAsset) => {
+          setShowRegister(false);
+          showToast(`Asset "${newAsset.name}" registered! Tag: ${newAsset.assetTag}`);
+          // Refresh asset list to show the new asset
+          setIsLoading(true);
+          getAssets()
+            .then(setAssets)
+            .catch(() => {})
+            .finally(() => setIsLoading(false));
+        }}
       />
     </motion.div>
   );

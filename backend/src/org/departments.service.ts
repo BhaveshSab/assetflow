@@ -94,6 +94,7 @@ export class DepartmentsService {
         take: pageSize,
         include: {
           head: { select: HEAD_SELECT },
+          parentDepartment: { select: { id: true, name: true } },
           _count: { select: { members: true, childDepartments: true } },
         },
       }),

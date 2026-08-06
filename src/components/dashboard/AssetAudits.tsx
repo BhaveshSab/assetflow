@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ClipboardCheck,
@@ -13,7 +13,12 @@ import {
   Lock,
   ArrowRight,
   AlertCircle,
+  X,
+  Loader2,
+  Building2,
 } from "lucide-react";
+import { apiGet, apiSend } from "@/lib/api";
+import { getSession } from "@/lib/auth";
 
 // Animation variants
 const containerVariants = {
@@ -74,72 +79,87 @@ export default function AssetAudits() {
 
   const [activeTab, setActiveTab] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createErrors, setCreateErrors] = useState<Record<string, string>>({});
+  const [createForm, setCreateForm] = useState({
+    name: "", scopeLocation: "", startDate: "", endDate: "",
+  });
+
+  const session = getSession();
+  const isAdmin = session?.user?.role === "ADMIN";
 
   // ==========================================
   // BACKEND INTEGRATION: Fetch Audit Cycles
   // ==========================================
-  useEffect(() => {
-    const fetchAudits = async () => {
-      setIsLoading(true);
-      setError(null);
+  const fetchAudits = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
 
-      try {
-        // TODO: Replace with your actual backend API call
-        // const response = await fetch('/api/audits');
-        // if (!response.ok) throw new Error('Failed to fetch data');
-        // const data = await response.json();
-        // setAudits(data);
-
-        // --- Simulated Backend Delay ---
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        const mockAudits: AuditCycle[] = [
-          {
-            id: "AUD-2026-Q3-01",
-            title: "Q3 IT Equipment Verification",
-            scope: "HQ - Floors 2 & 3",
-            startDate: "2026-08-01",
-            endDate: "2026-08-15",
-            status: "In Progress",
-            progress: { total: 240, verified: 185, missing: 2, damaged: 4 },
-            auditors: ["PS", "AK"],
-          },
-          {
-            id: "AUD-2026-Q3-02",
-            title: "Logistics Vehicle Fleet Check",
-            scope: "Warehouse A & B",
-            startDate: "2026-08-10",
-            endDate: "2026-08-12",
-            status: "Draft",
-            progress: { total: 18, verified: 0, missing: 0, damaged: 0 },
-            auditors: ["LD"],
-          },
-          {
-            id: "AUD-2026-Q2-01",
-            title: "Q2 Office Furniture Audit",
-            scope: "All HQ Branches",
-            startDate: "2026-04-01",
-            endDate: "2026-04-20",
-            status: "Completed",
-            progress: { total: 450, verified: 445, missing: 5, damaged: 12 },
-            auditors: ["JD", "PS", "RP"],
-          },
-        ];
-
-        setAudits(mockAudits);
-      } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load audit cycles."
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchAudits();
+    try {
+      const data = await apiGet<{ items: Array<Record<string, any>> }>("/audits");
+      const mapped: AuditCycle[] = (data.items ?? []).map((c: any) => ({
+        id: c.id,
+        title: c.name,
+        scope:
+          c.scopeLocation ??
+          c.scopeDepartment?.name ??
+          "All assets",
+        startDate: c.startDate ? c.startDate.slice(0, 10) : "",
+        endDate: c.endDate ? c.endDate.slice(0, 10) : "",
+        status: c.status === "CLOSED" ? "Completed" : "In Progress",
+        progress: {
+          total: c.counts?.total ?? 0,
+          verified: c.counts?.verified ?? 0,
+          missing: c.counts?.missing ?? 0,
+          damaged: c.counts?.damaged ?? 0,
+        },
+        auditors: [],
+      }));
+      setAudits(mapped);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load audit cycles."
+      );
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchAudits();
+  }, [fetchAudits]);
+
+  // ── Create audit cycle — real POST /audits, real error handling ──
+  const handleCreateAudit = async () => {
+    const e: Record<string, string> = {};
+    if (!createForm.name.trim()) e.name = "Audit name is required";
+    if (!createForm.startDate) e.startDate = "Start date is required";
+    if (!createForm.endDate) e.endDate = "End date is required";
+    if (createForm.startDate && createForm.endDate && createForm.endDate < createForm.startDate)
+      e.endDate = "End date must be after start date";
+    if (Object.keys(e).length) { setCreateErrors(e); return; }
+
+    setCreating(true);
+    try {
+      await apiSend("/audits", "POST", {
+        name: createForm.name.trim(),
+        scopeLocation: createForm.scopeLocation.trim() || undefined,
+        startDate: createForm.startDate,
+        endDate: createForm.endDate,
+      });
+      setShowCreate(false);
+      setCreateForm({ name: "", scopeLocation: "", startDate: "", endDate: "" });
+      setCreateErrors({});
+      fetchAudits();
+    } catch (err: any) {
+      setCreateErrors({ submit: err?.message ?? "Failed to create audit cycle." });
+    } finally {
+      setCreating(false);
+    }
+  };
 
   // ==========================================
   // FILTERING LOGIC
@@ -173,12 +193,15 @@ export default function AssetAudits() {
           </p>
         </div>
         <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
+          whileHover={isAdmin ? { scale: 1.02 } : undefined}
+          whileTap={isAdmin ? { scale: 0.98 } : undefined}
+          onClick={() => isAdmin && setShowCreate(true)}
+          disabled={!isAdmin}
+          title={isAdmin ? "Create Audit Cycle" : "Only Admins can create audit cycles"}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${isAdmin ? "bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]" : "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700"}`}
         >
-          <Plus size={18} />
-          Create Audit Cycle
+          {isAdmin ? <Plus size={18} /> : <Lock size={15} />}
+          {isAdmin ? "Create Audit Cycle" : "Admins Only"}
         </motion.button>
       </div>
 
@@ -437,6 +460,127 @@ export default function AssetAudits() {
           </AnimatePresence>
         </motion.div>
       )}
+
+      {/* ── Create Audit Cycle Modal ── */}
+      <AnimatePresence>
+        {showCreate && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/75 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={() => setShowCreate(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.93, opacity: 0, y: 24 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.93, opacity: 0, y: 24 }}
+              transition={{ type: "spring", damping: 26, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#1a1d2e] border border-zinc-700/80 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[95vh] flex flex-col"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
+                    <ClipboardCheck size={18} className="text-blue-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-white">Create Audit Cycle</h2>
+                    <p className="text-[11px] text-zinc-500">Schedule a new asset verification cycle</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowCreate(false)} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+                  <X size={16} className="text-zinc-400" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+                {!isAdmin && (
+                  <div className="flex items-center gap-2 bg-amber-950/30 border border-amber-500/25 rounded-xl px-4 py-2.5 text-xs text-amber-300">
+                    <AlertTriangle size={13} /> Only Admins can create audit cycles. Your session will be rejected by the server.
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Audit Name <span className="text-red-400">*</span></label>
+                  <input
+                    value={createForm.name}
+                    onChange={(e) => { setCreateForm((p) => ({ ...p, name: e.target.value })); setCreateErrors((p) => ({ ...p, name: "" })); }}
+                    placeholder="e.g. Q3 IT Equipment Verification"
+                    className={`w-full bg-[#0f111a] border rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/60 transition-colors ${createErrors.name ? "border-red-500/60" : "border-zinc-700/80"}`}
+                  />
+                  {createErrors.name && <p className="text-red-400 text-[11px] mt-1">{createErrors.name}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">Scope Location <span className="text-zinc-600">(optional)</span></label>
+                  <div className="relative">
+                    <Building2 size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      value={createForm.scopeLocation}
+                      onChange={(e) => setCreateForm((p) => ({ ...p, scopeLocation: e.target.value }))}
+                      placeholder="e.g. HQ - Floor 2 (blank = all assets)"
+                      className="w-full bg-[#0f111a] border border-zinc-700/80 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/60 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-400 mb-1.5">Start Date <span className="text-red-400">*</span></label>
+                    <div className="relative">
+                      <Calendar size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                      <input
+                        type="date"
+                        value={createForm.startDate}
+                        onChange={(e) => { setCreateForm((p) => ({ ...p, startDate: e.target.value })); setCreateErrors((p) => ({ ...p, startDate: "", endDate: "" })); }}
+                        className={`w-full bg-[#0f111a] border rounded-xl pl-8 pr-2 py-2.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark] ${createErrors.startDate ? "border-red-500/60" : "border-zinc-700/80"}`}
+                      />
+                    </div>
+                    {createErrors.startDate && <p className="text-red-400 text-[11px] mt-1">{createErrors.startDate}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-400 mb-1.5">End Date <span className="text-red-400">*</span></label>
+                    <div className="relative">
+                      <Calendar size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                      <input
+                        type="date"
+                        value={createForm.endDate}
+                        min={createForm.startDate || undefined}
+                        onChange={(e) => { setCreateForm((p) => ({ ...p, endDate: e.target.value })); setCreateErrors((p) => ({ ...p, endDate: "" })); }}
+                        className={`w-full bg-[#0f111a] border rounded-xl pl-8 pr-2 py-2.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark] ${createErrors.endDate ? "border-red-500/60" : "border-zinc-700/80"}`}
+                      />
+                    </div>
+                    {createErrors.endDate && <p className="text-red-400 text-[11px] mt-1">{createErrors.endDate}</p>}
+                  </div>
+                </div>
+
+                {createErrors.submit && (
+                  <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+                    <AlertCircle size={14} /> {createErrors.submit}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
+                <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all">
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateAudit}
+                  disabled={creating}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-600/20"
+                >
+                  {creating ? <><Loader2 size={14} className="animate-spin" /> Creating…</> : <><CheckCircle2 size={14} /> Create Cycle</>}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

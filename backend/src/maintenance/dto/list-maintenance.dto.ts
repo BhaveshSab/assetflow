@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsArray,
   IsBooleanString,
   IsEnum,
   IsInt,
@@ -16,9 +17,18 @@ export class ListMaintenanceDto {
   @IsString()
   assetId?: string;
 
+  /**
+   * Single status (e.g. PENDING) or comma-separated list
+   * (e.g. PENDING,TECHNICIAN_ASSIGNED,IN_PROGRESS) → both accepted.
+   */
   @IsOptional()
-  @IsEnum(MaintenanceStatus)
-  status?: MaintenanceStatus;
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    return value.split(',').map((s) => s.trim()).filter(Boolean);
+  })
+  @IsArray()
+  @IsEnum(MaintenanceStatus, { each: true })
+  status?: MaintenanceStatus | MaintenanceStatus[];
 
   @IsOptional()
   @IsEnum(MaintenancePriority)

@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { NotificationType } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -76,5 +80,36 @@ export class NotificationsService {
       where: { userId, isRead: false },
       data: { isRead: true },
     });
+  }
+
+  /**
+   * POST /notifications/ping — remind the holder of an allocation (used by the
+   * "Send Ping" button on overdue allocations). Creates an OVERDUE_RETURN
+   * notification for the holder.
+   */
+  async pingAllocation(actorId: string, allocationId: string) {
+    const allocation = await this.prisma.allocation.findUnique({
+      where: { id: allocationId },
+      include: {
+        asset: { select: { id: true, name: true, assetTag: true } },
+        holderUser: { select: { id: true, name: true } },
+      },
+    });
+    if (!allocation) throw new NotFoundException('Allocation not found');
+    if (!allocation.holderUserId) {
+      throw new BadRequestException(
+        'This allocation is not assigned to a specific user to ping',
+      );
+    }
+
+    await this.notify({
+      userId: allocation.holderUserId,
+      type: NotificationType.OVERDUE_RETURN,
+      message: `Reminder: please return ${allocation.asset?.name ?? 'your asset'} (${allocation.asset?.assetTag ?? ''}) — the expected return date has passed.`,
+      relatedEntityType: 'Allocation',
+      relatedEntityId: allocation.id,
+    });
+
+    return { success: true, recipient: allocation.holderUser?.name };
   }
 }

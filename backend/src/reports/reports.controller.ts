@@ -1,12 +1,21 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  Res,
+  UseGuards,
+  Param,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { ReportsService } from './reports.service';
+import type { AuthUser } from '../auth/jwt.strategy';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
@@ -17,6 +26,48 @@ export class ReportsController {
   @Get('dashboard')
   dashboard() {
     return this.reports.dashboard();
+  }
+
+  /** Employee-specific KPIs for the dashboard. */
+  @Get('dashboard/employee/kpis')
+  employeeKpis(@CurrentUser() user: AuthUser) {
+    return this.reports.employeeKpis(user.id);
+  }
+
+  /** Employee activity log for the dashboard. */
+  @Get('dashboard/employee/activity')
+  employeeActivity(@CurrentUser() user: AuthUser) {
+    return this.reports.employeeActivity(user.id);
+  }
+
+  /** "My assets over time" chart for the employee dashboard. */
+  @Get('dashboard/employee/chart')
+  employeeChart(@CurrentUser() user: AuthUser) {
+    return this.reports.employeeChart(user.id);
+  }
+
+  /** Dashboard chart: allocated vs available over the last 8 days. */
+  @Get('asset-activity')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.ASSET_MANAGER)
+  assetActivity() {
+    return this.reports.assetActivity();
+  }
+
+  /** Asset status distribution (pie/donut). */
+  @Get('asset-status')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.ASSET_MANAGER)
+  assetStatus() {
+    return this.reports.assetStatus();
+  }
+
+  /** Consolidated payload for the Reports & Analytics page. */
+  @Get('analytics')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.ASSET_MANAGER)
+  analytics() {
+    return this.reports.analytics();
   }
 
   /** Most-used vs idle assets. */

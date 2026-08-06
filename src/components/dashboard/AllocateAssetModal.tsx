@@ -23,53 +23,55 @@ import {
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────
-// SERVICE LAYER PLACEHOLDER
-// TODO: Replace with real API calls from src/services/allocationService.ts
+// SERVICE LAYER (real backend)
 // ─────────────────────────────────────────────────────────────
-const BASE_URL = "http://localhost:5000/api";
+import { apiGet, apiSend, unwrapList } from "@/lib/api";
 
 const allocationService = {
-  // GET /api/assets?status=Available
+  // GET /api/assets?status=AVAILABLE
   getAvailableAssets: async (): Promise<Asset[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/assets?status=Available`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_ASSETS;
-    }
+    const data = await apiGet<{ items: Array<Record<string, any>> }>("/assets?status=AVAILABLE");
+    return unwrapList(data as never).map((a: any) => ({
+      id: a.id,
+      assetTag: a.assetTag,
+      name: a.name,
+      category: a.category?.name ?? "—",
+      status: "Available",
+      condition: normalizeCondition(a.condition),
+      location: a.location ?? "—",
+      serialNumber: a.serialNumber,
+    }));
   },
 
-  // GET /api/employees?status=Active
+  // GET /api/org/employees?status=ACTIVE
   getEmployees: async (): Promise<Employee[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/employees?status=Active`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_EMPLOYEES;
-    }
+    const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/employees?status=ACTIVE");
+    return unwrapList(data as never).map((e: any) => ({
+      id: e.id,
+      name: e.name,
+      email: e.email,
+      department: e.department?.name ?? "—",
+      role: e.role ?? "Employee",
+      avatar: (e.name ?? "??")
+        .split(" ")
+        .map((n: string) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2),
+    }));
   },
 
-  // POST /api/allocations
-  allocateAsset: async (payload: AllocationPayload): Promise<{ success: boolean; allocationId?: string }> => {
+  // POST /api/allocations  { assetId, holderUserId, expectedReturnDate }
+  allocateAsset: async (payload: AllocationPayload): Promise<{ success: boolean; allocationId?: string; error?: string }> => {
     try {
-      const res = await fetch(`${BASE_URL}/allocations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify(payload),
+      const res = await apiSend<{ id: string }>("/allocations", "POST", {
+        assetId: payload.assetId,
+        holderUserId: payload.employeeId,
+        expectedReturnDate: payload.expectedReturnDate ?? undefined,
       });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return { success: true, allocationId: `ALLOC-${Date.now()}` };
+      return { success: true, allocationId: res.id };
+    } catch (err: any) {
+      return { success: false, allocationId: undefined, error: err?.message };
     }
   },
 };
@@ -119,32 +121,6 @@ interface AllocateAssetModalProps {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DUMMY DATA (used when backend not ready)
-// ─────────────────────────────────────────────────────────────
-const DUMMY_ASSETS: Asset[] = [
-  { id: "1",  assetTag: "AF-0001", name: "Dell Laptop XPS 15",      category: "Electronics",  status: "Available", condition: "Excellent", location: "IT Storage, Floor 2",  serialNumber: "DL-2024-001" },
-  { id: "2",  assetTag: "AF-0003", name: "iPhone 14 Pro",            category: "Electronics",  status: "Available", condition: "Good",      location: "IT Storage, Floor 2",  serialNumber: "IP-2024-003" },
-  { id: "3",  assetTag: "AF-0007", name: "Dell Monitor 27\"",        category: "Electronics",  status: "Available", condition: "Good",      location: "Warehouse A",          serialNumber: "DM-2023-007" },
-  { id: "4",  assetTag: "AF-0012", name: "Wireless Keyboard",        category: "Peripherals",  status: "Available", condition: "New",       location: "IT Storage, Floor 2",  serialNumber: "WK-2024-012" },
-  { id: "5",  assetTag: "AF-0018", name: "Canon DSLR Camera",        category: "Electronics",  status: "Available", condition: "Good",      location: "Marketing Storage",    serialNumber: "CC-2023-018" },
-  { id: "6",  assetTag: "AF-0025", name: "Office Chair (Ergonomic)", category: "Furniture",    status: "Available", condition: "Excellent", location: "Floor 3 Storage",      serialNumber: "OC-2024-025" },
-  { id: "7",  assetTag: "AF-0031", name: "HP LaserJet Printer",      category: "Electronics",  status: "Available", condition: "Fair",      location: "Operations Storage",   serialNumber: "HP-2022-031" },
-  { id: "8",  assetTag: "AF-0044", name: "Toyota Innova",            category: "Vehicles",     status: "Available", condition: "Good",      location: "Basement Parking",     serialNumber: "TI-2023-044" },
-];
-
-const DUMMY_EMPLOYEES: Employee[] = [
-  { id: "e1", name: "Priya Sharma",  email: "priya.sharma@company.com",  department: "Engineering", role: "Employee",        avatar: "PS" },
-  { id: "e2", name: "Raj Mehta",     email: "raj.mehta@company.com",     department: "Marketing",   role: "Employee",        avatar: "RM" },
-  { id: "e3", name: "Sara Ali",      email: "sara.ali@company.com",      department: "Marketing",   role: "Department Head", avatar: "SA" },
-  { id: "e4", name: "Kiran Das",     email: "kiran.das@company.com",     department: "Sales",       role: "Employee",        avatar: "KD" },
-  { id: "e5", name: "Amit Verma",    email: "amit.verma@company.com",    department: "HR",          role: "Asset Manager",   avatar: "AV" },
-  { id: "e6", name: "Pooja Singh",   email: "pooja.singh@company.com",   department: "Operations",  role: "Employee",        avatar: "PS" },
-  { id: "e7", name: "Vikram Nair",   email: "vikram.nair@company.com",   department: "Finance",     role: "Employee",        avatar: "VN" },
-  { id: "e8", name: "Ananya Das",    email: "ananya.das@company.com",    department: "Engineering", role: "Employee",        avatar: "AD" },
-  { id: "e9", name: "Ravi Kumar",    email: "ravi.kumar@company.com",    department: "Operations",  role: "Employee",        avatar: "RK" },
-];
-
-// ─────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────
 const today = () => new Date().toISOString().split("T")[0];
@@ -156,6 +132,17 @@ const conditionConfig: Record<Condition, { color: string; dot: string }> = {
   Fair:      { color: "text-amber-400",   dot: "bg-amber-400"   },
   Poor:      { color: "text-red-400",     dot: "bg-red-400"     },
 };
+
+/** Backend enum (NEW/GOOD/FAIR/POOR/DAMAGED) → display Condition label. */
+const normalizeCondition = (value: string | null | undefined): Condition =>
+  ({
+    NEW: "New",
+    EXCELLENT: "Excellent",
+    GOOD: "Good",
+    FAIR: "Fair",
+    POOR: "Poor",
+    DAMAGED: "Poor",
+  } as Record<string, Condition>)[(value ?? "").toUpperCase()] ?? "Good";
 
 const avatarColors = [
   "bg-blue-600","bg-purple-600","bg-emerald-600",
@@ -297,7 +284,8 @@ function SearchDropdown<T>({
 // ASSET SUMMARY CARD
 // ─────────────────────────────────────────────────────────────
 const AssetSummaryCard = ({ asset }: { asset: Asset }) => {
-  const cond = conditionConfig[asset.condition];
+  // Defensive fallback — never let an unknown condition crash the modal.
+  const cond = conditionConfig[asset.condition] ?? conditionConfig.Good;
   return (
     <motion.div
       initial={{ opacity: 0, height: 0 }}
@@ -355,6 +343,7 @@ const AllocateAssetModal = ({
   const [assets, setAssets] = useState<Asset[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [fetching, setFetching] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   // ── Form State ──
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
@@ -373,13 +362,21 @@ const AllocateAssetModal = ({
   useEffect(() => {
     if (!open) return;
     setFetching(true);
+    setLoadError("");
     Promise.all([
       allocationService.getAvailableAssets(),
       allocationService.getEmployees(),
-    ]).then(([a, e]) => {
-      setAssets(a);
-      setEmployees(e);
-    }).finally(() => setFetching(false));
+    ])
+      .then(([a, e]) => {
+        setAssets(a);
+        setEmployees(e);
+      })
+      .catch(() =>
+        setLoadError(
+          "Couldn't load assets & employees. Check that the backend is running.",
+        ),
+      )
+      .finally(() => setFetching(false));
 
     if (preSelectedAsset) setSelectedAsset(preSelectedAsset);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -437,7 +434,9 @@ const AllocateAssetModal = ({
         setAllocationId(result.allocationId ?? "");
         setStep("success");
       } else {
-        setErrors({ submit: "Allocation failed. Please try again." });
+        setErrors({
+          submit: result.error ?? "Allocation failed. Please try again.",
+        });
         setStep("form");
       }
     } catch {
@@ -497,6 +496,12 @@ const AllocateAssetModal = ({
 
                 {/* Body */}
                 <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+                  {loadError && (
+                    <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+                      <AlertTriangle size={14} /> {loadError}
+                    </div>
+                  )}
+
                   {fetching && (
                     <div className="flex items-center justify-center py-8 gap-2 text-zinc-500 text-sm">
                       <Loader2 size={18} className="animate-spin text-blue-400" />
@@ -516,7 +521,7 @@ const AllocateAssetModal = ({
                           selected={selectedAsset}
                           onSelect={(a) => {
                             setSelectedAsset(a);
-                            setCondition(a.condition as Condition);
+                            setCondition(normalizeCondition(a.condition));
                             setErrors((p) => ({ ...p, asset: "" }));
                           }}
                           renderSelected={(a) => (

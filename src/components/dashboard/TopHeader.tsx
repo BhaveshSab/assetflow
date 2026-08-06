@@ -1,7 +1,8 @@
-import { Bell, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
+import NotificationBell from "@/components/dashboard/NotificationBell";
 
 export interface TopHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   onMobileMenuToggle?: () => void;
@@ -10,7 +11,6 @@ export interface TopHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
 export default function TopHeader({
   className,
   onMobileMenuToggle,
-  ...props
 }: TopHeaderProps) {
   return (
     <motion.header
@@ -21,7 +21,6 @@ export default function TopHeader({
         "flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-4 sm:px-6",
         className
       )}
-      {...props}
     >
       {/* ── Left: mobile menu toggle ──────────────────────────── */}
       <div className="flex items-center">
@@ -38,27 +37,8 @@ export default function TopHeader({
 
       {/* ── Right: actions ─────────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        {/* Notification bell */}
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          className="relative inline-flex items-center justify-center rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
-        >
-          <motion.div
-            animate={{ rotate: [0, 15, -15, 0] }}
-            transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 4 }}
-          >
-            <Bell className="h-5 w-5" />
-          </motion.div>
-
-          {/* Pulsing notification dot */}
-          <motion.span
-            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-blue-500 ring-2 ring-zinc-950"
-            animate={{ scale: [1, 1.4, 1], opacity: [1, 0.6, 1] }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-          />
-        </motion.button>
+        {/* Real notification bell (live backend data) */}
+        <NotificationBell />
 
         {/* Avatar */}
         <motion.div

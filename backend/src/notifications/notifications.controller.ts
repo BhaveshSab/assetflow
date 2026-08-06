@@ -1,6 +1,8 @@
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -32,5 +34,12 @@ export class NotificationsController {
   @Post('read-all')
   markAllRead(@CurrentUser() user: AuthUser) {
     return this.notifications.markAllRead(user.id);
+  }
+
+  /** Send an overdue-return reminder to the holder of an allocation. */
+  @Post('ping')
+  @HttpCode(200)
+  ping(@CurrentUser() user: AuthUser, @Body() dto: { allocationId: string }) {
+    return this.notifications.pingAllocation(user.id, dto.allocationId);
   }
 }

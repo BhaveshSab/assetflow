@@ -10,8 +10,6 @@ import {
   Activity,
   BarChart3,
   ArrowLeftRight,
-  ClipboardList,
-  BookOpen,
   User,
   Crown,
   Briefcase,
@@ -62,16 +60,14 @@ const ALL_NAV_ITEMS: (NavItem & { allowedRoles: Role[] })[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, section: "MAIN", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD", "EMPLOYEE"] },
   { id: "asset-directory", label: "Asset Directory", icon: Boxes, section: "MAIN", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD"] },
 
-  { id: "allocations", label: "Allocations & Transfers", icon: ArrowLeftRight, section: "OPERATIONS", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD"] },
+  { id: "allocations", label: "Allocations & Transfers", icon: ArrowLeftRight, section: "OPERATIONS", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD", "EMPLOYEE"] },
   { id: "booking", label: "Resource Booking", icon: CalendarCheck, section: "OPERATIONS", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD", "EMPLOYEE"] },
   { id: "maintenance", label: "Maintenance", icon: Wrench, section: "OPERATIONS", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD", "EMPLOYEE"] },
 
   { id: "my-assets", label: "My Assets", icon: Package, section: "MY WORKSPACE", allowedRoles: ["EMPLOYEE"] },
-  { id: "my-bookings", label: "My Bookings", icon: BookOpen, section: "MY WORKSPACE", allowedRoles: ["EMPLOYEE"] },
-  { id: "my-maintenance", label: "My Requests", icon: ClipboardList, section: "MY WORKSPACE", allowedRoles: ["EMPLOYEE"] },
 
   { id: "audits", label: "Asset Audits", icon: ShieldCheck, section: "COMPLIANCE & DATA", allowedRoles: ["ADMIN", "ASSET_MANAGER"] },
-  { id: "reports", label: "Reports & Analytics", icon: BarChart3, section: "COMPLIANCE & DATA", allowedRoles: ["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD"] },
+  { id: "reports", label: "Reports & Analytics", icon: BarChart3, section: "COMPLIANCE & DATA", allowedRoles: ["ADMIN", "ASSET_MANAGER"] },
 
   { id: "organization", label: "Organization Setup", icon: Building2, section: "SYSTEM", allowedRoles: ["ADMIN"] },
   { id: "activity", label: "Activity Logs", icon: Activity, section: "SYSTEM", allowedRoles: ["ADMIN", "ASSET_MANAGER"] },

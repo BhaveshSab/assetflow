@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -177,6 +178,18 @@ export class AllocationsService {
         );
       }
 
+      // Managers may return any allocation; an employee may only return their
+      // own (holderUserId === caller).
+      const isManager =
+        user.role === Role.ADMIN ||
+        user.role === Role.ASSET_MANAGER ||
+        user.role === Role.DEPARTMENT_HEAD;
+      if (!isManager && allocation.holderUserId !== user.id) {
+        throw new ForbiddenException(
+          'You can only return an asset that is allocated to you',
+        );
+      }
+
       const updated = await tx.allocation.update({
         where: { id },
         data: {
@@ -228,8 +241,10 @@ export class AllocationsService {
     });
   }
 
-  /** Paginated allocation list with filters (incl. overdue). */
-  async list(query: QueryAllocationsDto) {
+  /** Paginated allocation list with filters (incl. overdue).
+   *  DEPARTMENT_HEAD callers are scoped to allocations that touch their own
+   *  department (either held by the department or by a user in it). */
+  async list(query: QueryAllocationsDto, user?: AuthUser) {
     const take = Math.min(query.take ?? 50, MAX_PAGE_SIZE);
     const skip = query.skip ?? 0;
 
@@ -246,6 +261,14 @@ export class AllocationsService {
           }
         : {}),
     };
+
+    // DEPARTMENT_HEAD: only allocations in their own department.
+    if (user?.role === Role.DEPARTMENT_HEAD && user.departmentId) {
+      where.OR = [
+        { departmentId: user.departmentId },
+        { holderUser: { departmentId: user.departmentId } },
+      ];
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.allocation.findMany({
@@ -265,12 +288,20 @@ export class AllocationsService {
     return { items, total };
   }
 
-  /** Overdue allocations — feeds the dashboard + overdue-return notifications. */
-  async listOverdue() {
+  /** Overdue allocations — feeds the dashboard + overdue-return notifications.
+   *  DEPARTMENT_HEAD callers are scoped to their own department (like list()). */
+  async listOverdue(user?: AuthUser) {
     const where: Prisma.AllocationWhereInput = {
       status: AllocationStatus.ACTIVE,
       expectedReturnDate: { lt: new Date() },
     };
+
+    if (user?.role === Role.DEPARTMENT_HEAD && user.departmentId) {
+      where.OR = [
+        { departmentId: user.departmentId },
+        { holderUser: { departmentId: user.departmentId } },
+      ];
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.allocation.findMany({
@@ -279,6 +310,36 @@ export class AllocationsService {
         take: MAX_PAGE_SIZE,
         include: {
           asset: true,
+          holderUser: { select: USER_SELECT },
+          department: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.allocation.count({ where }),
+    ]);
+
+    return { items, total };
+  }
+
+  /** Get current user's allocations (both active and returned). */
+  async listMyAllocations(userId: string) {
+    const where: Prisma.AllocationWhereInput = {
+      OR: [
+        { holderUserId: userId },
+        { allocatedById: userId },
+      ],
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.allocation.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: MAX_PAGE_SIZE,
+        include: {
+          asset: {
+            include: {
+              category: { select: { id: true, name: true } },
+            },
+          },
           holderUser: { select: USER_SELECT },
           department: { select: { id: true, name: true } },
         },
@@ -315,6 +376,18 @@ export class AllocationsService {
     if (!active) {
       throw new ConflictException(
         `Asset ${asset.assetTag} is not currently allocated; allocate it first`,
+      );
+    }
+
+    // Only the current holder (or a manager) may request a transfer. The UI
+    // hides this for employees, but the API must enforce it too.
+    const isManager =
+      user.role === Role.ADMIN ||
+      user.role === Role.ASSET_MANAGER ||
+      user.role === Role.DEPARTMENT_HEAD;
+    if (!isManager && active.holderUserId !== user.id) {
+      throw new ForbiddenException(
+        'You can only request a transfer for an asset allocated to you',
       );
     }
 
@@ -379,12 +452,38 @@ export class AllocationsService {
     return transfer;
   }
 
-  /** Approve a REQUESTED transfer: re-allocate the asset to the new holder. */
+  /** True when a transfer touches a department — current holder, target user,
+   *  or target department. Non-department managers are never subject to this. */
+  private transferTouchesDepartment(
+    transfer: {
+      toUserId: string | null;
+      toDepartmentId: string | null;
+      toUser?: { departmentId: string | null } | null;
+    },
+    active: {
+      departmentId: string | null;
+      holderUser?: { departmentId: string | null } | null;
+    },
+    deptId: string | null,
+  ): boolean {
+    if (!deptId) return false;
+    if (transfer.toDepartmentId === deptId) return true;
+    if (transfer.toUser?.departmentId === deptId) return true;
+    if (active.departmentId === deptId) return true;
+    if (active.holderUser?.departmentId === deptId) return true;
+    return false;
+  }
+
+  /** Approve a REQUESTED transfer: re-allocate the asset to the new holder.
+   *  DEPARTMENT_HEAD callers may only act on transfers in their own department. */
   async approveTransfer(id: string, user: AuthUser) {
     return this.prisma.$transaction(async (tx) => {
       const transfer = await tx.transferRequest.findUnique({
         where: { id },
-        include: { asset: true },
+        include: {
+          asset: true,
+          toUser: { select: USER_SELECT },
+        },
       });
       if (!transfer) throw new NotFoundException('Transfer request not found');
       if (transfer.status !== TransferStatus.REQUESTED) {
@@ -402,11 +501,23 @@ export class AllocationsService {
           assetId: transfer.assetId,
           status: AllocationStatus.ACTIVE,
         },
+        include: { holderUser: { select: USER_SELECT } },
       });
       if (!active) {
         throw new ConflictException(
           'Asset no longer has an active allocation to transfer',
         );
+      }
+
+      // DEPARTMENT_HEAD may only approve transfers touching their own department.
+      if (user.role === Role.DEPARTMENT_HEAD) {
+        const touches =
+          this.transferTouchesDepartment(transfer, active, user.departmentId);
+        if (!touches) {
+          throw new ForbiddenException(
+            'You can only approve transfers that involve your department',
+          );
+        }
       }
 
       await tx.allocation.update({
@@ -489,17 +600,42 @@ export class AllocationsService {
     });
   }
 
-  /** Reject a REQUESTED transfer — no re-allocation happens. */
+  /** Reject a REQUESTED transfer — no re-allocation happens.
+   *  DEPARTMENT_HEAD callers may only act on transfers in their own department. */
   async rejectTransfer(id: string, user: AuthUser) {
     const transfer = await this.prisma.transferRequest.findUnique({
       where: { id },
-      include: { asset: true },
+      include: {
+        asset: true,
+        toUser: { select: USER_SELECT },
+      },
     });
     if (!transfer) throw new NotFoundException('Transfer request not found');
     if (transfer.status !== TransferStatus.REQUESTED) {
       throw new ConflictException(
         `Transfer request is already ${transfer.status}`,
       );
+    }
+
+    // DEPARTMENT_HEAD may only reject transfers touching their own department.
+    if (user.role === Role.DEPARTMENT_HEAD) {
+      const active = await this.prisma.allocation.findFirst({
+        where: {
+          assetId: transfer.assetId,
+          status: AllocationStatus.ACTIVE,
+        },
+        include: { holderUser: { select: USER_SELECT } },
+      });
+      const touches = this.transferTouchesDepartment(
+        transfer,
+        active ?? { departmentId: null, holderUser: null },
+        user.departmentId,
+      );
+      if (!touches) {
+        throw new ForbiddenException(
+          'You can only reject transfers that involve your department',
+        );
+      }
     }
 
     const resolved = await this.prisma.transferRequest.update({
@@ -539,8 +675,9 @@ export class AllocationsService {
     return resolved;
   }
 
-  /** Paginated transfer list with filters. */
-  async listTransfers(query: QueryTransfersDto) {
+  /** Paginated transfer list with filters.
+   *  DEPARTMENT_HEAD callers only see transfers touching their own department. */
+  async listTransfers(query: QueryTransfersDto, user?: AuthUser) {
     const take = Math.min(query.take ?? 50, MAX_PAGE_SIZE);
     const skip = query.skip ?? 0;
 
@@ -548,6 +685,26 @@ export class AllocationsService {
       ...(query.status ? { status: query.status } : {}),
       ...(query.assetId ? { assetId: query.assetId } : {}),
     };
+
+    if (user?.role === Role.DEPARTMENT_HEAD && user.departmentId) {
+      where.OR = [
+        { toDepartmentId: user.departmentId },
+        { toUser: { departmentId: user.departmentId } },
+        {
+          asset: {
+            allocations: {
+              some: {
+                status: AllocationStatus.ACTIVE,
+                OR: [
+                  { departmentId: user.departmentId },
+                  { holderUser: { departmentId: user.departmentId } },
+                ],
+              },
+            },
+          },
+        },
+      ];
+    }
 
     const [items, total] = await Promise.all([
       this.prisma.transferRequest.findMany({

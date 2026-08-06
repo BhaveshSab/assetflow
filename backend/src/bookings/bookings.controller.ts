@@ -35,6 +35,14 @@ export class BookingsController {
     return this.bookings.findAll(user, query);
   }
 
+  /** Convenience alias for the employee dashboard: the current user's bookings. */
+  @Get('my')
+  myBookings(@CurrentUser() user: AuthUser) {
+    return this.bookings.findAll(user, {
+      mine: true,
+    } as QueryBookingsDto);
+  }
+
   /** Fetch a single booking by id. */
   @Get(':id')
   findOne(@Param('id') id: string) {

@@ -91,6 +91,14 @@ export class MaintenanceController {
     return this.maintenance.list(user, query);
   }
 
+  /** Convenience alias for the employee dashboard: my maintenance requests. */
+  @Get('my')
+  myRequests(@CurrentUser() user: AuthUser) {
+    return this.maintenance.list(user, {
+      mine: 'true',
+    } as unknown as ListMaintenanceDto);
+  }
+
   /** Single maintenance request. */
   @Get(':id')
   findOne(@Param('id') id: string) {

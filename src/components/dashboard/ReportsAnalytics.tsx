@@ -23,6 +23,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { apiGet, authHeaders, BASE_URL } from "@/lib/api";
 
 // Animation variants
 const containerVariants = {
@@ -93,53 +94,8 @@ export default function ReportsAnalytics() {
       setError(null);
 
       try {
-        // TODO: Replace with your actual backend API call
-        // const response = await fetch(`/api/analytics?range=${timeRange}`);
-        // if (!response.ok) throw new Error('Failed to fetch analytics');
-        // const data = await response.json();
-        // setAnalyticsData(data);
-
-        // --- Simulated Backend Delay ---
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        const mockData: AnalyticsData = {
-          kpis: {
-            totalAssets: 1248,
-            utilizationRate: 78,
-            maintenancePending: 14,
-            activeBookings: 45,
-          },
-          utilizationTrend: [
-            { month: "Mar", rate: 65 },
-            { month: "Apr", rate: 68 },
-            { month: "May", rate: 72 },
-            { month: "Jun", rate: 75 },
-            { month: "Jul", rate: 82 },
-            { month: "Aug", rate: 78 },
-          ],
-          departmentAllocations: [
-            { dept: "Engineering", count: 420 },
-            { dept: "Sales", count: 210 },
-            { dept: "Design", count: 180 },
-            { dept: "Marketing", count: 150 },
-            { dept: "HR & Admin", count: 95 },
-          ],
-          assetStatus: [
-            { name: "Allocated", value: 850, color: "#3b82f6" },
-            { name: "Available", value: 310, color: "#10b981" },
-            { name: "Maintenance", value: 65, color: "#f59e0b" },
-            { name: "Lost/Retired", value: 23, color: "#ef4444" },
-          ],
-          bookingHeatmap: Array.from({ length: 5 }, (_, dayIdx) =>
-            Array.from({ length: 8 }, (_, hourIdx) => ({
-              day: ["Mon", "Tue", "Wed", "Thu", "Fri"][dayIdx],
-              hour: `${hourIdx + 9}AM`,
-              intensity: Math.floor(Math.random() * 10),
-            }))
-          ),
-        };
-
-        setAnalyticsData(mockData);
+        const data = await apiGet<AnalyticsData>("/reports/analytics");
+        setAnalyticsData(data);
       } catch (err) {
         setError(
           err instanceof Error
@@ -153,6 +109,27 @@ export default function ReportsAnalytics() {
 
     fetchAnalytics();
   }, [timeRange]);
+
+  // ── Export: download the real asset CSV from the backend ──
+  const handleExport = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/reports/export/assets.csv`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `assetflow-assets-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed. Is the backend running?");
+    }
+  };
 
   // Custom Tooltip for Recharts (Dark Mode Native)
   const CustomTooltip = ({
@@ -200,10 +177,11 @@ export default function ReportsAnalytics() {
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
+          onClick={handleExport}
           className="flex items-center gap-2 bg-[#161925] border border-zinc-700 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-lg transition-all"
         >
           <Download size={18} />
-          Export PDF Report
+          Export CSV Report
         </motion.button>
       </div>
 

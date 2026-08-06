@@ -1,14 +1,12 @@
 /**
  * Organization Service Layer
- * 
- * Centralized service for all Organization Setup CRUD operations.
- * Each function follows RESTful conventions and includes TODO comments
- * for backend integration.
- * 
- * Authentication: Every function should pass the user's auth token
- * to the backend. Since this is an Admin-only screen, the backend
- * must verify the user's role before allowing mutations.
+ *
+ * All Organization Setup CRUD operations now talk to the real NestJS backend:
+ *   GET/POST /org/departments, PATCH /org/departments/:id
+ *   GET/POST /org/categories,  PATCH /org/categories/:id
+ *   GET/PATCH /org/employees
  */
+import { apiGet, apiSend } from "@/lib/api";
 
 // =============================================
 // TYPES
@@ -48,162 +46,186 @@ export interface CategoryFormData {
 }
 
 // =============================================
+// HELPERS
+// =============================================
+
+/** Resolve a department name → id (for parentDepartmentId in create/update). */
+async function departmentIdByName(name: string): Promise<string | undefined> {
+  if (!name) return undefined;
+  const data = await apiGet<{ items: Array<{ id: string; name: string }> }>(
+    `/org/departments?q=${encodeURIComponent(name)}`,
+  );
+  return data.items.find((d) => d.name.toLowerCase() === name.toLowerCase())?.id;
+}
+
+/** Resolve an employee name → id (for headId in create/update). */
+async function userIdByName(name: string): Promise<string | undefined> {
+  if (!name) return undefined;
+  const data = await apiGet<{ items: Array<{ id: string; name: string }> }>(
+    `/org/employees?q=${encodeURIComponent(name)}`,
+  );
+  return data.items.find((e) => e.name.toLowerCase() === name.toLowerCase())?.id;
+}
+
+const friendlyStatus = (s: string) => (s === "INACTIVE" ? "Inactive" : "Active");
+
+// =============================================
 // DEPARTMENT API
 // =============================================
 
-/**
- * Fetches all departments.
- * GET /api/departments
- */
+/** GET /org/departments */
 export async function fetchDepartments(): Promise<Department[]> {
-  // TODO: Replace with: const token = getAuthToken();
-  // const response = await axios.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-  return [
-    { id: "D-HQ", name: "Headquarters", head: "Admin Team", headEmail: "bhavesh.cool2005@gmail.com", parent: null, status: "Active", employeeCount: 120 },
-    { id: "D-ENG", name: "Engineering", head: "Bhavesh Sabnani", headEmail: "bhavesh.sabnani2005@gmail.com", parent: "Headquarters", status: "Active", employeeCount: 45 },
-    { id: "D-MKT", name: "Marketing", head: "Sarah Jenkins", headEmail: "sarah.j@example.com", parent: "Headquarters", status: "Active", employeeCount: 18 },
-    { id: "D-LEG", name: "Legal & Compliance", head: "Unassigned", headEmail: "", parent: "Headquarters", status: "Inactive", employeeCount: 0 },
-  ];
+  const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/departments");
+  return (data.items ?? []).map((d) => ({
+    id: d.id,
+    name: d.name,
+    head: d.head?.name ?? "Unassigned",
+    headEmail: d.head?.email ?? "",
+    parent: d.parentDepartment?.name ?? null,
+    status: friendlyStatus(d.status),
+    employeeCount: d._count?.members ?? 0,
+  }));
 }
 
-/**
- * Creates a new department.
- * POST /api/departments
- */
+/** POST /org/departments  { name, headId?, parentDepartmentId?, status? } */
 export async function createDepartment(data: DeptFormData): Promise<Department> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const response = await axios.post('/api/departments', data, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  return {
-    id: `D-${Date.now()}`,
+  const headId = await userIdByName(data.head);
+  const parentDepartmentId = await departmentIdByName(data.parent);
+  const created = await apiSend<Record<string, any>>("/org/departments", "POST", {
     name: data.name,
-    head: data.head || "Unassigned",
-    headEmail: "",
-    parent: data.parent || null,
-    status: data.status,
-    employeeCount: 0,
-  };
-}
-
-/**
- * Updates an existing department.
- * PATCH /api/departments/:id
- */
-export async function updateDepartment(id: string, data: Partial<DeptFormData>): Promise<Department> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const response = await axios.patch(`/api/departments/${id}`, data, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
+    headId: headId ?? undefined,
+    parentDepartmentId: parentDepartmentId ?? undefined,
+    status: data.status === "Inactive" ? "INACTIVE" : undefined,
+  });
   return {
-    id,
-    name: data.name ?? "",
-    head: data.head ?? "Unassigned",
-    headEmail: "",
-    parent: data.parent ?? null,
-    status: data.status ?? "Active",
-    employeeCount: 0,
+    id: created.id,
+    name: created.name,
+    head: created.head?.name ?? (data.head || "Unassigned"),
+    headEmail: created.head?.email ?? "",
+    parent: created.parentDepartment?.name ?? null,
+    status: friendlyStatus(created.status),
+    employeeCount: created._count?.members ?? 0,
   };
 }
 
-/**
- * Toggles a department's status (Active <-> Inactive).
- * PATCH /api/departments/:id/status
- */
-export async function toggleDepartmentStatus(id: string, currentStatus: string): Promise<string> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-  // const response = await axios.patch(`/api/departments/${id}/status`, { status: newStatus }, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data.status;
+/** PATCH /org/departments/:id */
+export async function updateDepartment(
+  id: string,
+  data: Partial<DeptFormData>,
+): Promise<Department> {
+  const headId = data.head ? await userIdByName(data.head) : undefined;
+  const parentDepartmentId = data.parent ? await departmentIdByName(data.parent) : undefined;
+  const updated = await apiSend<Record<string, any>>(`/org/departments/${id}`, "PATCH", {
+    ...(data.name ? { name: data.name } : {}),
+    ...(headId ? { headId } : data.head === "" ? { headId: null } : {}),
+    ...(parentDepartmentId ? { parentDepartmentId } : data.parent === "" ? { parentDepartmentId: null } : {}),
+    ...(data.status ? { status: data.status === "Inactive" ? "INACTIVE" : "ACTIVE" } : {}),
+  });
+  return {
+    id: updated.id,
+    name: updated.name,
+    head: updated.head?.name ?? "Unassigned",
+    headEmail: updated.head?.email ?? "",
+    parent: updated.parentDepartment?.name ?? null,
+    status: friendlyStatus(updated.status),
+    employeeCount: updated._count?.members ?? 0,
+  };
+}
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  return currentStatus === "Active" ? "Inactive" : "Active";
+/** PATCH /org/departments/:id { status } */
+export async function toggleDepartmentStatus(
+  id: string,
+  currentStatus: string,
+): Promise<string> {
+  const next = currentStatus === "Active" ? "INACTIVE" : "ACTIVE";
+  const updated = await apiSend<{ status: string }>(`/org/departments/${id}`, "PATCH", {
+    status: next,
+  });
+  return friendlyStatus(updated.status);
 }
 
 // =============================================
 // ASSET CATEGORY API
 // =============================================
 
-/**
- * Fetches all asset categories.
- * GET /api/categories
- */
+/** GET /org/categories */
 export async function fetchCategories(): Promise<AssetCategory[]> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const response = await axios.get('/api/categories', { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-  return [
-    { id: "CAT-01", name: "Electronics & IT", description: "Laptops, monitors, servers, and peripherals.", customFields: ["Warranty Expiry", "OS Version", "MAC Address"], assetCount: 450, status: "Active" },
-    { id: "CAT-02", name: "Vehicles", description: "Company cars, delivery vans, and trucks.", customFields: ["License Plate", "Mileage", "Last Service Date"], assetCount: 24, status: "Active" },
-    { id: "CAT-03", name: "Office Furniture", description: "Desks, ergonomic chairs, and conference tables.", customFields: ["Material", "Dimensions"], assetCount: 850, status: "Active" },
-    { id: "CAT-04", name: "Heavy Machinery", description: "Warehouse forklifts and manufacturing equipment.", customFields: ["Load Capacity", "Safety Inspection Date"], assetCount: 12, status: "Inactive" },
-  ];
+  const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/categories");
+  return (data.items ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    description: "",
+    customFields: Array.isArray(c.customFields)
+      ? c.customFields.map((f: any) => f?.key ?? String(f))
+      : [],
+    assetCount: c._count?.assets ?? 0,
+    status: friendlyStatus(c.status),
+  }));
 }
 
-/**
- * Creates a new asset category.
- * POST /api/categories
- */
+/** POST /org/categories  { name, customFields?, status? } */
 export async function createCategory(data: CategoryFormData): Promise<AssetCategory> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const response = await axios.post('/api/categories', { ...data, customFields: data.customFields.split(',').map(f => f.trim()).filter(Boolean) }, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  return {
-    id: `CAT-${Date.now()}`,
+  const created = await apiSend<Record<string, any>>("/org/categories", "POST", {
     name: data.name,
-    description: data.description || "",
-    customFields: data.customFields.split(",").map((f) => f.trim()).filter(Boolean),
-    assetCount: 0,
-    status: data.status,
-  };
-}
-
-/**
- * Updates an existing asset category.
- * PATCH /api/categories/:id
- */
-export async function updateCategory(id: string, data: Partial<CategoryFormData>): Promise<AssetCategory> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const response = await axios.patch(`/api/categories/${id}`, { ...data, customFields: data.customFields?.split(',').map(f => f.trim()).filter(Boolean) }, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data;
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
+    customFields: data.customFields
+      ? data.customFields
+          .split(",")
+          .map((f) => f.trim())
+          .filter(Boolean)
+          .map((key) => ({ key, type: "string" }))
+      : undefined,
+    status: data.status === "Inactive" ? "INACTIVE" : undefined,
+  });
   return {
-    id,
-    name: data.name ?? "",
-    description: data.description ?? "",
-    customFields: data.customFields?.split(",").map((f) => f.trim()).filter(Boolean) ?? [],
-    assetCount: 0,
-    status: data.status ?? "Active",
+    id: created.id,
+    name: created.name,
+    description: "",
+    customFields: Array.isArray(created.customFields)
+      ? created.customFields.map((f: any) => f?.key ?? String(f))
+      : [],
+    assetCount: created._count?.assets ?? 0,
+    status: friendlyStatus(created.status),
   };
 }
 
-/**
- * Toggles a category's status (Active <-> Inactive).
- * PATCH /api/categories/:id/status
- */
-export async function toggleCategoryStatus(id: string, currentStatus: string): Promise<string> {
-  // TODO: Replace with:
-  // const token = getAuthToken();
-  // const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-  // const response = await axios.patch(`/api/categories/${id}/status`, { status: newStatus }, { headers: { Authorization: `Bearer ${token}` } });
-  // return response.data.status;
+/** PATCH /org/categories/:id */
+export async function updateCategory(
+  id: string,
+  data: Partial<CategoryFormData>,
+): Promise<AssetCategory> {
+  const updated = await apiSend<Record<string, any>>(`/org/categories/${id}`, "PATCH", {
+    ...(data.name ? { name: data.name } : {}),
+    ...(data.customFields !== undefined
+      ? {
+          customFields: data.customFields
+            .split(",")
+            .map((f) => f.trim())
+            .filter(Boolean)
+            .map((key) => ({ key, type: "string" })),
+        }
+      : {}),
+    ...(data.status ? { status: data.status === "Inactive" ? "INACTIVE" : "ACTIVE" } : {}),
+  });
+  return {
+    id: updated.id,
+    name: updated.name,
+    description: "",
+    customFields: Array.isArray(updated.customFields)
+      ? updated.customFields.map((f: any) => f?.key ?? String(f))
+      : [],
+    assetCount: updated._count?.assets ?? 0,
+    status: friendlyStatus(updated.status),
+  };
+}
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  return currentStatus === "Active" ? "Inactive" : "Active";
+/** PATCH /org/categories/:id { status } */
+export async function toggleCategoryStatus(
+  id: string,
+  currentStatus: string,
+): Promise<string> {
+  const next = currentStatus === "Active" ? "INACTIVE" : "ACTIVE";
+  const updated = await apiSend<{ status: string }>(`/org/categories/${id}`, "PATCH", {
+    status: next,
+  });
+  return friendlyStatus(updated.status);
 }

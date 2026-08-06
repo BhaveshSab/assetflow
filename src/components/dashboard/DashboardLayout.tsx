@@ -11,7 +11,9 @@ export type ViewName =
   | "Maintenance"
   | "AssetAudits"
   | "ReportsAnalytics"
-  | "OrganizationSetup";
+  | "OrganizationSetup"
+  | "ActivityLogs"
+  | "MyAssets";
 
 export interface DashboardLayoutProps {
   children: React.ReactNode;

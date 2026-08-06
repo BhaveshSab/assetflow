@@ -445,4 +445,248 @@ export class ReportsService {
     }
     return value;
   }
+
+  /** Employee-specific KPIs for the dashboard. */
+  async employeeKpis(userId: string) {
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [myAllocations, myUpcomingReturns, myOverdueReturns, myActiveBookings] =
+      await Promise.all([
+        // Total assets currently allocated to this user
+        this.prisma.allocation.count({
+          where: {
+            holderUserId: userId,
+            status: AllocationStatus.ACTIVE,
+          },
+        }),
+        // Upcoming returns (within 7 days)
+        this.prisma.allocation.count({
+          where: {
+            holderUserId: userId,
+            status: AllocationStatus.ACTIVE,
+            expectedReturnDate: { gte: now, lte: in7Days },
+          },
+        }),
+        // Overdue returns
+        this.prisma.allocation.count({
+          where: {
+            holderUserId: userId,
+            status: AllocationStatus.ACTIVE,
+            expectedReturnDate: { lt: now },
+          },
+        }),
+        // Active bookings
+        this.prisma.booking.count({
+          where: {
+            bookedById: userId,
+            status: { not: BookingStatus.CANCELLED },
+            startTime: { lte: now },
+            endTime: { gt: now },
+          },
+        }),
+      ]);
+
+    return {
+      myAllocations,
+      myUpcomingReturns,
+      myOverdueReturns,
+      myActiveBookings,
+    };
+  }
+
+  /**
+   * Dashboard chart data: allocated vs available (returns) per day over the
+   * last 8 days. Bucketed in JS so we avoid N queries.
+   */
+  async assetActivity() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [allocatedAll, returnedAll] = await Promise.all([
+      this.prisma.allocation.findMany({
+        select: { allocatedAt: true },
+      }),
+      this.prisma.allocation.findMany({
+        where: { status: AllocationStatus.RETURNED, returnedAt: { not: null } },
+        select: { returnedAt: true },
+      }),
+    ]);
+
+    const toDayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const points: { date: string; allocated: number; available: number }[] = [];
+
+    for (let i = 7; i >= 0; i--) {
+      const day = new Date(today.getTime() - i * 86_400_000);
+      const key = toDayKey(day);
+      points.push({
+        date: `${day.getDate()}/${day.getMonth() + 1}`,
+        allocated: allocatedAll.filter((a) => toDayKey(a.allocatedAt) === key).length,
+        available: returnedAll.filter(
+          (a) => a.returnedAt && toDayKey(a.returnedAt) === key,
+        ).length,
+      });
+    }
+    return points;
+  }
+
+  /** Asset status distribution (current snapshot) for pie/donut charts. */
+  async assetStatus() {
+    const grouped = await this.prisma.asset.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    });
+
+    const LABELS: Record<string, string> = {
+      AVAILABLE: 'Available',
+      ALLOCATED: 'Allocated',
+      RESERVED: 'Reserved',
+      UNDER_MAINTENANCE: 'Under Maintenance',
+      LOST: 'Lost',
+      RETIRED: 'Retired',
+      DISPOSED: 'Disposed',
+    };
+    const COLORS: Record<string, string> = {
+      AVAILABLE: '#10b981',
+      ALLOCATED: '#3b82f6',
+      RESERVED: '#8b5cf6',
+      UNDER_MAINTENANCE: '#f59e0b',
+      LOST: '#ef4444',
+      RETIRED: '#6b7280',
+      DISPOSED: '#ef4444',
+    };
+
+    return grouped.map((g) => ({
+      name: LABELS[g.status] ?? g.status,
+      value: g._count._all,
+      color: COLORS[g.status] ?? '#6b7280',
+    }));
+  }
+
+  /**
+   * Consolidated payload for the Reports & Analytics page: KPIs, utilization
+   * trend, department allocations, asset status and booking heatmap.
+   */
+  async analytics() {
+    const now = new Date();
+    const MONTHS = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+
+    const [dash, status, dept, heatmap, totalAssets, allocatedRows] =
+      await Promise.all([
+        this.dashboard(),
+        this.assetStatus(),
+        this.departmentAllocation(),
+        this.bookingHeatmap(),
+        this.prisma.asset.count(),
+        this.prisma.allocation.findMany({
+          where: {
+            allocatedAt: {
+              gte: new Date(now.getFullYear(), now.getMonth() - 5, 1),
+            },
+          },
+          select: { allocatedAt: true },
+        }),
+      ]);
+
+    const utilizationRate =
+      totalAssets > 0
+        ? Math.round((dash.assetsAllocated / totalAssets) * 100)
+        : 0;
+
+    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
+    const utilizationTrend: { month: string; rate: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const count = allocatedRows.filter(
+        (r) => monthKey(r.allocatedAt) === monthKey(d),
+      ).length;
+      utilizationTrend.push({
+        month: MONTHS[d.getMonth()],
+        rate: totalAssets > 0 ? Math.round((count / totalAssets) * 100) : 0,
+      });
+    }
+
+    const deptRows =
+      dept.byHolderDepartment.length > 0
+        ? dept.byHolderDepartment
+        : dept.byAllocationDepartment;
+    const departmentAllocations = deptRows.map((row) => ({
+      dept: row.departmentName ?? 'Unassigned',
+      count: row.count,
+    }));
+
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const bookingHeatmap = dayNames.map((day, idx) => {
+      const dayOfWeek = idx + 1; // getDay(): 1=Mon .. 5=Fri
+      return Array.from({ length: 8 }, (_, h) => {
+        const hour = h + 9;
+        const cell = heatmap.cells.find(
+          (c) => c.dayOfWeek === dayOfWeek && c.hour === hour,
+        );
+        return { day, hour: `${hour}AM`, intensity: cell?.count ?? 0 };
+      });
+    });
+
+    return {
+      kpis: {
+        totalAssets,
+        utilizationRate,
+        maintenancePending: dash.maintenanceToday,
+        activeBookings: dash.activeBookings,
+      },
+      utilizationTrend,
+      departmentAllocations,
+      assetStatus: status,
+      bookingHeatmap,
+    };
+  }
+
+  /** Employee activity log for the dashboard. */
+  async employeeActivity(userId: string) {
+    const activities = await this.prisma.activityLog.findMany({
+      where: { actorId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        metadata: true,
+        createdAt: true,
+      },
+    });
+
+    return { items: activities, total: activities.length };
+  }
+
+  /** "My assets over time" chart: cumulative allocations held, per month. */
+  async employeeChart(userId: string) {
+    const now = new Date();
+    const MONTHS = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    const rows = await this.prisma.allocation.findMany({
+      where: { holderUserId: userId, allocatedAt: { gte: start } },
+      select: { allocatedAt: true },
+    });
+
+    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
+    const chart: { month: string; assets: number }[] = [];
+    let cumulative = 0;
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      cumulative += rows.filter(
+        (r) => monthKey(r.allocatedAt) === monthKey(d),
+      ).length;
+      chart.push({ month: MONTHS[d.getMonth()], assets: cumulative });
+    }
+    return chart;
+  }
 }

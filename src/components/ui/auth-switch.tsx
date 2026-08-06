@@ -10,7 +10,7 @@ import {
   Sparkles,
   User as UserIcon,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 import { Link } from "react-router-dom";
 
@@ -154,8 +154,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
       brand,
       loading = false,
       error,
-      otherTo,
-      ...props
+      otherTo
     },
     ref
   ) => {
@@ -217,7 +216,6 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
           "w-full max-w-5xl overflow-hidden rounded-2xl bg-card shadow-xl shadow-primary/10 ring-1 ring-border md:grid md:grid-cols-2",
           className
         )}
-        {...props}
       >
         {/* LEFT: purple brand / toggle panel */}
         <aside className="relative hidden flex-col justify-between bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 p-10 text-white md:flex">
@@ -456,7 +454,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                 ? isSignup
                   ? "Creating account…"
                   : "Signing in…"
-                : isSignup
+                :      isSignup
                 ? "Create account"
                 : "Sign in"}
             </Button>

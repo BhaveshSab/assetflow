@@ -23,10 +23,10 @@ import {
   MapPin,
   Calendar,
   CircleAlert,
-  CornerUpLeft,
   Info,
   BadgeCheck,
   ChevronRight,
+  type LucideIcon,
 } from "lucide-react";
 import {
   AreaChart,
@@ -38,11 +38,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { getSession } from "@/lib/auth";
-
-// ─────────────────────────────────────────────────────────────
-// CONFIGURATION
-// ─────────────────────────────────────────────────────────────
-const BASE_URL = "http://localhost:5000/api";
+import { apiGet, apiSend } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -74,6 +70,7 @@ interface MyAsset {
 
 interface MyBooking {
   id: number;
+  _id?: string;
   resource: string;
   date: string;
   start: string;
@@ -115,133 +112,132 @@ interface EmployeeDashboardProps {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DUMMY / FALLBACK DATA
+// API SERVICE (real backend — no fake data; failures surface as errors)
 // ─────────────────────────────────────────────────────────────
-const DUMMY_KPI: KPIData = {
-  myAllocatedAssets: 4,
-  myActiveBookings: 2,
-  myUpcomingReturns: 1,
-  myOverdueReturns: 1,
-  kpiTrends: {
-    myAllocatedAssets: "Items currently in your possession",
-    myActiveBookings: "Rooms/resources reserved by you",
-    myUpcomingReturns: "Due within next 7 days",
-    myOverdueReturns: "Please return immediately",
-  },
+// ─────────────────────────────────────────────────────────────
+// HELPERS (display mapping)
+// ─────────────────────────────────────────────────────────────
+const titleCase = (s: string) =>
+  s.replace(/_/g, " ").replace(/(^|\s)\w/g, (m) => m.toUpperCase());
+
+const statusForAction = (action: string): string => {
+  if (action.includes("overdue") || action.includes("reject")) return "danger";
+  if (action.includes("maintenance") || action.includes("transfer")) return "warning";
+  if (action.includes("booking")) return "info";
+  return "success";
 };
 
-const DUMMY_MY_ASSETS: MyAsset[] = [
-  { id: 1, assetTag: "AF-0114", assetName: "Dell Laptop", category: "Electronics", condition: "Good", allocatedOn: "2025-06-01", expectedReturn: "2025-08-01", status: "Allocated", icon: "laptop" },
-  { id: 2, assetTag: "AF-0202", assetName: "iPhone 14", category: "Electronics", condition: "Excellent", allocatedOn: "2025-05-15", expectedReturn: "2025-07-10", status: "Overdue", icon: "phone" },
-  { id: 3, assetTag: "AF-0088", assetName: 'Dell Monitor 24"', category: "Electronics", condition: "Good", allocatedOn: "2025-06-10", expectedReturn: "2025-09-10", status: "Allocated", icon: "monitor" },
-  { id: 4, assetTag: "AF-0311", assetName: "Wireless Keyboard", category: "Peripherals", condition: "Good", allocatedOn: "2025-07-01", expectedReturn: null, status: "Allocated", icon: "tag" },
-];
+const prettyAction = (action: string) =>
+  action.replace(/\./g, " ").replace(/(^|\s)\w/g, (m) => m.toUpperCase());
 
-const DUMMY_MY_BOOKINGS: MyBooking[] = [
-  { id: 1, resource: "Conference Room B2", date: "2025-07-13", start: "10:00", end: "11:00", status: "Upcoming", location: "Floor 2, Block B" },
-  { id: 2, resource: "Projector #3", date: "2025-07-14", start: "14:00", end: "15:30", status: "Upcoming", location: "AV Room, Floor 1" },
-  { id: 3, resource: "Training Room A", date: "2025-07-08", start: "09:00", end: "10:00", status: "Completed", location: "Floor 3, Block A" },
-];
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const DUMMY_MY_MAINTENANCE: MyMaintenance[] = [
-  { id: 1, assetTag: "AF-0114", assetName: "Dell Laptop", issue: "Screen flickering", status: "InProgress", raisedOn: "2025-07-10", priority: "High" },
-  { id: 2, assetTag: "AF-0088", assetName: "Dell Monitor", issue: "No HDMI signal", status: "Pending", raisedOn: "2025-07-11", priority: "Medium" },
-];
-
-const DUMMY_ACTIVITY: ActivityItem[] = [
-  { id: 1, text: "Dell Laptop AF-0114 allocated to you", time: "Jun 1", status: "success" },
-  { id: 2, text: "Conference Room B2 booked for Jul 13, 10:00-11:00", time: "Yesterday", status: "info" },
-  { id: 3, text: "Maintenance raised for Dell Laptop - Screen issue", time: "Jul 10", status: "warning" },
-  { id: 4, text: "iPhone 14 AF-0202 is overdue for return", time: "Jul 10", status: "danger" },
-  { id: 5, text: "Wireless Keyboard AF-0311 allocated to you", time: "Jul 1", status: "success" },
-];
-
-const DUMMY_CHART: ChartItem[] = [
-  { month: "Feb", assets: 2 },
-  { month: "Mar", assets: 2 },
-  { month: "Apr", assets: 3 },
-  { month: "May", assets: 3 },
-  { month: "Jun", assets: 4 },
-  { month: "Jul", assets: 4 },
-];
+const MT_STATUS: Record<string, string> = {
+  PENDING: "Pending",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  TECHNICIAN_ASSIGNED: "Assigned",
+  IN_PROGRESS: "InProgress",
+  RESOLVED: "Resolved",
+};
 
 // ─────────────────────────────────────────────────────────────
-// API SERVICE
+// API SERVICE (real backend)
 // ─────────────────────────────────────────────────────────────
 const apiService = {
   getKPIs: async (): Promise<KPIData> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/employee/kpis`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_KPI;
-    }
+    const d = await apiGet<{
+      myAllocations: number;
+      myActiveBookings: number;
+      myUpcomingReturns: number;
+      myOverdueReturns: number;
+    }>("/reports/dashboard/employee/kpis");
+    return {
+      myAllocatedAssets: d.myAllocations ?? 0,
+      myActiveBookings: d.myActiveBookings ?? 0,
+      myUpcomingReturns: d.myUpcomingReturns ?? 0,
+      myOverdueReturns: d.myOverdueReturns ?? 0,
+      kpiTrends: {
+        myAllocatedAssets: "Items currently in your possession",
+        myActiveBookings: "Rooms/resources reserved by you",
+        myUpcomingReturns: "Due within next 7 days",
+        myOverdueReturns: "Please return immediately",
+      },
+    };
   },
   getMyAssets: async (): Promise<MyAsset[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/allocations/my`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_MY_ASSETS;
-    }
+    const data = await apiGet<{ items: Array<{
+      id: string; status: string; expectedReturnDate: string | null; allocatedAt: string;
+      asset?: { assetTag: string; name: string; condition: string; category?: { name: string } };
+    }> }>("/allocations/my");
+    const now = Date.now();
+    return data.items.map((a, i) => {
+      const expected = a.expectedReturnDate ? a.expectedReturnDate.slice(0, 10) : null;
+      const isOverdue = a.status === "ACTIVE" && expected && new Date(expected).getTime() < now;
+      return {
+        id: i + 1,
+        assetTag: a.asset?.assetTag ?? "",
+        assetName: a.asset?.name ?? "Asset",
+        category: a.asset?.category?.name ?? "—",
+        condition: a.asset?.condition ?? "—",
+        allocatedOn: a.allocatedAt?.slice(0, 10) ?? "",
+        expectedReturn: expected,
+        status: a.status === "RETURNED" ? "Returned" : isOverdue ? "Overdue" : "Allocated",
+        icon: "tag",
+      };
+    });
   },
   getMyBookings: async (): Promise<MyBooking[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/bookings/my`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_MY_BOOKINGS;
-    }
+    const data = await apiGet<{ items: Array<{
+      id: string; effectiveStatus: string; startTime: string; endTime: string;
+      asset?: { name: string; location?: string | null };
+    }> }>("/bookings/my");
+    return data.items.map((b, i) => ({
+      id: i + 1,
+      _id: b.id,
+      resource: b.asset?.name ?? "Resource",
+      date: b.startTime.slice(0, 10),
+      start: fmtTime(b.startTime),
+      end: fmtTime(b.endTime),
+      status: titleCase(b.effectiveStatus),
+      location: b.asset?.location ?? "—",
+    }));
   },
   getMyMaintenance: async (): Promise<MyMaintenance[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/maintenance/my`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_MY_MAINTENANCE;
-    }
+    const data = await apiGet<{ items: Array<{
+      id: string; status: string; priority: string; description: string; createdAt: string;
+      asset?: { assetTag: string; name: string };
+    }> }>("/maintenance/my");
+    return data.items.map((r, i) => ({
+      id: i + 1,
+      assetTag: r.asset?.assetTag ?? "",
+      assetName: r.asset?.name ?? "Asset",
+      issue: r.description,
+      status: MT_STATUS[r.status] ?? titleCase(r.status),
+      raisedOn: r.createdAt.slice(0, 10),
+      priority: titleCase(r.priority),
+    }));
   },
   getMyActivity: async (): Promise<ActivityItem[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/employee/activity`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_ACTIVITY;
-    }
+    const data = await apiGet<{ items: Array<{ action: string; createdAt: string }> }>(
+      "/reports/dashboard/employee/activity",
+    );
+    return data.items.map((a, i) => ({
+      id: i + 1,
+      text: prettyAction(a.action),
+      time: new Date(a.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      status: statusForAction(a.action),
+    }));
   },
   getMyChart: async (): Promise<ChartItem[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/dashboard/employee/chart`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error();
-      return await res.json();
-    } catch {
-      return DUMMY_CHART;
-    }
+    const data = await apiGet<ChartItem[]>("/reports/dashboard/employee/chart");
+    return Array.isArray(data) ? data : [];
   },
-  cancelBooking: async (id: number): Promise<boolean> => {
+  cancelBooking: async (id: number | string): Promise<boolean> => {
     try {
-      const res = await fetch(`${BASE_URL}/bookings/${id}/cancel`, {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      return res.ok;
+      await apiSend(`/bookings/${id}/cancel`, "POST");
+      return true;
     } catch {
       return false;
     }
@@ -324,7 +320,7 @@ const KPICard = ({
   title: string;
   value?: number;
   trend?: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: LucideIcon;
   color: string;
   iconBg: string;
   isOverdue?: boolean;
@@ -376,7 +372,7 @@ const QuickAction = ({
   onClick,
   delay,
 }: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: LucideIcon;
   label: string;
   desc: string;
   color: string;
@@ -448,7 +444,7 @@ const NotificationPanel = ({
       ))}
     </div>
     <div className="px-4 py-2 border-t border-[#2a2d3e]">
-      <button className="text-xs text-blue-400 hover:text-blue-300 transition-colors">View all activity</button>
+      <p className="text-[10px] text-gray-600 text-center">Showing your most recent activity</p>
     </div>
   </motion.div>
 );
@@ -466,6 +462,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [chartData, setChartData] = useState<ChartItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showNotif, setShowNotif] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -481,6 +478,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
 
   const fetchAll = useCallback(async () => {
     setRefreshing(true);
+    setDataError(null);
     try {
       const [k, assets, bookings, maint, act, chart] = await Promise.all([
         apiService.getKPIs(),
@@ -497,6 +495,12 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
       setActivity(act);
       setChartData(chart);
       setLastUpdated(new Date());
+    } catch (err) {
+      setDataError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load your dashboard. Check that the backend is running.",
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -510,11 +514,11 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
     return () => clearInterval(interval);
   }, [isEmployee, fetchAll]);
 
-  const handleCancelBooking = async (id: number) => {
+  const handleCancelBooking = async (id: number | string) => {
     setCancelLoading((p) => ({ ...p, [id]: true }));
     const ok = await apiService.cancelBooking(id);
     if (ok) {
-      setMyBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "Cancelled" } : b)));
+      setMyBookings((prev) => prev.map((b) => (b.id === id || b._id === id ? { ...b, status: "Cancelled" } : b)));
       setKpi((prev) => (prev ? { ...prev, myActiveBookings: Math.max(0, (prev.myActiveBookings || 1) - 1) } : prev));
       showToast("Booking cancelled successfully");
     } else {
@@ -580,6 +584,20 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
         )}
       </AnimatePresence>
 
+      {/* ── DATA ERROR BANNER ── */}
+      {dataError && (
+        <div className="flex items-center gap-3 bg-red-950/40 border border-red-500/30 rounded-2xl px-5 py-3 mb-6">
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-300 flex-1">{dataError}</p>
+          <button
+            onClick={fetchAll}
+            className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* ── HEADER ── */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -611,7 +629,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               <Bell size={16} className="text-gray-400" />
               {(kpi?.myOverdueReturns ?? 0) > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {kpi.myOverdueReturns}
+                  {kpi?.myOverdueReturns ?? 0}
                 </span>
               )}
             </button>
@@ -709,7 +727,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                   {myAssets.length}
                 </span>
               </div>
-              <button onClick={() => onNavigate("assets")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              <button onClick={() => onNavigate("my-assets")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
                 View all &rarr;
               </button>
             </div>
@@ -777,11 +795,10 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                       </div>
 
                       <button
-                        onClick={() => onNavigate("transfers")}
+                        onClick={() => onNavigate("my-assets")}
                         className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-[#2a2d3e] text-gray-400 hover:border-blue-500/40 hover:text-blue-400 transition-all"
                       >
-                        <CornerUpLeft size={12} className="inline mr-1" />
-                        Return
+                        Details
                       </button>
                     </div>
                   </motion.div>
@@ -891,7 +908,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                     {booking.status === "Upcoming" && (
                       <button
                         disabled={cancelLoading[booking.id]}
-                        onClick={() => handleCancelBooking(booking.id)}
+                        onClick={() => handleCancelBooking(booking._id ?? booking.id)}
                         className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors disabled:opacity-50"
                       >
                         {cancelLoading[booking.id] ? "..." : "Cancel"}
@@ -985,9 +1002,6 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               <Activity size={15} className="text-blue-400" />
               <h2 className="text-sm font-semibold text-white">My Recent Activity</h2>
             </div>
-            <button onClick={() => onNavigate("activity")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-              View all &rarr;
-            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-[#1e2235]">

@@ -48,35 +48,33 @@ interface TimeSlot {
 interface Toast { msg: string; type: string; }
 
 // ==========================================
-// BOOKING API SERVICE (backend-ready)
+// BOOKING API SERVICE (real backend)
 // ==========================================
-const BASE_URL = "http://localhost:5000/api";
-const authHeaders = () => ({
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${localStorage.getItem("token")}`,
-});
+import { apiGet, apiSend } from "@/lib/api";
 
 const bookingApi = {
   confirmBooking: async (payload: {
-    resourceId: string;
-    date: number;
-    slotId: string;
-    slotTime: string;
+    assetId: string;
+    startTime: string;
+    endTime: string;
+    purpose: string;
   }) => {
     try {
-      const r = await fetch(`${BASE_URL}/bookings`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) throw new Error();
-      return await r.json();
+      const r = await apiSend<{ id: string }>("/bookings", "POST", payload);
+      return { success: true, bookingId: r.id };
     } catch {
-      // Demo fallback
-      return { success: true, bookingId: `BK-${Date.now()}` };
+      return { success: false };
     }
   },
 };
+
+const fmt12 = (h: number) => {
+  const period = h < 12 ? "AM" : "PM";
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${String(hr).padStart(2, "0")}:00 ${period}`;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 const getResourceIcon = (type: string) => {
   if (type === "room") return <Users size={18} />;
@@ -92,7 +90,10 @@ export default function ResourceBooking() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
-  const [selectedDate, setSelectedDate] = useState(15);
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    return d.getDate();
+  });
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -108,11 +109,16 @@ export default function ResourceBooking() {
     if (!slot) return;
 
     setBooking(true);
+    const match = slot.time.match(/(\d{1,2}):00/g);
+    const startH = match ? parseInt(match[0], 10) : 9;
+    const endH = match && match[1] ? parseInt(match[1], 10) : startH + 1;
+    const now = new Date();
+    const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(selectedDate)}`;
     const res = await bookingApi.confirmBooking({
-      resourceId: selectedResource.id,
-      date: selectedDate,
-      slotId: selectedSlot,
-      slotTime: slot.time,
+      assetId: selectedResource.id,
+      startTime: `${date}T${pad2(startH)}:00:00.000Z`,
+      endTime: `${date}T${pad2(endH)}:00:00.000Z`,
+      purpose: "Resource booking from portal",
     });
 
     if (res.success) {
@@ -139,59 +145,57 @@ export default function ResourceBooking() {
       setError(null);
 
       try {
-        // TODO: Replace with your actual backend API calls
-        // const resResponse = await fetch('/api/resources/bookable');
-        // const slotsResponse = await fetch(`/api/bookings?resourceId=${selectedResource?.id}&date=${selectedDate}`);
+        // 1) Bookable assets = isBookable=true and in service.
+        const assets = await apiGet<{ items: Array<Record<string, any>> }>("/assets?isBookable=true");
+        const resourceList: Resource[] = (assets.items ?? []).map((a: any) => {
+          const cat = (a.category?.name ?? "").toLowerCase();
+          return {
+            id: a.id,
+            name: a.name,
+            type: cat.includes("vehicle") || cat.includes("van")
+              ? "vehicle"
+              : cat.includes("furniture") || cat.includes("meeting") || cat.includes("room")
+                ? "room"
+                : "equipment",
+            capacity: a.category?.name ?? "—",
+            location: a.location ?? "—",
+          };
+        });
+        setResources(resourceList);
 
-        // --- Simulated Backend Delay ---
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // 2) Slots for the selected date — mark overlaps as booked.
+        const target = selectedResource ?? resourceList[0] ?? null;
+        if (!target) {
+          setSlots([]);
+          return;
+        }
+        const now = new Date();
+        const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(selectedDate)}`;
+        const bookings = await apiGet<{ items: Array<{
+            startTime: string; endTime: string;
+            bookedBy?: { name: string };
+          }> }>(
+            `/bookings?assetId=${target.id}&from=${date}T00:00:00.000Z&to=${date}T23:59:59.000Z`,
+          )
+          .catch(() => ({ items: [] }));
 
-        const mockResources: Resource[] = [
-          {
-            id: "R-01",
-            name: "Conference Room A",
-            type: "room",
-            capacity: "12 People",
-            location: "Floor 2",
-          },
-          {
-            id: "R-02",
-            name: "Delivery Van (Transit)",
-            type: "vehicle",
-            capacity: "1000kg",
-            location: "Loading Bay",
-          },
-          {
-            id: "R-03",
-            name: "4K Projector Cart",
-            type: "equipment",
-            capacity: "N/A",
-            location: "IT Dept",
-          },
-        ];
-
-        const mockSlots: TimeSlot[] = [
-          { id: "S1", time: "09:00 AM - 10:00 AM", status: "available" },
-          {
-            id: "S2",
-            time: "10:00 AM - 11:00 AM",
-            status: "booked",
-            bookedBy: "Priya Sharma",
-          },
-          {
-            id: "S3",
-            time: "11:00 AM - 12:00 PM",
-            status: "booked",
-            bookedBy: "Amit Kumar",
-          },
-          { id: "S4", time: "12:00 PM - 01:00 PM", status: "available" },
-          { id: "S5", time: "01:00 PM - 02:00 PM", status: "available" },
-          { id: "S6", time: "02:00 PM - 03:00 PM", status: "available" },
-        ];
-
-        setResources(mockResources);
-        setSlots(mockSlots);
-        setSelectedResource(mockResources[0]);
+        const daySlots: TimeSlot[] = [];
+        for (let h = 9; h <= 16; h++) {
+          const start = `${date}T${pad2(h)}:00:00.000Z`;
+          const end = `${date}T${pad2(h + 1)}:00:00.000Z`;
+          const conflict = (bookings.items ?? []).find(
+            (b) =>
+              new Date(b.startTime).getTime() < new Date(end).getTime() &&
+              new Date(b.endTime).getTime() > new Date(start).getTime(),
+          );
+          daySlots.push({
+            id: `S${h - 8}`,
+            time: `${fmt12(h)} - ${fmt12(h + 1)}`,
+            status: conflict ? "booked" : "available",
+            bookedBy: conflict?.bookedBy?.name,
+          });
+        }
+        setSlots(daySlots);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to load booking data."
@@ -202,10 +206,14 @@ export default function ResourceBooking() {
     };
 
     fetchBookingData();
-  }, [selectedDate]);
+  }, [selectedDate, selectedResource]);
 
-  // Generate a mock calendar array (1-30)
-  const daysInMonth = Array.from({ length: 30 }, (_, i) => i + 1);
+  // Calendar grid for the current month (real number of days).
+  const now = new Date();
+  const daysInMonth = Array.from(
+    { length: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() },
+    (_, i) => i + 1
+  );
 
   return (
     <motion.div
@@ -316,26 +324,28 @@ export default function ResourceBooking() {
                 Select Date
               </h3>
               <span className="text-white font-medium text-sm">
-                August 2026
+                {new Date().toLocaleString("default", { month: "long", year: "numeric" })}
               </span>
             </div>
 
             <div className="grid grid-cols-7 gap-2">
-              {["S", "M", "T", "W", "T", "F", "S"].map((day) => (
+              {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
                 <div
-                  key={day}
+                  key={`dow-${i}`}
                   className="text-center text-xs font-semibold text-zinc-600 py-1"
                 >
                   {day}
                 </div>
               ))}
-              {daysInMonth.map((day) => (
+              {daysInMonth.map((day) => {
+                const isPast = day < now.getDate();
+                return (
                 <button
                   key={day}
                   onClick={() => setSelectedDate(day)}
-                  disabled={day < 14}
+                  disabled={isPast}
                   className={`w-full aspect-square flex items-center justify-center rounded-lg text-sm font-medium transition-all ${
-                    day < 14
+                    isPast
                       ? "text-zinc-700 cursor-not-allowed"
                       : selectedDate === day
                       ? "bg-blue-600 text-white shadow-lg shadow-blue-900/30"
@@ -344,7 +354,8 @@ export default function ResourceBooking() {
                 >
                   {day}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -364,7 +375,7 @@ export default function ResourceBooking() {
                   {selectedResource?.name || "Select a resource"}
                 </h2>
                 <p className="text-sm text-blue-400 flex items-center gap-1 mt-1">
-                  <CalendarIcon size={14} /> Aug {selectedDate}, 2026
+                  <CalendarIcon size={14} /> {new Date().toLocaleString("default", { month: "short" })} {selectedDate}, {new Date().getFullYear()}
                 </p>
               </div>
             </div>

@@ -43,10 +43,10 @@ export class AllocationsController {
     return this.allocations.allocate(dto, user);
   }
 
-  /** Check an asset back in (only on an ACTIVE allocation). */
+  /** Check an asset back in (only on an ACTIVE allocation).
+   *  Managers may return any allocation; the holder may return their own. */
   @Post('allocations/:id/return')
   @HttpCode(200)
-  @Roles(Role.ADMIN, Role.ASSET_MANAGER)
   returnAllocation(
     @Param('id') id: string,
     @Body() dto: ReturnAllocationDto,
@@ -55,17 +55,29 @@ export class AllocationsController {
     return this.allocations.returnAllocation(id, dto, user);
   }
 
-  /** List allocations. overdue=true filters ACTIVE + past expectedReturnDate. */
+  /** List allocations. overdue=true filters ACTIVE + past expectedReturnDate.
+   *  Manager roles only — employees use GET /allocations/my to see their own.
+   *  DEPARTMENT_HEAD is scoped to their own department by the service. */
   @Get('allocations')
-  list(@Query() query: QueryAllocationsDto) {
-    return this.allocations.list(query);
+  @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
+  list(
+    @Query() query: QueryAllocationsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.allocations.list(query, user);
+  }
+
+  /** My allocations — where I'm the holder or the allocator. */
+  @Get('allocations/my')
+  listMy(@CurrentUser() user: AuthUser) {
+    return this.allocations.listMyAllocations(user.id);
   }
 
   /** Overdue allocations for the dashboard + reminders. */
   @Get('allocations/overdue')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  listOverdue() {
-    return this.allocations.listOverdue();
+  listOverdue(@CurrentUser() user: AuthUser) {
+    return this.allocations.listOverdue(user);
   }
 
   // --- Transfer workflow -------------------------------------------------
@@ -101,9 +113,10 @@ export class AllocationsController {
     return this.allocations.rejectTransfer(id, user);
   }
 
-  /** List transfer requests. */
+  /** List transfer requests — manager roles only. */
   @Get('transfers')
-  listTransfers(@Query() query: QueryTransfersDto) {
-    return this.allocations.listTransfers(query);
+  @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
+  listTransfers(@Query() query: QueryTransfersDto, @CurrentUser() user: AuthUser) {
+    return this.allocations.listTransfers(query, user);
   }
 }

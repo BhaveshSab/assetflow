@@ -286,7 +286,9 @@ export class MaintenanceService {
 
     const where: Prisma.MaintenanceRequestWhereInput = {
       ...(query.assetId ? { assetId: query.assetId } : {}),
-      ...(query.status ? { status: query.status } : {}),
+      ...(query.status && query.status.length
+        ? { status: Array.isArray(query.status) ? { in: query.status } : query.status }
+        : {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.mine === 'true' ? { raisedById: user.id } : {}),
     };
