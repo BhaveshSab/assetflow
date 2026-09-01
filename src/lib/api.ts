@@ -1,12 +1,15 @@
 /**
  * Shared API client config for the whole frontend.
  *
- * The backend serves every route under /api and runs on port 4000 (see
- * backend/.env PORT=4000 and backend/API.md). Import BASE_URL from here
- * instead of hardcoding "http://localhost:5000/api" in each component.
+ * The backend serves every route under /api. Locally that's port 4000 (see
+ * backend/.env PORT=4000 and backend/API.md). In a deployed environment set
+ * VITE_API_BASE_URL to the deployed API origin, e.g.
+ *   VITE_API_BASE_URL=https://assetflow-api.vercel.app/api
+ * Import BASE_URL from here instead of hardcoding a URL in each component.
  */
 
-export const BASE_URL = "http://localhost:4000/api";
+export const BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 
 /** JSON headers with the JWT attached (when a token exists). */
 export const authHeaders = (): Record<string, string> => ({
