@@ -1,9 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "prisma generate && nest build",
+  "buildCommand": "npm run vercel-build",
   "functions": {
     "api/index.js": {
-      "includeFiles": "dist/**"
+      "includeFiles": "{dist/**,node_modules/.prisma/client/**,node_modules/bcrypt/prebuilds/**}"
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }]

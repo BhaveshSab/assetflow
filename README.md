@@ -75,9 +75,9 @@ folder has its own `vercel.json`.
 ### 1. Deploy the API (do this first — you need its URL for step 2)
 1. Go to <https://vercel.com/new> and import `BhaveshSab/odoohackathon`.
 2. Set **Root Directory** to `backend`.
-3. Leave the build settings alone — `backend/vercel.json` already sets
-   `prisma generate && nest build` and routes every request to the serverless
-   entrypoint `backend/api/index.js`.
+3. Leave the build settings alone — `backend/vercel.json` already runs the
+   `vercel-build` script (`prisma generate && nest build`) and routes every
+   request to the serverless entrypoint `backend/api/index.js`.
 4. Add these **Environment Variables** (Production + Preview):
 
    | Key | Value |
@@ -121,6 +121,20 @@ runtime logs in Vercel.
 > 443. That's required on networks that block raw Postgres TCP (5432) and works
 > well on serverless. Any other `DATABASE_URL` (e.g. local Docker Postgres)
 > still uses Prisma's default TCP engine.
+
+### Troubleshooting
+- **`prisma: command not found` (exit 127) during build.** The build command has
+  to run through npm (`npm run vercel-build`) so that `node_modules/.bin` is on
+  `PATH`. A bare `prisma generate && nest build` in Vercel's *Build Command*
+  field runs in plain `sh`, where locally-installed CLIs aren't resolvable.
+  Leave the Build Command empty so `backend/vercel.json` is used.
+- **`npm warn allow-scripts` lines.** Warnings only — npm 11 lists packages with
+  install scripts. Prisma's CLI and `bcrypt` (which ships prebuilt binaries for
+  `linux-x64`) both work without approving them.
+- **Prisma engine missing at runtime.** `schema.prisma` sets
+  `binaryTargets = ["native", "rhel-openssl-3.0.x"]` — the second is the
+  platform Vercel's functions run on. Removing it breaks the deployed API while
+  leaving local dev working.
 
 ---
 
