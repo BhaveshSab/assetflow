@@ -1,4 +1,5 @@
-import { validateEnv } from './env.validation';
+import { safeValidateEnv, validateEnv } from './env.validation';
+import { startupStatus } from './startup-status';
 
 const base = {
   NODE_ENV: 'test',
@@ -60,5 +61,33 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...base, BCRYPT_ROUNDS: '99' })).toThrow(
       /BCRYPT_ROUNDS/,
     );
+  });
+});
+
+describe('safeValidateEnv', () => {
+  beforeEach(() => startupStatus.clearError());
+
+  it('returns the validated config when everything is fine', () => {
+    const config = safeValidateEnv({ ...base });
+    expect(config.DATABASE_URL).toBe(base.DATABASE_URL);
+    expect(startupStatus.getError()).toBeNull();
+  });
+
+  it('never throws — an invalid environment is recorded instead', () => {
+    // A throw here would kill the serverless function during import, which
+    // Vercel reports as an opaque 500 FUNCTION_INVOCATION_FAILED.
+    const config = safeValidateEnv({
+      ...base,
+      NODE_ENV: 'production',
+      JWT_SECRET: 'short',
+    });
+    expect(startupStatus.getError()).toMatch(/at least 32 characters/);
+    // The raw values stay available so the rest of the app still sees them.
+    expect(config.JWT_SECRET).toBe('short');
+  });
+
+  it('records a missing DATABASE_URL', () => {
+    safeValidateEnv({ ...base, DATABASE_URL: '' });
+    expect(startupStatus.getError()).toMatch(/DATABASE_URL is not set/);
   });
 });

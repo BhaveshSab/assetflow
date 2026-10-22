@@ -25,7 +25,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:unit": "jest",
     "test:all": "npm run test:unit && npm run test:e2e",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "node scripts/migrate.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

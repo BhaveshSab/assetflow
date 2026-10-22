@@ -13,7 +13,11 @@ import { createPrismaClient } from '../src/prisma/prisma.service';
 
 // The client is generated with `engineType = "client"`, so it needs a driver
 // adapter — reuse the exact same factory the API uses.
-const prisma = createPrismaClient(process.env.DATABASE_URL ?? '');
+// `DATABASE_URL_UNPOOLED` (the direct URL) wins when it is set: seeding is a
+// write-heavy operation that is better done on a direct connection.
+const prisma = createPrismaClient(
+  process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || '',
+);
 
 async function main() {
   const passwordHash = await hashPassword('password123', {

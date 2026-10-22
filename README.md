@@ -195,14 +195,17 @@ npm run seed                  # creates these accounts (password: password123)
 
 ### Backend (`/backend/.env`)
 
-All backend variables are **validated at boot**: a missing or malformed value
-stops the API immediately with an actionable message
-(`backend/src/config/env.validation.ts`).
+All backend variables are **validated at boot**
+(`backend/src/config/env.validation.ts`). A missing or malformed value does
+**not** crash the deployment any more: the API boots anyway and answers with a
+`503` that names the offending variable, while `GET /api/health` reports it as
+`status: "degraded"`.
 
 | Variable | Type | Default | Required | Description |
 |----------|------|---------|:--------:|-------------|
 | `NODE_ENV` | `development` \| `test` \| `production` | `development` | no | Runtime mode. In `production` the JWT secret rules below are enforced. |
-| `DATABASE_URL` | string | — | **yes** | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db`. A `*.neon.tech` host is routed through the Neon WebSocket adapter, everything else through `pg`. |
+| `DATABASE_URL` | string | — | **yes** | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db`. The driver is picked automatically: a **direct** `*.neon.tech` host uses the Neon WebSocket adapter, a **pooled** `*-pooler.*` host and every other host use `pg` over TCP. |
+| `DATABASE_URL_UNPOOLED` | string | — | no | Direct (unpooled) URL used **for migrations only** — Prisma needs a direct connection, PgBouncer (Neon's pooled endpoint) does not support it. `npm run prisma:migrate` picks it up automatically. |
 | `JWT_SECRET` | string | `dev-secret` (dev only) | **yes in production** | Secret used to sign access tokens. Must be **≥ 32 characters** and unique in production. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`. |
 | `JWT_EXPIRES_IN` | string | `7d` | no | Token lifetime — `15m`, `24h`, `7d`, … |
 | `BCRYPT_ROUNDS` | number | `12` | no | Password hashing cost. 4 = fastest (tests), 12 = secure default, 15 = slowest. |
@@ -256,6 +259,10 @@ Base URL: `http://localhost:4000/api` · every response is JSON · list endpoint
 return `{ items, total }`.
 
 ```bash
+# Health check (public) — tells you whether the config and the database are OK
+curl http://localhost:4000/api/health
+# → { "status": "ok", "database": "up", "timestamp": "…" }
+
 # Sign in
 curl -X POST http://localhost:4000/api/auth/login \
   -H 'Content-Type: application/json' \
@@ -268,6 +275,8 @@ curl http://localhost:4000/api/assets \
 
 <details>
 <summary>📚 All 60+ endpoints (grouped)</summary>
+
+**Health** — `GET /health` (public) — `status` (`ok` / `degraded`), `database` (`up` / `down`)
 
 **Auth** — `POST /auth/signup` · `POST /auth/login` · `GET /auth/me`
 
@@ -308,7 +317,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **152 automated checks** that run against a **real
+The project ships with **174 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -330,8 +339,8 @@ npm test
 
 | Suite | Command | What it covers |
 |-------|---------|----------------|
-| Backend unit | `cd backend && npm run test:unit` | **26 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service |
-| Backend e2e | `cd backend && npm run test:e2e` | **102 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping |
+| Backend unit | `cd backend && npm run test:unit` | **45 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, database-driver selection |
+| Backend e2e | `cd backend && npm run test:e2e` | **105 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health |
 | Frontend | `npm test` | **24 checks** — API client, session handling, avatar initials |
 | Lint | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
 
@@ -368,7 +377,7 @@ What the e2e suite proves, among other things:
 | Mass assignment | role changes are only possible through the dedicated admin endpoint; unknown body fields are rejected with `400` |
 | Headers | `helmet` (clickjacking, MIME sniffing, …) and `X-Powered-By` removed |
 | Transport | CORS restricted to an explicit origin allow-list; `trust proxy` enabled so rate limiting sees the real client IP behind Vercel |
-| Secrets | the environment is validated at boot — a placeholder `JWT_SECRET` or a missing `DATABASE_URL` refuses to start in production |
+| Secrets | the environment is validated at boot — a placeholder `JWT_SECRET` or a missing `DATABASE_URL` turns every route into a readable `503` (never an unreadable `500`) |
 | CSV export | RFC-4180 quoting plus formula-injection neutralisation (`=`, `+`, `-`, `@` are prefixed) |
 
 > **Known trade-off:** the JWT lives in `localStorage`, so any script running on
@@ -386,7 +395,15 @@ one for the SPA (repository root) and one for the API (`backend/`).
 ### 0. Prerequisites
 
 - A PostgreSQL database (a free [Neon](https://neon.tech) instance is ideal).
-- The schema applied to it: `cd backend && npx prisma migrate deploy`.
+- The schema applied to it: `cd backend && npm run prisma:migrate`
+  (or `npx prisma migrate deploy`).
+
+> **Neon: pooled vs. direct.** Neon hands out two URLs. The **pooled** one
+> (`…-pooler.…`) goes through PgBouncer and is perfect for the running API,
+> but Prisma's migration engine and the Neon WebSocket driver need the
+> **direct** one. Put the pooled URL in `DATABASE_URL` and the direct one in
+> `DATABASE_URL_UNPOOLED` — `npm run prisma:migrate` then migrates over the
+> direct connection automatically.
 
 ### 1. Deploy the API first
 
@@ -399,15 +416,24 @@ one for the SPA (repository root) and one for the API (`backend/`).
 
    | Key | Value |
    |-----|-------|
-   | `DATABASE_URL` | your pooled Postgres connection string (`…?sslmode=require` for Neon) |
+   | `DATABASE_URL` | your Postgres connection string (`…?sslmode=require` for Neon) — pooled **or** direct, the driver is chosen automatically |
+   | `DATABASE_URL_UNPOOLED` | Neon's **direct** URL — needed for migrations only (optional if `DATABASE_URL` is already direct) |
    | `JWT_SECRET` | `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
    | `JWT_EXPIRES_IN` | `7d` |
    | `CORS_ORIGINS` | fill in after step 2, then redeploy |
    | `NODE_ENV` | `production` |
 
    Do **not** set `PORT` — Vercel manages it.
-5. Deploy and confirm `https://<api-project>.vercel.app/api` answers
-   `Hello World!`.
+5. Deploy and confirm the API answers on **both** paths:
+
+   ```bash
+   curl https://<api-project>.vercel.app/api          # → Hello World!
+   curl https://<api-project>.vercel.app/api/health   # → { "status": "ok", "database": "up", … }
+   ```
+
+   `/api/health` is public and never blocked — it is the fastest way to see
+   whether the deployment is configured correctly and whether the database is
+   reachable.
 
 ### 2. Deploy the frontend
 
@@ -436,11 +462,26 @@ Open the frontend URL, sign in as `admin@assetflow.com` / `password123` and
 confirm the dashboard loads live data. If requests fail, check the API
 project's runtime logs.
 
-> **Neon connectivity:** `PrismaService` routes `*.neon.tech` URLs through
-> `@prisma/adapter-neon`, which tunnels Postgres over WebSocket on port 443 —
-> required on networks that block raw Postgres TCP (5432). Every other
-> `DATABASE_URL` uses `@prisma/adapter-pg` (`pg`), which is what your local
-> Docker Postgres uses.
+> **Neon connectivity:** `PrismaService` inspects `DATABASE_URL` and picks the
+> driver itself — a **direct** `*.neon.tech` host is routed through
+> `@prisma/adapter-neon`, which tunnels Postgres over WebSocket on port 443
+> (required on networks that block raw Postgres TCP 5432); a **pooled**
+> `*-pooler.*` host and every other host use `@prisma/adapter-pg` (`pg`),
+> which is also what your local Docker Postgres uses. A pooled URL does
+> **not** speak the Neon WebSocket protocol — that mismatch used to crash the
+> serverless function at boot.
+
+> **The two-project domain map (this deployment):**
+>
+> | Project | Domain | Role |
+> |---------|--------|------|
+> | `odoohackathon` | `odoohackathon-ten.vercel.app` | the API (`/api`) |
+> | `odoohackathon-ujkn` | `odoohackathon-ujkn.vercel.app` | the SPA |
+>
+> The SPA needs `VITE_API_BASE_URL=https://odoohackathon-ten.vercel.app/api`
+> and the API needs
+> `CORS_ORIGINS=https://odoohackathon-ujkn.vercel.app` (Production **and**
+> Preview, no trailing slash) — then redeploy both.
 
 ---
 
@@ -478,11 +519,16 @@ assetflow/
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| `500 FUNCTION_INVOCATION_FAILED` on every route | the function crashed while booting (invalid env, missing bundle file, unreachable database) | the API now answers with a readable JSON error — open the Vercel runtime logs, or call `/api/health` and read `startupError` |
 | `DATABASE_URL is not set` | `backend/.env` missing | `cp backend/.env.example backend/.env` |
+| `JWT_SECRET must be at least 32 characters` | the production secret is a placeholder or too short | generate a 48-byte one (see [parameters](#-environment-variables--every-parameter)) and redeploy |
+| `relation "User" does not exist` (or any `… does not exist`) | the migrations were never applied to that database | `cd backend && npm run prisma:migrate` with `DATABASE_URL_UNPOOLED` pointing at the **same** database |
+| `Neon: … WebSocket / not supported` / `the connection attempt failed` | a **pooled** URL was used with the WebSocket driver | either use the direct `*.neon.tech` URL, or keep the pooled URL — the driver is chosen automatically now |
+| `/api/health` returns `503` with a message | the environment is invalid — the message names the exact variable | fix the variable named in `startupError` and redeploy |
 | `JWT_SECRET must be …` at boot | placeholder secret with `NODE_ENV=production` | generate a real one (see [parameters](#-environment-variables--every-parameter)) |
 | `Could not locate the Query Engine` | the Prisma client was not generated | `cd backend && npx prisma generate` |
 | `prisma: command not found` (exit 127) in a Vercel build | the CLI was invoked outside npm | keep the build command empty so `backend/vercel.json` is used |
-| Every browser call fails with a CORS error | `CORS_ORIGINS` does not contain the frontend origin | add it (no trailing slash) and redeploy the API |
+| Every browser call fails with a CORS error | `CORS_ORIGINS` does not contain the frontend origin | add it (no trailing slash, Production **and** Preview) and redeploy the API |
 | The SPA cannot reach the API | `VITE_API_BASE_URL` is wrong | it must include the `/api` prefix — and it is inlined at build time, so rebuild |
 | `Unique constraint failed on assetTag` | a tag was created outside the API | tags are generated inside a transaction with a numeric `MAX()` — retry the request |
 | Sign-in returns `429` | the brute-force limiter kicked in | wait `AUTH_THROTTLE_TTL` (15 min) or reset the account |

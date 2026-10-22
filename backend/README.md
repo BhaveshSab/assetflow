@@ -16,12 +16,17 @@ It exposes every resource under **`/api`**, validates every payload with
 cd backend
 npm install
 cp .env.example .env          # edit DATABASE_URL + JWT_SECRET
-npx prisma migrate deploy     # apply the schema
+npm run prisma:migrate        # apply the schema (uses DATABASE_URL_UNPOOLED when set)
 npm run seed                  # optional demo data (5 accounts, password123)
 npm run start:dev             # http://localhost:4000/api
 ```
 
-Health check: `curl http://localhost:4000/api` → `Hello World!`
+Health check:
+
+```bash
+curl http://localhost:4000/api          # → Hello World!
+curl http://localhost:4000/api/health   # → { "status": "ok", "database": "up", "timestamp": "…" }
+```
 
 ---
 
@@ -30,7 +35,8 @@ Health check: `curl http://localhost:4000/api` → `Hello World!`
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NODE_ENV` | `development` | `development` \| `test` \| `production` |
-| `DATABASE_URL` | — | **required** — `postgresql://user:pass@host:5432/db` |
+| `DATABASE_URL` | — | **required** — `postgresql://user:pass@host:5432/db` — the driver is chosen automatically (see [Database & Prisma](#️-database--prisma)) |
+| `DATABASE_URL_UNPOOLED` | — | optional — direct (unpooled) URL used for **migrations only**; `npm run prisma:migrate` prefers it |
 | `JWT_SECRET` | `dev-secret` (dev) | **required in production** — ≥ 32 chars |
 | `JWT_EXPIRES_IN` | `7d` | token lifetime (`15m`, `24h`, `7d`, …) |
 | `BCRYPT_ROUNDS` | `12` | bcrypt cost factor (4 = fastest, 15 = slowest) |
@@ -42,8 +48,16 @@ Health check: `curl http://localhost:4000/api` → `Hello World!`
 | `AUTH_THROTTLE_LIMIT` | `10` | failed sign-ins before the account is blocked |
 
 The environment is validated by [`src/config/env.validation.ts`](./src/config/env.validation.ts)
-at boot — a missing `DATABASE_URL` or a placeholder `JWT_SECRET` in production
-stops the process with an actionable message instead of failing later.
+at boot. A missing `DATABASE_URL` or a placeholder `JWT_SECRET` in production
+**does not crash the deployment**: the API still starts, but every route
+answers with a `503` that names the offending variable and `GET /api/health`
+reports `status: "degraded"` with the same reason. The local dev server
+(`main.ts`) still refuses to start — there you want the loud failure.
+
+| Layer | What happens on an invalid environment |
+|-------|-----------------------------------------|
+| `main.ts` (local dev) | the process exits with the validation message |
+| `serverless.ts` (Vercel) | the function boots, every route returns `503` + reason, `/api/health` stays public |
 
 ---
 
@@ -54,18 +68,24 @@ stops the process with an actionable message instead of failing later.
 * The client is generated with **`engineType = "client"`** (Rust-free), so it
   always runs through a **driver adapter**:
 
-  | `DATABASE_URL` host | Adapter |
-  |---------------------|---------|
-  | `*.neon.tech` | `@prisma/adapter-neon` (WebSocket tunnel, port 443) |
-  | anything else | `@prisma/adapter-pg` (`pg`) |
+  | `DATABASE_URL` host | Adapter | Notes |
+  |---------------------|---------|-------|
+  | `*.neon.tech` (direct) | `@prisma/adapter-neon` | WebSocket tunnel on port 443 — works where raw TCP is blocked |
+  | `*-pooler.*` (pooled) | `@prisma/adapter-pg` | PgBouncer speaks plain Postgres — **no** WebSocket protocol |
+  | anything else | `@prisma/adapter-pg` | local Docker Postgres, RDS, Supabase, … |
 
   The factory lives in [`src/prisma/prisma.service.ts`](./src/prisma/prisma.service.ts)
   and is reused by `prisma/seed.ts`, so the seed and the API always connect the
-  same way.
+  same way. If the adapter cannot be created the service logs the reason and
+  falls back to a stub instead of taking the whole process down.
+
+> **Neon pooled vs. direct:** use the **pooled** URL (`…-pooler.…`) for
+> `DATABASE_URL` and the **direct** URL for `DATABASE_URL_UNPOOLED` — Prisma's
+> migration engine cannot run through PgBouncer.
 
 ```bash
 npm run prisma:generate   # regenerate the typed client
-npx prisma migrate deploy # apply migrations
+npm run prisma:migrate    # apply migrations (prefers DATABASE_URL_UNPOOLED)
 npm run seed              # idempotent demo data
 ```
 
@@ -74,8 +94,8 @@ npm run seed              # idempotent demo data
 ## 🧪 Tests
 
 ```bash
-npm run test:unit    # 26 checks — no database needed
-npm run test:e2e     # 102 checks — real Postgres (embedded), full HTTP stack
+npm run test:unit    # 45 checks — no database needed
+npm run test:e2e     # 105 checks — real Postgres (embedded), full HTTP stack
 npm run test:all     # both
 npm run lint         # ESLint + Prettier (src/ and test/)
 npm run build        # tsc → dist/
@@ -99,6 +119,7 @@ migration and injects a test environment. No Docker, no cloud database.
 | `notifications.e2e-spec.ts` | inbox, read state, pings |
 | `scoping.e2e-spec.ts` | row-level scoping + asset/allocation consistency |
 | `app.e2e-spec.ts` | health route, security headers, 404 shape |
+| `health.e2e-spec.ts` | public `GET /api/health`, 503 on an invalid environment |
 
 ---
 
@@ -111,9 +132,11 @@ backend/
 │   ├── schema.prisma       # data model
 │   ├── migrations/         # SQL migrations
 │   └── seed.ts             # demo data
+├── scripts/migrate.js      # migration runner (honours DATABASE_URL_UNPOOLED)
 ├── src/
 │   ├── common/             # decorators, guards, security helpers, scopes
-│   ├── config/             # environment validation
+│   ├── config/             # environment validation + startup status
+│   ├── health/             # public GET /api/health
 │   ├── prisma/             # driver-adapter aware PrismaService
 │   ├── auth/               # sign-up, sign-in, JWT strategy, throttle
 │   ├── assets/ allocations/ bookings/ maintenance/ audits/
@@ -124,6 +147,19 @@ backend/
 │   └── serverless.ts       # Vercel entry point
 └── test/                   # Jest e2e suites + embedded Postgres
 ```
+
+---
+
+## 🩺 Deployment troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `500 FUNCTION_INVOCATION_FAILED` | the function crashed while booting | the API now returns a readable JSON error — check the Vercel runtime logs and `/api/health` |
+| `503` on every route | the environment is invalid | the message names the variable (`startupError`) — fix it and redeploy |
+| `relation "User" does not exist` | migrations were never applied | `npm run prisma:migrate` with `DATABASE_URL_UNPOOLED` pointing at the same database |
+| Neon WebSocket handshake fails | a pooled URL was used with the WebSocket driver | use the direct `*.neon.tech` URL, or keep the pooled URL — the driver is now chosen automatically |
+| `CORS` errors in the browser | `CORS_ORIGINS` misses the frontend origin | add it (no trailing slash) and redeploy |
+| `Query Engine could not be located` | the Prisma client was not generated | `npm run prisma:generate` — Vercel does this in `npm run vercel-build` |
 
 ---
 
