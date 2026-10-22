@@ -140,7 +140,7 @@ cd backend
 npm install
 
 cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET
-npx prisma migrate deploy     # create the schema
+npm run prisma:migrate        # create the schema (uses DATABASE_URL_UNPOOLED when set)
 npm run seed                  # optional demo data
 
 npm run start:dev             # http://localhost:4000/api
