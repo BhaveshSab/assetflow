@@ -6,6 +6,7 @@ import {
 import {
   AllocationStatus,
   AssetStatus,
+  MaintenanceStatus,
   Prisma,
 } from '@prisma/client';
 
@@ -29,6 +30,14 @@ const USER_SELECT = {
 const ASSET_TAG_PREFIX = 'AF-';
 const ASSET_TAG_PAD = 4;
 const MAX_TAG_RETRIES = 5;
+
+/** Maintenance states that keep an asset out of the AVAILABLE pool. */
+const OPEN_MAINTENANCE_STATUSES: MaintenanceStatus[] = [
+  MaintenanceStatus.PENDING,
+  MaintenanceStatus.APPROVED,
+  MaintenanceStatus.TECHNICIAN_ASSIGNED,
+  MaintenanceStatus.IN_PROGRESS,
+];
 
 // Statuses owned by the allocation/maintenance workflows — never settable via
 // a manual asset edit.
@@ -266,6 +275,32 @@ export class AssetsService {
     const existing = await this.prisma.asset.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Asset not found');
 
+    // Hand-setting AVAILABLE would desynchronise the asset from its
+    // allocations / maintenance requests, so it is only allowed when the
+    // asset really is free.
+    if (dto.status === AssetStatus.AVAILABLE) {
+      const [activeAllocation, openMaintenance] = await Promise.all([
+        this.prisma.allocation.findFirst({
+          where: { assetId: id, status: AllocationStatus.ACTIVE },
+          select: { id: true },
+        }),
+        this.prisma.maintenanceRequest.findFirst({
+          where: { assetId: id, status: { in: OPEN_MAINTENANCE_STATUSES } },
+          select: { id: true },
+        }),
+      ]);
+      if (activeAllocation) {
+        throw new BadRequestException(
+          'This asset is currently allocated — return the allocation before making it available',
+        );
+      }
+      if (openMaintenance) {
+        throw new BadRequestException(
+          'This asset has an open maintenance request — resolve it before making it available',
+        );
+      }
+    }
+
     const data: Prisma.AssetUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.serialNumber !== undefined) data.serialNumber = dto.serialNumber;
@@ -315,30 +350,35 @@ export class AssetsService {
   // Helpers
   // ------------------------------------------------------------------------
 
-  /** Compute the next sequential asset tag (AF-0001) inside a transaction. */
+  /**
+   * Compute the next sequential asset tag (AF-0001) inside a transaction.
+   *
+   * The tag is compared *numerically* (not as a string): a plain
+   * `ORDER BY assetTag DESC` sorts "AF-10000" before "AF-9999" and would
+   * therefore hand out a duplicate tag as soon as the catalogue passes 9999
+   * assets.
+   */
   private async nextAssetTag(tx: Prisma.TransactionClient): Promise<string> {
-    const latest = await tx.asset.findFirst({
-      where: { assetTag: { startsWith: ASSET_TAG_PREFIX } },
-      orderBy: { assetTag: 'desc' },
-      select: { assetTag: true },
-    });
+    // NOTE: the prefix length is inlined as a *number* in the arithmetic
+    // below. `SUBSTRING(tag FROM $1)` cannot be used here — Postgres reads a
+    // parameterised "FROM" argument as a regular expression and silently
+    // returns NULL instead of the tail of the tag.
+    const rows = await tx.$queryRaw<
+      Array<{ maxNumber: number | bigint | null }>
+    >`
+      SELECT COALESCE(MAX(CAST(RIGHT("assetTag", LENGTH("assetTag") - ${ASSET_TAG_PREFIX.length}) AS INTEGER)), 0) AS "maxNumber"
+      FROM "Asset"
+      WHERE "assetTag" LIKE ${`${ASSET_TAG_PREFIX}%`}
+    `;
 
-    let nextNumber = 1;
-    if (latest) {
-      const parsed = parseInt(
-        latest.assetTag.slice(ASSET_TAG_PREFIX.length),
-        10,
-      );
-      if (!Number.isNaN(parsed)) nextNumber = parsed + 1;
-    }
+    const max = Number(rows[0]?.maxNumber ?? 0);
+    const nextNumber = (Number.isFinite(max) ? max : 0) + 1;
 
     return `${ASSET_TAG_PREFIX}${String(nextNumber).padStart(ASSET_TAG_PAD, '0')}`;
   }
 
   /** Normalise optional Json input for Prisma (undefined stays undefined). */
-  private toJson(
-    value: unknown,
-  ): Prisma.InputJsonValue | undefined {
+  private toJson(value: unknown): Prisma.InputJsonValue | undefined {
     if (value === undefined) return undefined;
     return value as Prisma.InputJsonValue;
   }

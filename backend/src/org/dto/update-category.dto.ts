@@ -1,4 +1,10 @@
-import { IsArray, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 import { RecordStatus } from '@prisma/client';
 
 /** Body for PATCH /org/categories/:id (ADMIN only). All fields optional. */

@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
-import { Role } from '@prisma/client';
+import { RecordStatus, Role } from '@prisma/client';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,7 +39,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });
-    if (!user || user.status === 'INACTIVE') {
+    if (!user || user.status === RecordStatus.INACTIVE) {
       throw new UnauthorizedException();
     }
     return {

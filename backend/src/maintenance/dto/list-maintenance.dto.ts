@@ -24,7 +24,10 @@ export class ListMaintenanceDto {
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => {
     if (typeof value !== 'string') return value;
-    return value.split(',').map((s) => s.trim()).filter(Boolean);
+    return value
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   })
   @IsArray()
   @IsEnum(MaintenanceStatus, { each: true })

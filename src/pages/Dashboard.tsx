@@ -81,12 +81,15 @@ export default function Dashboard() {
   // Live KPI badges for the sidebar (every 60s).
   const refreshBadges = useCallback(async () => {
     try {
-      const kpi = await apiGet<DashboardKpi>("/reports/dashboard");
+      const [kpi, notifications] = await Promise.all([
+        apiGet<DashboardKpi>("/reports/dashboard"),
+        apiGet<{ unreadCount?: number }>("/notifications"),
+      ]);
       setBadges({
         pendingTransfers: kpi.pendingTransfers ?? 0,
         maintenanceRequests: kpi.maintenanceToday ?? 0,
         overdueReturns: kpi.overdueReturns ?? 0,
-        notifications: kpi.overdueReturns ?? 0,
+        notifications: notifications.unreadCount ?? 0,
       });
     } catch {
       /* backend unreachable — keep last known badges */
@@ -116,6 +119,9 @@ export default function Dashboard() {
     "ActivityLogs",
   ];
 
+  /** Build sidebar props from session */
+  const role: Role = session.user.role ?? "EMPLOYEE";
+
   /** Sidebar nav + quick-action strings → ViewName */
   const handleNavigate = (pageId: string) => {
     const view = NAVIGATE_MAP[pageId];
@@ -130,8 +136,6 @@ export default function Dashboard() {
     setCurrentView(view);
   };
 
-  /** Build sidebar props from session */
-  const role: Role = session.user.role ?? "EMPLOYEE";
   const sidebarProps: SidebarProps = {
     user: {
       name: session.user.name,

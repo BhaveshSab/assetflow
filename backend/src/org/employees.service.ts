@@ -3,16 +3,33 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NotificationType, Prisma, Role } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 import { ActivityService } from '../activity/activity.service';
+import { normalizeEmail } from '../common/security/email';
+import { hashPassword } from '../common/security/password';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { UpdateEmployeeRoleDto } from './dto/update-employee-role.dto';
+
+/**
+ * A readable-but-strong temporary password (no ambiguous characters).
+ * Used when an admin provisions an account without choosing a password.
+ */
+export function generateTemporaryPassword(length = 14): string {
+  const alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+}
 
 /** Public-safe user projection — never includes passwordHash. */
 const EMPLOYEE_SELECT = {
@@ -31,6 +48,7 @@ export class EmployeesService {
     private readonly prisma: PrismaService,
     private readonly activity: ActivityService,
     private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
   ) {}
 
   /** GET /org/employees — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
@@ -90,8 +108,10 @@ export class EmployeesService {
 
   /** POST /org/employees — ADMIN. Provision an account directly. */
   async create(actorId: string, dto: CreateEmployeeDto) {
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const email = normalizeEmail(dto.email);
+
+    const existing = await this.prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
       select: { id: true },
     });
     if (existing) throw new ConflictException('Email already registered');
@@ -104,11 +124,18 @@ export class EmployeesService {
       if (!dept) throw new NotFoundException('Department not found');
     }
 
-    const passwordHash = await bcrypt.hash(dto.password ?? 'password123', 10);
+    // No password supplied → mint a strong, random one and return it ONCE so
+    // the admin can hand it over. (Never fall back to a shared default.)
+    const generatedPassword = dto.password ? null : generateTemporaryPassword();
+    const plainPassword = dto.password ?? generatedPassword!;
+
+    const passwordHash = await hashPassword(plainPassword, {
+      rounds: this.bcryptRounds(),
+    });
     const user = await this.prisma.user.create({
       data: {
-        name: dto.name,
-        email: dto.email,
+        name: dto.name.trim(),
+        email,
         passwordHash,
         role: dto.role ?? Role.EMPLOYEE,
         ...(dto.departmentId ? { departmentId: dto.departmentId } : {}),
@@ -124,7 +151,9 @@ export class EmployeesService {
       metadata: { role: user.role, email: user.email },
     });
 
-    return user;
+    return generatedPassword
+      ? { ...user, temporaryPassword: generatedPassword }
+      : user;
   }
 
   /** GET /org/employees/:id — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
@@ -247,5 +276,9 @@ export class EmployeesService {
     });
 
     return employee;
+  }
+
+  private bcryptRounds(): number {
+    return this.config.get<number>('BCRYPT_ROUNDS') ?? 12;
   }
 }

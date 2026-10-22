@@ -12,9 +12,12 @@
 
 generator client {
   provider = "prisma-client-js"
-  // "native" builds the engine for this machine (local dev); the rhel target is
-  // what AWS Lambda / Vercel serverless functions run on.
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  // Rust-free ("client") engine: the Prisma Client talks to Postgres through
+  // a driver adapter (@prisma/adapter-neon or @prisma/adapter-pg) instead of
+  // loading a platform-specific native query-engine binary. That keeps the
+  // deployment artifact small and platform independent (no more
+  // `binaryTargets` to keep in sync with the serverless runtime).
+  engineType = "client"
 }
 
 datasource db {

@@ -10,8 +10,10 @@ import {
   AssetStatus,
   NotificationType,
   Prisma,
+  RecordStatus,
   Role,
   TransferStatus,
+  MaintenanceStatus,
 } from '@prisma/client';
 
 import { ActivityService } from '../activity/activity.service';
@@ -35,6 +37,13 @@ const USER_SELECT = {
 } as const;
 
 const MAX_PAGE_SIZE = 200;
+
+/** Asset states that are never overwritten by a workflow transition. */
+const TERMINAL_ASSET_STATUSES: AssetStatus[] = [
+  AssetStatus.LOST,
+  AssetStatus.RETIRED,
+  AssetStatus.DISPOSED,
+];
 
 @Injectable()
 export class AllocationsService {
@@ -68,18 +77,30 @@ export class AllocationsService {
       // ACTIVE allocation the first one created and is rejected).
       await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${dto.assetId} FOR UPDATE`;
 
-      // Validate the target exists before we touch anything.
+      // Validate the target exists (and is usable) before we touch anything.
       if (dto.holderUserId) {
         const holder = await tx.user.findUnique({
           where: { id: dto.holderUserId },
+          select: { id: true, status: true },
         });
         if (!holder) throw new NotFoundException('Holder user not found');
+        if (holder.status === RecordStatus.INACTIVE) {
+          throw new BadRequestException(
+            'Cannot allocate an asset to a deactivated user',
+          );
+        }
       }
       if (dto.departmentId) {
         const dept = await tx.department.findUnique({
           where: { id: dto.departmentId },
+          select: { id: true, status: true },
         });
         if (!dept) throw new NotFoundException('Department not found');
+        if (dept.status === RecordStatus.INACTIVE) {
+          throw new BadRequestException(
+            'Cannot allocate an asset to an inactive department',
+          );
+        }
       }
 
       // CORE CONFLICT RULE: no existing ACTIVE allocation for this asset.
@@ -133,27 +154,33 @@ export class AllocationsService {
         data: { status: AssetStatus.ALLOCATED },
       });
 
-      await this.activity.log({
-        actorId: user.id,
-        action: 'asset.allocated',
-        entityType: 'Allocation',
-        entityId: allocation.id,
-        metadata: {
-          assetId: asset.id,
-          assetTag: asset.assetTag,
-          holderUserId: dto.holderUserId ?? null,
-          departmentId: dto.departmentId ?? null,
+      await this.activity.log(
+        {
+          actorId: user.id,
+          action: 'asset.allocated',
+          entityType: 'Allocation',
+          entityId: allocation.id,
+          metadata: {
+            assetId: asset.id,
+            assetTag: asset.assetTag,
+            holderUserId: dto.holderUserId ?? null,
+            departmentId: dto.departmentId ?? null,
+          },
         },
-      });
+        tx,
+      );
 
       if (dto.holderUserId) {
-        await this.notifications.notify({
-          userId: dto.holderUserId,
-          type: NotificationType.ASSET_ASSIGNED,
-          message: `Asset ${asset.assetTag} (${asset.name}) has been assigned to you`,
-          relatedEntityType: 'Allocation',
-          relatedEntityId: allocation.id,
-        });
+        await this.notifications.notify(
+          {
+            userId: dto.holderUserId,
+            type: NotificationType.ASSET_ASSIGNED,
+            message: `Asset ${asset.assetTag} (${asset.name}) has been assigned to you`,
+            relatedEntityType: 'Allocation',
+            relatedEntityId: allocation.id,
+          },
+          tx,
+        );
       }
 
       return allocation;
@@ -161,15 +188,15 @@ export class AllocationsService {
   }
 
   /** Check an asset back in — only valid on an ACTIVE allocation. */
-  async returnAllocation(
-    id: string,
-    dto: ReturnAllocationDto,
-    user: AuthUser,
-  ) {
+  async returnAllocation(id: string, dto: ReturnAllocationDto, user: AuthUser) {
     return this.prisma.$transaction(async (tx) => {
       const allocation = await tx.allocation.findUnique({
         where: { id },
-        include: { asset: true },
+        include: {
+          asset: true,
+          holderUser: { select: USER_SELECT },
+          department: { select: { id: true, name: true } },
+        },
       });
       if (!allocation) throw new NotFoundException('Allocation not found');
       if (allocation.status !== AllocationStatus.ACTIVE) {
@@ -178,16 +205,27 @@ export class AllocationsService {
         );
       }
 
-      // Managers may return any allocation; an employee may only return their
-      // own (holderUserId === caller).
-      const isManager =
-        user.role === Role.ADMIN ||
-        user.role === Role.ASSET_MANAGER ||
-        user.role === Role.DEPARTMENT_HEAD;
-      if (!isManager && allocation.holderUserId !== user.id) {
-        throw new ForbiddenException(
-          'You can only return an asset that is allocated to you',
-        );
+      // Managers may return any allocation; a DEPARTMENT_HEAD may only return
+      // allocations that touch their own department; everyone else may only
+      // return the assets allocated to them.
+      const isGlobalManager =
+        user.role === Role.ADMIN || user.role === Role.ASSET_MANAGER;
+      const isDeptHead = user.role === Role.DEPARTMENT_HEAD;
+      if (!isGlobalManager) {
+        if (isDeptHead) {
+          const touches =
+            allocation.departmentId === user.departmentId ||
+            allocation.holderUser?.departmentId === user.departmentId;
+          if (!touches) {
+            throw new ForbiddenException(
+              'You can only return allocations that belong to your department',
+            );
+          }
+        } else if (allocation.holderUserId !== user.id) {
+          throw new ForbiddenException(
+            'You can only return an asset that is allocated to you',
+          );
+        }
       }
 
       const updated = await tx.allocation.update({
@@ -205,36 +243,66 @@ export class AllocationsService {
         },
       });
 
+      // The asset only becomes AVAILABLE again when nothing else keeps it
+      // busy: an open maintenance request keeps it UNDER_MAINTENANCE, and a
+      // terminal state (LOST / RETIRED / DISPOSED) is never overwritten.
+      let nextStatus = allocation.asset.status;
+      if (!TERMINAL_ASSET_STATUSES.includes(nextStatus)) {
+        const openMaintenance = await tx.maintenanceRequest.findFirst({
+          where: {
+            assetId: allocation.assetId,
+            status: {
+              in: [
+                MaintenanceStatus.PENDING,
+                MaintenanceStatus.APPROVED,
+                MaintenanceStatus.TECHNICIAN_ASSIGNED,
+                MaintenanceStatus.IN_PROGRESS,
+              ],
+            },
+          },
+          select: { id: true },
+        });
+        nextStatus = openMaintenance
+          ? AssetStatus.UNDER_MAINTENANCE
+          : AssetStatus.AVAILABLE;
+      }
+
       await tx.asset.update({
         where: { id: allocation.assetId },
         data: {
-          status: AssetStatus.AVAILABLE,
+          status: nextStatus,
           ...(dto.conditionOnReturn
             ? { condition: dto.conditionOnReturn }
             : {}),
         },
       });
 
-      await this.activity.log({
-        actorId: user.id,
-        action: 'asset.returned',
-        entityType: 'Allocation',
-        entityId: allocation.id,
-        metadata: {
-          assetId: allocation.assetId,
-          assetTag: allocation.asset.assetTag,
-          conditionOnReturn: dto.conditionOnReturn ?? null,
+      await this.activity.log(
+        {
+          actorId: user.id,
+          action: 'asset.returned',
+          entityType: 'Allocation',
+          entityId: allocation.id,
+          metadata: {
+            assetId: allocation.assetId,
+            assetTag: allocation.asset.assetTag,
+            conditionOnReturn: dto.conditionOnReturn ?? null,
+          },
         },
-      });
+        tx,
+      );
 
       if (allocation.holderUserId) {
-        await this.notifications.notify({
-          userId: allocation.holderUserId,
-          type: NotificationType.ASSET_RETURNED,
-          message: `Asset ${allocation.asset.assetTag} (${allocation.asset.name}) has been checked in / returned`,
-          relatedEntityType: 'Allocation',
-          relatedEntityId: allocation.id,
-        });
+        await this.notifications.notify(
+          {
+            userId: allocation.holderUserId,
+            type: NotificationType.ASSET_RETURNED,
+            message: `Asset ${allocation.asset.assetTag} (${allocation.asset.name}) has been checked in / returned`,
+            relatedEntityType: 'Allocation',
+            relatedEntityId: allocation.id,
+          },
+          tx,
+        );
       }
 
       return updated;
@@ -323,10 +391,7 @@ export class AllocationsService {
   /** Get current user's allocations (both active and returned). */
   async listMyAllocations(userId: string) {
     const where: Prisma.AllocationWhereInput = {
-      OR: [
-        { holderUserId: userId },
-        { allocatedById: userId },
-      ],
+      OR: [{ holderUserId: userId }, { allocatedById: userId }],
     };
 
     const [items, total] = await Promise.all([
@@ -372,6 +437,10 @@ export class AllocationsService {
     // A transfer only makes sense for an asset someone currently holds.
     const active = await this.prisma.allocation.findFirst({
       where: { assetId: dto.assetId, status: AllocationStatus.ACTIVE },
+      include: {
+        holderUser: { select: { id: true, departmentId: true } },
+        department: { select: { id: true } },
+      },
     });
     if (!active) {
       throw new ConflictException(
@@ -379,29 +448,52 @@ export class AllocationsService {
       );
     }
 
-    // Only the current holder (or a manager) may request a transfer. The UI
-    // hides this for employees, but the API must enforce it too.
-    const isManager =
-      user.role === Role.ADMIN ||
-      user.role === Role.ASSET_MANAGER ||
-      user.role === Role.DEPARTMENT_HEAD;
-    if (!isManager && active.holderUserId !== user.id) {
-      throw new ForbiddenException(
-        'You can only request a transfer for an asset allocated to you',
-      );
+    // Only the current holder may request a transfer. A DEPARTMENT_HEAD may
+    // additionally act for the assets their department holds; ADMIN and
+    // ASSET_MANAGER may act for anyone. The UI hides this for employees, but
+    // the API must enforce it too.
+    const isGlobalManager =
+      user.role === Role.ADMIN || user.role === Role.ASSET_MANAGER;
+    if (!isGlobalManager) {
+      if (user.role === Role.DEPARTMENT_HEAD) {
+        const holdsForDepartment =
+          active.departmentId === user.departmentId ||
+          active.holderUser?.departmentId === user.departmentId;
+        if (!holdsForDepartment) {
+          throw new ForbiddenException(
+            'You can only request a transfer for assets held by your department',
+          );
+        }
+      } else if (active.holderUserId !== user.id) {
+        throw new ForbiddenException(
+          'You can only request a transfer for an asset allocated to you',
+        );
+      }
     }
 
     if (dto.toUserId) {
       const target = await this.prisma.user.findUnique({
         where: { id: dto.toUserId },
+        select: { id: true, status: true },
       });
       if (!target) throw new NotFoundException('Target user not found');
+      if (target.status === RecordStatus.INACTIVE) {
+        throw new BadRequestException(
+          'Cannot transfer an asset to a deactivated user',
+        );
+      }
     }
     if (dto.toDepartmentId) {
       const target = await this.prisma.department.findUnique({
         where: { id: dto.toDepartmentId },
+        select: { id: true, status: true },
       });
       if (!target) throw new NotFoundException('Target department not found');
+      if (target.status === RecordStatus.INACTIVE) {
+        throw new BadRequestException(
+          'Cannot transfer an asset to an inactive department',
+        );
+      }
     }
 
     const transfer = await this.prisma.transferRequest.create({
@@ -511,8 +603,11 @@ export class AllocationsService {
 
       // DEPARTMENT_HEAD may only approve transfers touching their own department.
       if (user.role === Role.DEPARTMENT_HEAD) {
-        const touches =
-          this.transferTouchesDepartment(transfer, active, user.departmentId);
+        const touches = this.transferTouchesDepartment(
+          transfer,
+          active,
+          user.departmentId,
+        );
         if (!touches) {
           throw new ForbiddenException(
             'You can only approve transfers that involve your department',
@@ -529,13 +624,16 @@ export class AllocationsService {
         },
       });
 
-      // Open the new allocation to the transfer target.
+      // Open the new allocation to the transfer target. The expected return
+      // date travels with the asset so a transfer does not silently drop the
+      // return deadline (and turn an overdue asset into "no deadline").
       const newAllocation = await tx.allocation.create({
         data: {
           assetId: transfer.assetId,
           holderUserId: transfer.toUserId ?? null,
           departmentId: transfer.toDepartmentId ?? null,
           allocatedById: user.id,
+          expectedReturnDate: active.expectedReturnDate ?? null,
           status: AllocationStatus.ACTIVE,
         },
       });
@@ -561,39 +659,48 @@ export class AllocationsService {
         },
       });
 
-      await this.activity.log({
-        actorId: user.id,
-        action: 'transfer.approved',
-        entityType: 'TransferRequest',
-        entityId: transfer.id,
-        metadata: {
-          assetId: transfer.assetId,
-          assetTag: transfer.asset.assetTag,
-          previousAllocationId: active.id,
-          newAllocationId: newAllocation.id,
-          toUserId: transfer.toUserId ?? null,
-          toDepartmentId: transfer.toDepartmentId ?? null,
+      await this.activity.log(
+        {
+          actorId: user.id,
+          action: 'transfer.approved',
+          entityType: 'TransferRequest',
+          entityId: transfer.id,
+          metadata: {
+            assetId: transfer.assetId,
+            assetTag: transfer.asset.assetTag,
+            previousAllocationId: active.id,
+            newAllocationId: newAllocation.id,
+            toUserId: transfer.toUserId ?? null,
+            toDepartmentId: transfer.toDepartmentId ?? null,
+          },
         },
-      });
+        tx,
+      );
 
       // Tell the requester it went through.
-      await this.notifications.notify({
-        userId: transfer.requestedById,
-        type: NotificationType.TRANSFER_APPROVED,
-        message: `Your transfer request for asset ${transfer.asset.assetTag} was approved`,
-        relatedEntityType: 'TransferRequest',
-        relatedEntityId: transfer.id,
-      });
+      await this.notifications.notify(
+        {
+          userId: transfer.requestedById,
+          type: NotificationType.TRANSFER_APPROVED,
+          message: `Your transfer request for asset ${transfer.asset.assetTag} was approved`,
+          relatedEntityType: 'TransferRequest',
+          relatedEntityId: transfer.id,
+        },
+        tx,
+      );
 
       // Tell the new holder they now have the asset.
       if (transfer.toUserId) {
-        await this.notifications.notify({
-          userId: transfer.toUserId,
-          type: NotificationType.ASSET_ASSIGNED,
-          message: `Asset ${transfer.asset.assetTag} (${transfer.asset.name}) has been assigned to you`,
-          relatedEntityType: 'Allocation',
-          relatedEntityId: newAllocation.id,
-        });
+        await this.notifications.notify(
+          {
+            userId: transfer.toUserId,
+            type: NotificationType.ASSET_ASSIGNED,
+            message: `Asset ${transfer.asset.assetTag} (${transfer.asset.name}) has been assigned to you`,
+            relatedEntityType: 'Allocation',
+            relatedEntityId: newAllocation.id,
+          },
+          tx,
+        );
       }
 
       return resolved;

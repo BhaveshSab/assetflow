@@ -40,13 +40,13 @@ export class BookingsController {
   myBookings(@CurrentUser() user: AuthUser) {
     return this.bookings.findAll(user, {
       mine: true,
-    } as QueryBookingsDto);
+    });
   }
 
   /** Fetch a single booking by id. */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.bookings.findOne(id);
+  findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.bookings.findOne(user, id);
   }
 
   /** Cancel a booking (booker, ADMIN or ASSET_MANAGER). */

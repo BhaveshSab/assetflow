@@ -1,143 +1,503 @@
-# AssetFlow — Enterprise Asset & Resource Management System
+<div align="center">
 
-AssetFlow is a centralized ERP for tracking, allocating, and maintaining an
-organization's physical assets and shared resources — assets, allocations &
-transfers, resource bookings, a maintenance approval workflow, audit cycles,
-reports, and role-based dashboards for Admin, Asset Manager, Department Head,
-and Employee.
+# 🧾 AssetFlow
 
-Built for the Odoo Hackathon with **React + TypeScript + Vite + Tailwind**
-(frontend) and **NestJS + PostgreSQL + Prisma** (backend, in [`backend/`](backend)).
+**Enterprise Asset & Resource Management System**
+
+Track, allocate, book, maintain and audit every physical asset and shared
+resource an organisation owns — from one laptop to a thousand.
+
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vite.dev)
+[![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?style=flat-square&logo=nestjs&logoColor=white)](https://nestjs.com)
+[![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?style=flat-square&logo=prisma&logoColor=white)](https://www.prisma.io)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Tailwind](https://img.shields.io/badge/Tailwind-3-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+[![License](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](#license)
+
+</div>
 
 ---
 
-## ▶️ Run the demo (no backend or database needed)
+## 📑 Table of contents
 
-The frontend runs **standalone on realistic demo data** — perfect for trying it
-on any laptop or recording a walkthrough.
+- [What AssetFlow does](#-what-assetflow-does)
+- [Feature map](#-feature-map)
+- [Architecture](#-architecture)
+- [Quick start](#-quick-start)
+- [Environment variables — every parameter](#-environment-variables--every-parameter)
+- [Roles & permissions](#-roles--permissions)
+- [API overview](#-api-overview)
+- [Testing](#-testing)
+- [Security model](#-security-model)
+- [Deploying to Vercel](#-deploying-to-vercel)
+- [Project layout](#-project-layout)
+- [Troubleshooting](#-troubleshooting)
 
-```bash
-npm install
-npm run dev      # open http://localhost:5173
+---
+
+## 💡 What AssetFlow does
+
+AssetFlow is a full ERP module for **physical assets and shared resources**.
+It covers the complete lifecycle:
+
+```
+   Register  ──▶  Allocate  ──▶  Use  ──▶  Return  ──▶  Maintain  ──▶  Audit
+      ▲             │           │         │           │            │
+      │             └── Transfer workflow ──────────┘            │
+      └──────────────────────── Bookable resources ───────────────┘
 ```
 
-### Demo accounts
-Sign in with any of these emails and **any password** — each shows that role's
-dashboard and screens:
-
-| Email | Role you experience |
-|-------|---------------------|
-| `admin@assetflow.com` | **Admin** — org setup, all analytics |
-| `manager@assetflow.com` | **Asset Manager** — register/allocate assets, approvals |
-| `head@assetflow.com` | **Department Head** — department view + approvals |
-| `employee@assetflow.com` | **Employee** — my assets, book resources, raise requests |
-
-Any other email signs in as an Employee. (Sign-up also creates an Employee.)
-
-### What you can show in the demo
-Log in as each role and walk the sidebar: **Dashboard** (role-specific KPIs),
-**Asset Directory**, **Allocations & Transfers**, **Resource Booking**,
-**Maintenance**, **Asset Audits**, **Reports & Analytics**, **Organization
-Setup** (Admin). Data shown is representative demo data.
+| # | Module | What you get |
+|---|--------|--------------|
+| 1 | **Authentication** | Sign-up (always an Employee), sign-in, JWT sessions, deactivation-aware guards |
+| 2 | **Dashboards** | Role-specific KPI dashboards (Admin / Manager / Employee) with live charts |
+| 3 | **Organisation setup** | Departments (with hierarchy + head), asset categories (with custom fields), employee directory |
+| 4 | **Asset directory** | Auto-tagged assets (`AF-0001`), search, filters, full history per asset |
+| 5 | **Allocation & transfer** | Allocate to a person *or* a department, conflict-safe, approval-based transfers |
+| 6 | **Resource booking** | Time-slot reservations of bookable assets with overlap protection |
+| 7 | **Maintenance** | `PENDING → APPROVED → TECHNICIAN_ASSIGNED → IN_PROGRESS → RESOLVED` workflow |
+| 8 | **Asset audits** | Scoped audit cycles, auditor assignment, discrepancy reports, automatic LOST/DAMAGED flags |
+| 9 | **Reports & analytics** | Utilisation, status distribution, maintenance frequency, booking heat-map, CSV export |
+| 10 | **Notifications & activity log** | In-app notifications plus an immutable “who did what, when” trail |
 
 ---
 
-## 🔌 Running against the real backend (optional)
+## ✨ Feature map
 
-The full REST API lives in [`backend/`](backend) (NestJS + Postgres + Prisma) and
-is documented in [`backend/API.md`](backend/API.md). It implements all 10 features
-with real auth (JWT), RBAC, and workflow logic, and is covered by end-to-end
-tests. See [`backend/README.md`](backend/README.md) to run it (Docker Postgres +
-`npm run start:dev`, serving `http://localhost:4000/api`).
+| Feature | Frontend screen | API endpoints |
+|---------|-----------------|---------------|
+| Dashboard | `Dashboard` | `GET /api/reports/dashboard`, `/api/reports/dashboard/employee/*` |
+| Asset directory | `AssetDirectory` | `GET/POST/PATCH /api/assets`, `GET /api/assets/:id/history` |
+| Allocations & transfers | `AllocationsTransfers` | `POST /api/allocations`, `/api/allocations/:id/return`, `/api/transfers*` |
+| Resource booking | `ResourceBooking` | `GET/POST /api/bookings`, `/api/bookings/:id/cancel|reschedule` |
+| Maintenance | `Maintenance` | `GET/POST /api/maintenance`, `/api/maintenance/:id/{approve,reject,assign,start,resolve}` |
+| Asset audits | `AssetAudits` | `GET/POST /api/audits`, `/api/audits/:id/{items,auditors,close,discrepancies}` |
+| Reports & analytics | `ReportsAnalytics` | `GET /api/reports/*`, `GET /api/reports/export/assets.csv` |
+| Organisation setup | `OrganizationSetup` | `/api/org/departments`, `/api/org/categories`, `/api/org/employees` |
+| Notifications | `NotificationBell` | `GET /api/notifications`, `/api/notifications/:id/read`, `/read-all`, `/ping` |
+| Activity log | `ActivityLogs` | `GET /api/activity` |
 
-The frontend reads its API origin from `VITE_API_BASE_URL` (see
-[`.env.example`](.env.example)) and falls back to `http://localhost:4000/api`,
-so running both servers locally needs no extra configuration.
+The full, line-by-line contract lives in [`backend/API.md`](backend/API.md).
 
-> Note: the demo UI currently uses built-in demo data so it runs anywhere with
-> zero setup. Wiring the live API into every screen (aligning endpoint paths and
-> auth) is the remaining integration step; the backend contract is ready in
-> `backend/API.md`.
+---
+
+## 🏗 Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  React 18 + TypeScript + Vite + Tailwind + shadcn/ui + Recharts      │
+│  (SPA — role-aware dashboard, live data via fetch + JWT)             │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │  HTTPS · Authorization: Bearer <jwt>
+┌───────────────────────────────▼──────────────────────────────────────┐
+│  NestJS 11  ·  /api  ·  global ValidationPipe · helmet · throttler   │
+│  ┌────────┬──────────┬───────────┬──────────┬──────────┬──────────┐  │
+│  │  Auth  │   Org    │  Assets   │Allocation│ Booking  │Maintenan.│  │
+│  ├────────┴──────────┴───────────┴──────────┴──────────┴──────────┤  │
+│  │  Audits  ·  Reports  ·  Notifications  ·  ActivityLog          │  │
+│  └──────────────────────────┬──────────────────────────────────────┘  │
+└─────────────────────────────┼─────────────────────────────────────────┘
+                              │  Prisma 6 (Rust-free client)
+        ┌─────────────────────┴─────────────────────┐
+        │  @prisma/adapter-neon  ·  @prisma/adapter-pg│
+        └─────────────────────┬─────────────────────┘
+                    ┌─────────▼─────────┐
+                    │   PostgreSQL      │
+                    └───────────────────┘
+```
+
+**Why a Rust-free Prisma client?** `schema.prisma` uses `engineType = "client"`,
+so the API talks to Postgres through a **driver adapter** instead of loading a
+platform-specific native binary. Same code path on a laptop, on Docker and on
+Vercel serverless — no `binaryTargets` to keep in sync, smaller bundles, faster
+cold starts.
+
+| Layer | Choice |
+|-------|--------|
+| Frontend | React 18, TypeScript, Vite 5, Tailwind 3, shadcn/ui, Recharts, Framer Motion, lucide-react |
+| Backend | NestJS 11, TypeScript, class-validator, passport-jwt, bcrypt 6, helmet, @nestjs/throttler |
+| Data | PostgreSQL 14+, Prisma 6, Neon (serverless) **or** any Postgres via `pg` |
+| Tests | Jest + Supertest (backend, real embedded Postgres), Vitest (frontend) |
+
+---
+
+## 🚀 Quick start
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Node.js | 22.x |
+| npm | 10+ |
+| PostgreSQL | 14+ (or a free [Neon](https://neon.tech) database) |
+
+### 1️⃣ Backend (API)
+
+```bash
+cd backend
+npm install
+
+cp .env.example .env          # then edit DATABASE_URL / JWT_SECRET
+npx prisma migrate deploy     # create the schema
+npm run seed                  # optional demo data
+
+npm run start:dev             # http://localhost:4000/api
+```
+
+<details>
+<summary>🐳 No Postgres installed? Start one with Docker</summary>
+
+```bash
+docker run -d --name assetflow-db \
+  -e POSTGRES_USER=assetflow -e POSTGRES_PASSWORD=assetflow -e POSTGRES_DB=assetflow \
+  -p 5433:5432 postgres:16-alpine
+
+# …then set in backend/.env:
+# DATABASE_URL="postgresql://assetflow:assetflow@localhost:5433/assetflow"
+```
+</details>
+
+### 2️⃣ Frontend (SPA)
+
+```bash
+npm install                   # in the repository root
+cp .env.example .env.local    # optional — the default points at localhost:4000
+npm run dev                   # http://localhost:5173
+```
+
+### 3️⃣ Sign in
+
+```bash
+npm run seed                  # creates these accounts (password: password123)
+```
+
+| Email | Role | Sees |
+|-------|------|------|
+| `admin@assetflow.com` | **Admin** | Organisation setup, every report, the full activity log |
+| `manager@assetflow.com` | **Asset Manager** | Register/allocate assets, approve transfers, triage maintenance |
+| `head@assetflow.com` | **Department Head** | Department-scoped allocations, transfers and approvals |
+| `priya@acme.com` / `raj@acme.com` | **Employee** | My assets, bookings, maintenance requests |
+
+> The SPA talks to the **real** API — a wrong password (or an account that has
+> been deactivated) is rejected, there is no offline demo mode.
+
+---
+
+## 🔐 Environment variables — every parameter
+
+### Frontend (`/.env.local` or your host's project settings)
+
+| Variable | Type | Default | Required | Description |
+|----------|------|---------|:--------:|-------------|
+| `VITE_API_BASE_URL` | string | `http://localhost:4000/api` | no | Base URL of the API **including** the `/api` prefix. Inlined at build time — changing it needs a rebuild. |
+
+### Backend (`/backend/.env`)
+
+All backend variables are **validated at boot**: a missing or malformed value
+stops the API immediately with an actionable message
+(`backend/src/config/env.validation.ts`).
+
+| Variable | Type | Default | Required | Description |
+|----------|------|---------|:--------:|-------------|
+| `NODE_ENV` | `development` \| `test` \| `production` | `development` | no | Runtime mode. In `production` the JWT secret rules below are enforced. |
+| `DATABASE_URL` | string | — | **yes** | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/db`. A `*.neon.tech` host is routed through the Neon WebSocket adapter, everything else through `pg`. |
+| `JWT_SECRET` | string | `dev-secret` (dev only) | **yes in production** | Secret used to sign access tokens. Must be **≥ 32 characters** and unique in production. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`. |
+| `JWT_EXPIRES_IN` | string | `7d` | no | Token lifetime — `15m`, `24h`, `7d`, … |
+| `BCRYPT_ROUNDS` | number | `12` | no | Password hashing cost. 4 = fastest (tests), 12 = secure default, 15 = slowest. |
+| `PORT` | number | `4000` | no | Port the API listens on. |
+| `CORS_ORIGINS` | string | `http://localhost:5173,http://localhost:5174` | no | Comma-separated list of allowed browser origins (no trailing slash). |
+| `THROTTLE_TTL` | number (ms) | `60000` | no | Window of the global per-IP rate limiter. |
+| `THROTTLE_LIMIT` | number | `300` | no | Requests per IP per window across **all** routes. |
+| `AUTH_THROTTLE_TTL` | number (ms) | `900000` | no | Window of the sign-in brute-force limiter. |
+| `AUTH_THROTTLE_LIMIT` | number | `10` | no | Failed sign-ins per account+IP before the account is blocked. |
+
+<details>
+<summary>🔎 Ports at a glance</summary>
+
+| Port | Used by |
+|------|---------|
+| `5173` / `5174` | Vite dev server (frontend) |
+| `4000` | AssetFlow API (`http://localhost:4000/api`) |
+| `5433` | Local PostgreSQL in Docker (the sample `DATABASE_URL`) |
+| `54329` | Embedded Postgres used by the automated test-suite |
+</details>
+
+---
+
+## 👥 Roles & permissions
+
+| Capability | Admin | Asset Manager | Dept. Head | Employee |
+|---|:---:|:---:|:---:|:---:|
+| Organisation setup (departments, categories, roles) | ✅ | | | |
+| Register / edit / retire assets | ✅ | ✅ | | |
+| Allocate assets | ✅ | ✅ | | |
+| Return an asset | ✅ | ✅ | own department | own assets |
+| Approve transfers | ✅ | ✅ | own department | |
+| Raise maintenance | ✅ | ✅ | ✅ | ✅ |
+| Approve / assign / resolve maintenance | ✅ | ✅ | | |
+| Create & close audit cycles | ✅ | | | |
+| Audit as an assigned auditor | ✅ | ✅ | ✅ (when assigned) | |
+| Book resources | ✅ | ✅ | ✅ | ✅ |
+| View org-wide analytics & CSV export | ✅ | ✅ | | |
+| Organisation-wide activity log | ✅ | ✅ | | |
+| Manage the employee directory & roles | ✅ | | | |
+
+Roles are **only** assignable by an Admin (`PATCH /api/org/employees/:id/role`).
+Signing up always creates an Employee, and the API refuses to demote or
+deactivate the last remaining active Admin.
+
+---
+
+## 🔌 API overview
+
+Base URL: `http://localhost:4000/api` · every response is JSON · list endpoints
+return `{ items, total }`.
+
+```bash
+# Sign in
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@assetflow.com","password":"password123"}'
+
+# Use the token
+curl http://localhost:4000/api/assets \
+  -H 'Authorization: Bearer <token>'
+```
+
+<details>
+<summary>📚 All 60+ endpoints (grouped)</summary>
+
+**Auth** — `POST /auth/signup` · `POST /auth/login` · `GET /auth/me`
+
+**Organisation** — `POST|GET /org/departments` · `GET|PATCH /org/departments/:id` ·
+`POST|GET /org/categories` · `GET|PATCH /org/categories/:id` ·
+`GET|POST /org/employees` · `GET /org/employees/directory` ·
+`GET|PATCH /org/employees/:id` · `PATCH /org/employees/:id/role`
+
+**Assets** — `POST|GET /assets` · `GET|PATCH /assets/:id` · `GET /assets/:id/history`
+
+**Allocations & transfers** — `POST /allocations` · `GET /allocations` ·
+`GET /allocations/my` · `GET /allocations/overdue` · `POST /allocations/:id/return` ·
+`POST /transfers` · `GET /transfers` · `POST /transfers/:id/approve` · `POST /transfers/:id/reject`
+
+**Bookings** — `POST|GET /bookings` · `GET /bookings/my` · `GET /bookings/:id` ·
+`POST /bookings/:id/cancel` · `PATCH /bookings/:id/reschedule`
+
+**Maintenance** — `POST|GET /maintenance` · `GET /maintenance/my` · `GET /maintenance/:id` ·
+`POST /maintenance/:id/{approve,reject,assign,start,resolve}`
+
+**Audits** — `POST|GET /audits` · `GET /audits/:id` · `GET /audits/:id/items` ·
+`POST /audits/:id/auditors` · `PATCH /audits/:id/items/:itemId` ·
+`GET /audits/:id/discrepancies` · `POST /audits/:id/close`
+
+**Reports** — `GET /reports/dashboard` · `/reports/dashboard/employee/{kpis,activity,chart}` ·
+`/reports/{asset-activity,asset-status,analytics,asset-utilization,maintenance-frequency,due-maintenance,department-allocation,booking-heatmap}` ·
+`GET /reports/export/assets.csv`
+
+**Notifications & activity** — `GET /notifications` · `PATCH /notifications/:id/read` ·
+`POST /notifications/read-all` · `POST /notifications/ping` · `GET /activity`
+
+</details>
+
+The authoritative contract — parameters, status codes and role rules — is in
+[`backend/API.md`](backend/API.md).
+
+---
+
+## 🧪 Testing
+
+The project ships with **152 automated checks** that run against a **real
+PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
+WebAssembly) — no Docker, no cloud database, no network required.
+
+```bash
+# Backend — unit tests (fast, no database)
+cd backend
+npm run test:unit
+
+# Backend — end-to-end tests (boots Postgres + the whole Nest app)
+npm run test:e2e
+
+# …or both
+npm run test:all
+
+# Frontend — Vitest
+cd ..
+npm test
+```
+
+| Suite | Command | What it covers |
+|-------|---------|----------------|
+| Backend unit | `cd backend && npm run test:unit` | **26 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service |
+| Backend e2e | `cd backend && npm run test:e2e` | **102 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping |
+| Frontend | `npm test` | **24 checks** — API client, session handling, avatar initials |
+| Lint | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
+
+What the e2e suite proves, among other things:
+
+- an employee **cannot** create assets, read analytics or approve maintenance
+- an asset can only be allocated **once** — the second attempt returns `409`
+- a department head can only return/transfer **their own department's** assets
+- booking the same slot twice returns `409`, touching slots are allowed
+- invalid workflow jumps (`PENDING → RESOLVED`) return `409`
+- a deactivated account cannot sign in, and an existing token stops working
+- brute-forcing a password is throttled with `429`
+- the CSV export escapes quotes **and** neutralises formula injection
+- the asset tag keeps counting past `AF-9999` (numeric, not lexicographic)
+- row-level scoping: an employee sees only their own overdue allocations,
+  bookings and maintenance requests — someone else's booking answers `404`
+- an asset cannot be marked `AVAILABLE` while it is still allocated, and a
+  returned asset with an open maintenance request stays `UNDER_MAINTENANCE`
+- malformed JSON columns (`documents`, `customFieldValues`) are rejected
+
+---
+
+## 🔒 Security model
+
+| Area | How it is protected |
+|------|--------------------|
+| Passwords | bcrypt with a SHA-512 pre-hash (so passwords longer than bcrypt's 72-byte limit stay distinct), cost configurable, never returned by any endpoint |
+| User enumeration | unknown e-mail and wrong password return the *same* message, and the same bcrypt work is performed in both cases |
+| E-mail identity | addresses are normalised (trimmed + lower-cased) and compared case-insensitively — `A@x.com` and `a@x.com` are one account |
+| Sessions | stateless JWTs; every request re-reads the user, so a deactivation or role change takes effect **immediately** |
+| Authorisation | `JwtAuthGuard` + `RolesGuard` on every route, plus department scoping inside the services |
+| Brute force | per-account + per-IP sign-in limiter (`429`), plus a global per-IP throttle on every route |
+| Injection | Prisma parameterises every query; DTOs are validated and stripped (`whitelist` + `forbidNonWhitelisted`) |
+| Mass assignment | role changes are only possible through the dedicated admin endpoint; unknown body fields are rejected with `400` |
+| Headers | `helmet` (clickjacking, MIME sniffing, …) and `X-Powered-By` removed |
+| Transport | CORS restricted to an explicit origin allow-list; `trust proxy` enabled so rate limiting sees the real client IP behind Vercel |
+| Secrets | the environment is validated at boot — a placeholder `JWT_SECRET` or a missing `DATABASE_URL` refuses to start in production |
+| CSV export | RFC-4180 quoting plus formula-injection neutralisation (`=`, `+`, `-`, `@` are prefixed) |
+
+> **Known trade-off:** the JWT lives in `localStorage`, so any script running on
+> the page can read it. The token itself carries no privilege — every request
+> is authorised against the live user record — but an httpOnly cookie would be
+> the stronger choice for a production rollout.
 
 ---
 
 ## 🚀 Deploying to Vercel
 
-The repo deploys as **two Vercel projects from the same GitHub repo** — one for
-the React frontend (repo root) and one for the NestJS API (`backend/`). Each
-folder has its own `vercel.json`.
+The repository deploys as **two Vercel projects from the same GitHub repo**:
+one for the SPA (repository root) and one for the API (`backend/`).
 
 ### 0. Prerequisites
-- The Neon Postgres database (already created), and its pooled connection string.
-- The schema applied to it (`cd backend && npx prisma migrate deploy`) and,
-  optionally, demo data (`npm run seed`).
 
-### 1. Deploy the API (do this first — you need its URL for step 2)
-1. Go to <https://vercel.com/new> and import `BhaveshSab/odoohackathon`.
-2. Set **Root Directory** to `backend`.
-3. Leave the build settings alone — `backend/vercel.json` already runs the
-   `vercel-build` script (`prisma generate && nest build`) and routes every
-   request to the serverless entrypoint `backend/api/index.js`.
+- A PostgreSQL database (a free [Neon](https://neon.tech) instance is ideal).
+- The schema applied to it: `cd backend && npx prisma migrate deploy`.
+
+### 1. Deploy the API first
+
+1. <https://vercel.com/new> → import the repository.
+2. **Root Directory** → `backend`.
+3. Leave the build settings alone — `backend/vercel.json` runs
+   `npm run vercel-build` (`prisma generate && nest build`) and routes every
+   request to the serverless entry point `backend/api/index.js`.
 4. Add these **Environment Variables** (Production + Preview):
 
    | Key | Value |
    |-----|-------|
-   | `DATABASE_URL` | your Neon **pooled** connection string (`...-pooler...?sslmode=require`) |
-   | `JWT_SECRET` | a fresh secret: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
+   | `DATABASE_URL` | your pooled Postgres connection string (`…?sslmode=require` for Neon) |
+   | `JWT_SECRET` | `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
    | `JWT_EXPIRES_IN` | `7d` |
    | `CORS_ORIGINS` | fill in after step 2, then redeploy |
+   | `NODE_ENV` | `production` |
 
    Do **not** set `PORT` — Vercel manages it.
-5. Click **Deploy**, then confirm `https://<api-project>.vercel.app/api` returns
+5. Deploy and confirm `https://<api-project>.vercel.app/api` answers
    `Hello World!`.
 
 ### 2. Deploy the frontend
-1. Import the **same repo** again as a second Vercel project.
-2. Leave **Root Directory** as the repo root. `vercel.json` sets the Vite build
-   (`npm run build` → `dist`) and the SPA rewrite so deep links like
-   `/Dashboard` don't 404.
+
+1. Import the **same repository** as a second Vercel project.
+2. **Root Directory** → the repository root. `vercel.json` runs the Vite build
+   and rewrites every path to `index.html`, so deep links like `/Dashboard`
+   work.
 3. Add one environment variable:
 
    | Key | Value |
    |-----|-------|
    | `VITE_API_BASE_URL` | `https://<api-project>.vercel.app/api` |
 
-   Vite inlines this at build time, so changing it later requires a redeploy.
-4. Click **Deploy**.
+4. Deploy.
 
 ### 3. Close the CORS loop
-Back in the **API** project, set
+
+In the **API** project set
 `CORS_ORIGINS=https://<frontend-project>.vercel.app` (comma-separate extra
-origins, no trailing slash) and redeploy. Without this the browser blocks every
+origins, no trailing slash) and redeploy. Without it the browser blocks every
 API call.
 
 ### 4. Verify
-Open the frontend URL, sign in as `admin@assetflow.com` / `password123`, and
-confirm the dashboard loads live data. If requests fail, check the API project's
-runtime logs in Vercel.
 
-> **Note on Neon connectivity:** `PrismaService` routes `*.neon.tech` URLs
-> through `@prisma/adapter-neon`, which tunnels Postgres over WebSocket on port
-> 443. That's required on networks that block raw Postgres TCP (5432) and works
-> well on serverless. Any other `DATABASE_URL` (e.g. local Docker Postgres)
-> still uses Prisma's default TCP engine.
+Open the frontend URL, sign in as `admin@assetflow.com` / `password123` and
+confirm the dashboard loads live data. If requests fail, check the API
+project's runtime logs.
 
-### Troubleshooting
-- **`prisma: command not found` (exit 127) during build.** The build command has
-  to run through npm (`npm run vercel-build`) so that `node_modules/.bin` is on
-  `PATH`. A bare `prisma generate && nest build` in Vercel's *Build Command*
-  field runs in plain `sh`, where locally-installed CLIs aren't resolvable.
-  Leave the Build Command empty so `backend/vercel.json` is used.
-- **`npm warn allow-scripts` lines.** Warnings only — npm 11 lists packages with
-  install scripts. Prisma's CLI and `bcrypt` (which ships prebuilt binaries for
-  `linux-x64`) both work without approving them.
-- **Prisma engine missing at runtime.** `schema.prisma` sets
-  `binaryTargets = ["native", "rhel-openssl-3.0.x"]` — the second is the
-  platform Vercel's functions run on. Removing it breaks the deployed API while
-  leaving local dev working.
+> **Neon connectivity:** `PrismaService` routes `*.neon.tech` URLs through
+> `@prisma/adapter-neon`, which tunnels Postgres over WebSocket on port 443 —
+> required on networks that block raw Postgres TCP (5432). Every other
+> `DATABASE_URL` uses `@prisma/adapter-pg` (`pg`), which is what your local
+> Docker Postgres uses.
 
 ---
 
-## Tech stack
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, Framer Motion
-- **Backend:** NestJS, TypeScript, PostgreSQL, Prisma, JWT + bcrypt
+## 📁 Project layout
+
+```
+assetflow/
+├── src/                       # React SPA
+│   ├── components/
+│   │   ├── dashboard/         # 15 feature screens
+│   │   └── ui/                # shadcn/ui primitives
+│   ├── lib/                   # api client, auth session, utils
+│   ├── pages/                 # AuthLayout / AuthPage / Dashboard
+│   ├── services/              # organisation service layer
+│   └── test/                  # Vitest setup
+├── backend/                   # NestJS API
+│   ├── prisma/
+│   │   ├── schema.prisma      # the data model (single source of truth)
+│   │   ├── migrations/        # replayed verbatim by the test-suite
+│   │   └── seed.ts            # idempotent demo data
+│   ├── src/
+│   │   ├── config/            # environment validation
+│   │   ├── common/security/   # password + e-mail helpers
+│   │   ├── auth/ assets/ allocations/ bookings/ maintenance/
+│   │   ├── audits/ org/ reports/ notifications/ activity/
+│   │   └── prisma/            # driver-adapter aware PrismaService
+│   └── test/                  # Jest e2e suites + embedded Postgres
+├── vercel.json                # SPA build + SPA rewrite
+└── backend/vercel.json        # API build + serverless rewrite
+```
+
+---
+
+## 🩺 Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `DATABASE_URL is not set` | `backend/.env` missing | `cp backend/.env.example backend/.env` |
+| `JWT_SECRET must be …` at boot | placeholder secret with `NODE_ENV=production` | generate a real one (see [parameters](#-environment-variables--every-parameter)) |
+| `Could not locate the Query Engine` | the Prisma client was not generated | `cd backend && npx prisma generate` |
+| `prisma: command not found` (exit 127) in a Vercel build | the CLI was invoked outside npm | keep the build command empty so `backend/vercel.json` is used |
+| Every browser call fails with a CORS error | `CORS_ORIGINS` does not contain the frontend origin | add it (no trailing slash) and redeploy the API |
+| The SPA cannot reach the API | `VITE_API_BASE_URL` is wrong | it must include the `/api` prefix — and it is inlined at build time, so rebuild |
+| `Unique constraint failed on assetTag` | a tag was created outside the API | tags are generated inside a transaction with a numeric `MAX()` — retry the request |
+| Sign-in returns `429` | the brute-force limiter kicked in | wait `AUTH_THROTTLE_TTL` (15 min) or reset the account |
+| Port 4000 already in use | another process owns it | `PORT=4100 npm run start:dev` and point `VITE_API_BASE_URL` at it |
+| `npm warn allow-scripts` | npm 11 lists packages with install scripts | warnings only — bcrypt ships prebuilt binaries |
+
+---
+
+## 📄 License
+
+Released under the **MIT License** — see [`LICENSE`](LICENSE) if present, or
+the licence header of your fork.
+
+<div align="center">
+
+**Built with ❤️ for the Odoo Hackathon — AssetFlow**
+
+</div>

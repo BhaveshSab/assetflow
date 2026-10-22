@@ -7,8 +7,13 @@
  *
  * The JWT is persisted under `localStorage.token` (all components read it) and
  * the full session under `localStorage.session`.
+ *
+ * NOTE: a token in localStorage is readable by any script running on the page.
+ * The API therefore never stores anything sensitive in the token itself and
+ * every request is authorised server-side against the *current* user record
+ * (role changes and deactivations take effect immediately).
  */
-import { BASE_URL } from "@/lib/api";
+import { BASE_URL, getToken } from "@/lib/api";
 
 export type UserRole =
   | "ADMIN"
@@ -101,8 +106,11 @@ export async function apiSignUp(payload: AuthPayload): Promise<AuthResponse> {
 
 /** GET /auth/me — refreshes the session's user (role) from the backend. */
 export async function getMe(): Promise<AuthUser> {
+  const token = getToken();
+  if (!token) throw new Error("Not signed in");
+
   const res = await fetch(`${BASE_URL}/auth/me`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) ?? ""}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
     throw new Error("Session expired");

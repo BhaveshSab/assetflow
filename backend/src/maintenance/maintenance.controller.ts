@@ -96,12 +96,12 @@ export class MaintenanceController {
   myRequests(@CurrentUser() user: AuthUser) {
     return this.maintenance.list(user, {
       mine: 'true',
-    } as unknown as ListMaintenanceDto);
+    });
   }
 
-  /** Single maintenance request. */
+  /** Single maintenance request — only visible within the caller's scope. */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.maintenance.findOne(id);
+  findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.maintenance.findOne(user, id);
   }
 }

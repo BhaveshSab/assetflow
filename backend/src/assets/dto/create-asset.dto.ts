@@ -1,15 +1,18 @@
 import { AssetCondition } from '@prisma/client';
 import {
-  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   Min,
 } from 'class-validator';
+
+import {
+  IsCustomFieldMap,
+  IsDocumentList,
+} from '../../common/validation/json-fields';
 
 /** Body for POST /assets. Registers a new asset; assetTag is auto-generated. */
 export class CreateAssetDto {
@@ -44,17 +47,18 @@ export class CreateAssetDto {
   @IsString()
   photoUrl?: string;
 
-  // list of { name, url } — stored as Json.
+  // list of { name, url } — stored as Json (validated: see IsDocumentList).
   @IsOptional()
-  @IsArray()
+  @IsDocumentList()
   documents?: unknown[];
 
   @IsOptional()
   @IsBoolean()
   isBookable?: boolean;
 
-  // per-asset values for the category's custom field definitions — stored as Json.
+  // per-asset values for the category's custom field definitions — stored as
+  // Json (validated: see IsCustomFieldMap).
   @IsOptional()
-  @IsObject()
+  @IsCustomFieldMap()
   customFieldValues?: Record<string, unknown>;
 }

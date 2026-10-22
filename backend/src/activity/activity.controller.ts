@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { QueryActivityDto } from './dto/query-activity.dto';
 import { ActivityService } from './activity.service';
 
 /** Feature 10 — the full audit log of admin/manager/employee actions. */
@@ -14,19 +15,13 @@ export class ActivityController {
 
   @Get()
   @Roles(Role.ADMIN, Role.ASSET_MANAGER)
-  list(
-    @Query('take') take?: string,
-    @Query('skip') skip?: string,
-    @Query('entityType') entityType?: string,
-    @Query('entityId') entityId?: string,
-    @Query('actorId') actorId?: string,
-  ) {
+  list(@Query() query: QueryActivityDto) {
     return this.activity.list({
-      take: take ? Number(take) : undefined,
-      skip: skip ? Number(skip) : undefined,
-      entityType,
-      entityId,
-      actorId,
+      take: query.take,
+      skip: query.skip,
+      entityType: query.entityType,
+      entityId: query.entityId,
+      actorId: query.actorId,
     });
   }
 }

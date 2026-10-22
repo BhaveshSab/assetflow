@@ -6,13 +6,19 @@
  *
  * Default password for EVERY seeded account: "password123"
  */
-import { PrismaClient, Role, AssetCondition } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { Role, AssetCondition } from '@prisma/client';
 
-const prisma = new PrismaClient();
+import { hashPassword } from '../src/common/security/password';
+import { createPrismaClient } from '../src/prisma/prisma.service';
+
+// The client is generated with `engineType = "client"`, so it needs a driver
+// adapter — reuse the exact same factory the API uses.
+const prisma = createPrismaClient(process.env.DATABASE_URL ?? '');
 
 async function main() {
-  const passwordHash = await bcrypt.hash('password123', 10);
+  const passwordHash = await hashPassword('password123', {
+    rounds: Number(process.env.BCRYPT_ROUNDS ?? 12),
+  });
 
   // --- Departments ---
   const it = await prisma.department.upsert({

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -14,6 +15,7 @@ import {
 
 import { ActivityService } from '../activity/activity.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { maintenanceScope } from '../common/auth/scopes';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../auth/jwt.strategy';
 import { AssignMaintenanceDto } from './dto/assign-maintenance.dto';
@@ -31,6 +33,13 @@ const USER_SELECT = {
   departmentId: true,
 } as const;
 
+/** Asset statuses that mean "this asset is out of service". */
+const OUT_OF_SERVICE: AssetStatus[] = [
+  AssetStatus.RETIRED,
+  AssetStatus.DISPOSED,
+  AssetStatus.LOST,
+];
+
 @Injectable()
 export class MaintenanceService {
   constructor(
@@ -45,6 +54,14 @@ export class MaintenanceService {
       where: { id: dto.assetId },
     });
     if (!asset) throw new NotFoundException('Asset not found');
+
+    // Retired / disposed / lost assets are out of service — there is nothing
+    // to repair, and approving them would resurrect a dead asset.
+    if (OUT_OF_SERVICE.includes(asset.status)) {
+      throw new BadRequestException(
+        `Asset ${asset.assetTag} is out of service (status: ${asset.status}) and cannot be sent for maintenance`,
+      );
+    }
 
     const request = await this.prisma.maintenanceRequest.create({
       data: {
@@ -89,6 +106,19 @@ export class MaintenanceService {
     if (request.status !== MaintenanceStatus.PENDING) {
       throw new ConflictException(
         `Cannot approve a request in status ${request.status}`,
+      );
+    }
+
+    // Never send an out-of-service asset "under maintenance" — that would
+    // resurrect a retired / disposed / lost asset.
+    const asset = await this.prisma.asset.findUnique({
+      where: { id: request.assetId },
+      select: { id: true, status: true, assetTag: true },
+    });
+    if (!asset) throw new NotFoundException('Asset not found');
+    if (OUT_OF_SERVICE.includes(asset.status)) {
+      throw new ConflictException(
+        `Asset ${asset.assetTag} is out of service (status: ${asset.status}) and cannot go under maintenance`,
       );
     }
 
@@ -285,9 +315,16 @@ export class MaintenanceService {
     const skip = query.skip ?? 0;
 
     const where: Prisma.MaintenanceRequestWhereInput = {
+      // Row-level scope: employees only see their own requests, department
+      // heads only their department's, managers see everything.
+      ...maintenanceScope(user),
       ...(query.assetId ? { assetId: query.assetId } : {}),
       ...(query.status && query.status.length
-        ? { status: Array.isArray(query.status) ? { in: query.status } : query.status }
+        ? {
+            status: Array.isArray(query.status)
+              ? { in: query.status }
+              : query.status,
+          }
         : {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.mine === 'true' ? { raisedById: user.id } : {}),
@@ -307,10 +344,10 @@ export class MaintenanceService {
     return { items, total };
   }
 
-  /** Single request with asset + raiser. */
-  async findOne(id: string) {
-    const request = await this.prisma.maintenanceRequest.findUnique({
-      where: { id },
+  /** Single request with asset + raiser — only visible within the caller's scope. */
+  async findOne(user: AuthUser, id: string) {
+    const request = await this.prisma.maintenanceRequest.findFirst({
+      where: { id, ...maintenanceScope(user) },
       include: {
         asset: true,
         raisedBy: { select: USER_SELECT },
