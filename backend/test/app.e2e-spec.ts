@@ -1,29 +1,36 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+import { createTestApp } from './utils/test-app';
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+describe('Health (e2e)', () => {
+  let app: INestApplication;
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
+  beforeAll(async () => {
+    app = await createTestApp();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('GET /api → Hello World!', async () => {
+    await request(app.getHttpServer())
+      .get('/api')
       .expect(200)
       .expect('Hello World!');
   });
 
-  afterEach(async () => {
-    await app.close();
+  it('sets the security headers', async () => {
+    const res = await request(app.getHttpServer()).get('/api').expect(200);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+
+  it('answers with a JSON 404 for an unknown route', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/does-not-exist')
+      .expect(404);
+    expect(res.body.message).toBeDefined();
   });
 });

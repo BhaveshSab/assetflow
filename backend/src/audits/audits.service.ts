@@ -446,7 +446,9 @@ export class AuditsService {
     });
 
     // Inform the cycle creator + all auditors that the cycle is closed.
-    const recipients = [...new Set([summary.createdById, ...summary.auditorIds])];
+    const recipients = [
+      ...new Set([summary.createdById, ...summary.auditorIds]),
+    ];
     await this.notifications.notifyMany(recipients, {
       type: NotificationType.AUDIT_CLOSED,
       message: `Audit cycle "${summary.name}" was closed. ${summary.missingCount} asset(s) marked LOST, ${summary.damagedCount} asset(s) marked DAMAGED.`,
@@ -517,7 +519,9 @@ export class AuditsService {
     cycleId: string,
   ): Promise<boolean> {
     const assignment = await this.prisma.auditAssignment.findUnique({
-      where: { auditCycleId_auditorId: { auditCycleId: cycleId, auditorId: userId } },
+      where: {
+        auditCycleId_auditorId: { auditCycleId: cycleId, auditorId: userId },
+      },
       select: { id: true },
     });
     return !!assignment;
@@ -529,9 +533,7 @@ export class AuditsService {
   ): Promise<void> {
     if (this.isManager(user)) return;
     if (await this.isAssignedAuditor(user.id, cycleId)) return;
-    throw new ForbiddenException(
-      'You are not assigned to this audit cycle',
-    );
+    throw new ForbiddenException('You are not assigned to this audit cycle');
   }
 
   private async assertCanMark(user: AuthUser, cycleId: string): Promise<void> {

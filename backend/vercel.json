@@ -3,7 +3,7 @@
   "buildCommand": "npm run vercel-build",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{dist/**,node_modules/.prisma/client/**,node_modules/bcrypt/prebuilds/**}"
+      "includeFiles": "{dist/**,node_modules/.prisma/client/**,node_modules/bcrypt/prebuilds/**,node_modules/@prisma/adapter-pg/**,node_modules/@prisma/adapter-neon/**,node_modules/@neondatabase/serverless/**,node_modules/pg/**,node_modules/pg-native/**,node_modules/ws/**}"
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }]

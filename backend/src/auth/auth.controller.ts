@@ -1,4 +1,12 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Ip,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -20,8 +28,8 @@ export class AuthController {
   /** Exchange email + password for a token. */
   @Post('login')
   @HttpCode(200)
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  login(@Body() dto: LoginDto, @Ip() clientIp: string) {
+    return this.auth.login(dto, clientIp);
   }
 
   /** Return the currently logged-in user (requires a valid token). */

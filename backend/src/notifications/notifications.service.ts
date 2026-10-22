@@ -3,8 +3,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NotificationType } from '@prisma/client';
+import { AllocationStatus, NotificationType, Prisma } from '@prisma/client';
 
+import type { AuthUser } from '../auth/jwt.strategy';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface NotifyParams {
@@ -24,8 +25,15 @@ export interface NotifyParams {
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async notify(params: NotifyParams): Promise<void> {
-    await this.prisma.notification.create({
+  /**
+   * `client` lets the caller pass a transaction client so the notification is
+   * written inside the same transaction (and on the same pooled connection).
+   */
+  async notify(
+    params: NotifyParams,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
+    await client.notification.create({
       data: {
         userId: params.userId,
         type: params.type,
@@ -40,10 +48,11 @@ export class NotificationsService {
   async notifyMany(
     userIds: string[],
     params: Omit<NotifyParams, 'userId'>,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
   ): Promise<void> {
     const unique = [...new Set(userIds.filter(Boolean))];
     if (unique.length === 0) return;
-    await this.prisma.notification.createMany({
+    await client.notification.createMany({
       data: unique.map((userId) => ({
         userId,
         type: params.type,
@@ -87,7 +96,14 @@ export class NotificationsService {
    * "Send Ping" button on overdue allocations). Creates an OVERDUE_RETURN
    * notification for the holder.
    */
-  async pingAllocation(actorId: string, allocationId: string) {
+  /**
+   * POST /notifications/ping — remind the holder of an allocation (used by the
+   * "Send Ping" button on overdue allocations). Creates an OVERDUE_RETURN
+   * notification for the holder.
+   *
+   * Restricted to ADMIN / ASSET_MANAGER — see the controller's @Roles guard.
+   */
+  async pingAllocation(actor: AuthUser, allocationId: string) {
     const allocation = await this.prisma.allocation.findUnique({
       where: { id: allocationId },
       include: {
@@ -100,6 +116,16 @@ export class NotificationsService {
       throw new BadRequestException(
         'This allocation is not assigned to a specific user to ping',
       );
+    }
+    if (allocation.status !== AllocationStatus.ACTIVE) {
+      throw new BadRequestException(
+        'This allocation is already closed — there is nothing to remind about',
+      );
+    }
+    // A manager must not be able to ping themselves (pointless) — and only
+    // *overdue* allocations deserve a reminder.
+    if (allocation.holderUserId === actor.id) {
+      throw new BadRequestException('You cannot send a reminder to yourself');
     }
 
     await this.notify({

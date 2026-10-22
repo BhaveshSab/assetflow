@@ -42,7 +42,7 @@ export default function DashboardLayout({
 
       {/* ── Main area ─────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopHeader />
+        <TopHeader userName={sidebarProps.user.name} />
 
         <main className={`flex-1 overflow-y-auto p-4 sm:p-6 ${className ?? ""}`}>
           <motion.div

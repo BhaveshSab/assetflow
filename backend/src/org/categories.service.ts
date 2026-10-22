@@ -58,9 +58,7 @@ export class CategoriesService {
     const pageSize = Math.min(query.pageSize ?? 50, 200);
 
     const where: Prisma.AssetCategoryWhereInput = {
-      ...(query.q
-        ? { name: { contains: query.q, mode: 'insensitive' } }
-        : {}),
+      ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
 

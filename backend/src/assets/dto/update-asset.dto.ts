@@ -1,15 +1,18 @@
 import { AssetCondition, AssetStatus } from '@prisma/client';
 import {
-  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   Min,
 } from 'class-validator';
+
+import {
+  IsCustomFieldMap,
+  IsDocumentList,
+} from '../../common/validation/json-fields';
 
 /**
  * Body for PATCH /assets/:id. Edits descriptive fields. `status` may only be
@@ -52,7 +55,7 @@ export class UpdateAssetDto {
   photoUrl?: string;
 
   @IsOptional()
-  @IsArray()
+  @IsDocumentList()
   documents?: unknown[];
 
   @IsOptional()
@@ -60,7 +63,7 @@ export class UpdateAssetDto {
   isBookable?: boolean;
 
   @IsOptional()
-  @IsObject()
+  @IsCustomFieldMap()
   customFieldValues?: Record<string, unknown>;
 
   @IsOptional()

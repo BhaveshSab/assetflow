@@ -6,11 +6,28 @@ import NotificationBell from "@/components/dashboard/NotificationBell";
 
 export interface TopHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   onMobileMenuToggle?: () => void;
+  /** Display name of the signed-in user (used for the avatar initials). */
+  userName?: string;
+}
+
+/** Initials for the avatar fallback — "Ada Lovelace" → "AL". */
+export function initialsOf(name?: string): string {
+  if (!name) return "?";
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0))
+      .join("")
+      .toUpperCase() || "?"
+  );
 }
 
 export default function TopHeader({
   className,
   onMobileMenuToggle,
+  userName,
 }: TopHeaderProps) {
   return (
     <motion.header
@@ -40,26 +57,15 @@ export default function TopHeader({
         {/* Real notification bell (live backend data) */}
         <NotificationBell />
 
-        {/* Avatar */}
+        {/* Avatar — initials are rendered by React (no innerHTML). */}
         <motion.div
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
-          className="relative h-8 w-8 cursor-pointer overflow-hidden rounded-full ring-2 ring-zinc-700 transition-all hover:ring-blue-500"
+          title={userName}
+          className="flex h-8 w-8 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-blue-600 text-xs font-semibold text-white ring-2 ring-zinc-700 transition-all hover:ring-blue-500"
         >
-          <img
-            src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=80&h=80&q=80"
-            alt="User avatar"
-            className="h-full w-full object-cover"
-            onError={(e) => {
-              const el = e.currentTarget;
-              el.style.display = "none";
-              el.parentElement!.classList.add(
-                "bg-blue-600", "flex", "items-center", "justify-center"
-              );
-              el.parentElement!.innerHTML =
-                '<span class="text-xs font-semibold text-white">JD</span>';
-            }}
-          />
+          <span aria-hidden="true">{initialsOf(userName)}</span>
+          <span className="sr-only">{userName ?? "Signed in user"}</span>
         </motion.div>
       </div>
     </motion.header>

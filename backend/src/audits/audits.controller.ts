@@ -20,6 +20,7 @@ import { AuditsService } from './audits.service';
 import { AssignAuditorsDto } from './dto/assign-auditors.dto';
 import { CreateAuditDto } from './dto/create-audit.dto';
 import { MarkAuditItemDto } from './dto/mark-audit-item.dto';
+import { QueryAuditItemsDto, QueryAuditsDto } from './dto/query-audits.dto';
 
 /** Feature 8 — Asset Audit. Structured verification cycles (batch workflow). */
 @Controller('audits')
@@ -48,15 +49,11 @@ export class AuditsController {
   /** List cycles with per-cycle result counts and status. */
   @Get()
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  list(
-    @Query('status') status?: string,
-    @Query('take') take?: string,
-    @Query('skip') skip?: string,
-  ) {
+  list(@Query() query: QueryAuditsDto) {
     return this.audits.listCycles({
-      status,
-      take: take ? Number(take) : undefined,
-      skip: skip ? Number(skip) : undefined,
+      status: query.status,
+      take: query.take,
+      skip: query.skip,
     });
   }
 
@@ -72,12 +69,11 @@ export class AuditsController {
   items(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Query('take') take?: string,
-    @Query('skip') skip?: string,
+    @Query() query: QueryAuditItemsDto,
   ) {
     return this.audits.listItems(user, id, {
-      take: take ? Number(take) : undefined,
-      skip: skip ? Number(skip) : undefined,
+      take: query.take,
+      skip: query.skip,
     });
   }
 

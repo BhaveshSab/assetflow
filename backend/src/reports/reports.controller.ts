@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Res,
-  UseGuards,
-  Param,
-} from '@nestjs/common';
+import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 
@@ -22,10 +15,15 @@ import type { AuthUser } from '../auth/jwt.strategy';
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
 
-  /** KPI cards — available to any authenticated user. */
+  /**
+   * KPI cards — available to any authenticated user.
+   *
+   * The numbers are scoped: an employee only sees their own allocations, a
+   * department head only their department's. Managers see everything.
+   */
   @Get('dashboard')
-  dashboard() {
-    return this.reports.dashboard();
+  dashboard(@CurrentUser() user: AuthUser) {
+    return this.reports.dashboard(user);
   }
 
   /** Employee-specific KPIs for the dashboard. */

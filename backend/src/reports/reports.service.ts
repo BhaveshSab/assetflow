@@ -5,10 +5,13 @@ import {
   BookingStatus,
   MaintenanceStatus,
   Prisma,
+  Role,
   TransferStatus,
 } from '@prisma/client';
 
+import { allocationScope } from '../common/auth/scopes';
 import { PrismaService } from '../prisma/prisma.service';
+import type { AuthUser } from '../auth/jwt.strategy';
 
 /** Columns exported by GET /reports/export/assets.csv, in order. */
 const CSV_COLUMNS = [
@@ -23,6 +26,14 @@ const CSV_COLUMNS = [
   'acquisitionCost',
 ] as const;
 
+/** Organisation-wide scope, used by the manager-only aggregate reports. */
+const MANAGER_SCOPE: AuthUser = {
+  id: '',
+  email: '',
+  role: Role.ADMIN,
+  departmentId: null,
+};
+
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -34,17 +45,22 @@ export class ReportsService {
    * `maintenanceToday` is interpreted as "maintenance requests currently
    * IN_PROGRESS" (the actively-worked queue), not "created today".
    */
-  async dashboard() {
+  async dashboard(user: AuthUser) {
     const now = new Date();
     const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
 
+    // Only the allocations the caller is allowed to see are counted — an
+    // employee must not see how many assets *other* people hold.
+    const scope = allocationScope(user);
     const overdueWhere: Prisma.AllocationWhereInput = {
+      ...scope,
       status: AllocationStatus.ACTIVE,
       expectedReturnDate: { lt: now },
     };
     const upcomingWhere: Prisma.AllocationWhereInput = {
+      ...scope,
       status: AllocationStatus.ACTIVE,
       expectedReturnDate: { gte: now, lte: in7Days },
     };
@@ -166,9 +182,7 @@ export class ReportsService {
     for (const g of grouped) {
       countByAsset.set(g.assetId, g._count._all);
     }
-    const currentlyAllocated = new Set(
-      activeAllocations.map((a) => a.assetId),
-    );
+    const currentlyAllocated = new Set(activeAllocations.map((a) => a.assetId));
 
     const enriched = assets.map((asset) => ({
       ...asset,
@@ -438,12 +452,19 @@ export class ReportsService {
     return [header, ...rows].join('\r\n');
   }
 
-  /** RFC-4180 style escaping: wrap in quotes when the value has , " or newline. */
+  /**
+   * RFC-4180 style escaping: wrap in quotes when the value has , " or newline.
+   *
+   * Also neutralises CSV/formula injection: a cell that starts with =, +, - or
+   * @ is executed as a formula by Excel / Sheets when the file is opened, so
+   * such values are prefixed with a single quote.
+   */
   private csvEscape(value: string): string {
-    if (/[",\r\n]/.test(value)) {
-      return `"${value.replace(/"/g, '""')}"`;
+    const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+    if (/[",\r\n]/.test(guarded)) {
+      return `"${guarded.replace(/"/g, '""')}"`;
     }
-    return value;
+    return guarded;
   }
 
   /** Employee-specific KPIs for the dashboard. */
@@ -451,41 +472,45 @@ export class ReportsService {
     const now = new Date();
     const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const [myAllocations, myUpcomingReturns, myOverdueReturns, myActiveBookings] =
-      await Promise.all([
-        // Total assets currently allocated to this user
-        this.prisma.allocation.count({
-          where: {
-            holderUserId: userId,
-            status: AllocationStatus.ACTIVE,
-          },
-        }),
-        // Upcoming returns (within 7 days)
-        this.prisma.allocation.count({
-          where: {
-            holderUserId: userId,
-            status: AllocationStatus.ACTIVE,
-            expectedReturnDate: { gte: now, lte: in7Days },
-          },
-        }),
-        // Overdue returns
-        this.prisma.allocation.count({
-          where: {
-            holderUserId: userId,
-            status: AllocationStatus.ACTIVE,
-            expectedReturnDate: { lt: now },
-          },
-        }),
-        // Active bookings
-        this.prisma.booking.count({
-          where: {
-            bookedById: userId,
-            status: { not: BookingStatus.CANCELLED },
-            startTime: { lte: now },
-            endTime: { gt: now },
-          },
-        }),
-      ]);
+    const [
+      myAllocations,
+      myUpcomingReturns,
+      myOverdueReturns,
+      myActiveBookings,
+    ] = await Promise.all([
+      // Total assets currently allocated to this user
+      this.prisma.allocation.count({
+        where: {
+          holderUserId: userId,
+          status: AllocationStatus.ACTIVE,
+        },
+      }),
+      // Upcoming returns (within 7 days)
+      this.prisma.allocation.count({
+        where: {
+          holderUserId: userId,
+          status: AllocationStatus.ACTIVE,
+          expectedReturnDate: { gte: now, lte: in7Days },
+        },
+      }),
+      // Overdue returns
+      this.prisma.allocation.count({
+        where: {
+          holderUserId: userId,
+          status: AllocationStatus.ACTIVE,
+          expectedReturnDate: { lt: now },
+        },
+      }),
+      // Active bookings
+      this.prisma.booking.count({
+        where: {
+          bookedById: userId,
+          status: { not: BookingStatus.CANCELLED },
+          startTime: { lte: now },
+          endTime: { gt: now },
+        },
+      }),
+    ]);
 
     return {
       myAllocations,
@@ -513,7 +538,8 @@ export class ReportsService {
       }),
     ]);
 
-    const toDayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const toDayKey = (d: Date) =>
+      `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     const points: { date: string; allocated: number; available: number }[] = [];
 
     for (let i = 7; i >= 0; i--) {
@@ -521,7 +547,8 @@ export class ReportsService {
       const key = toDayKey(day);
       points.push({
         date: `${day.getDate()}/${day.getMonth() + 1}`,
-        allocated: allocatedAll.filter((a) => toDayKey(a.allocatedAt) === key).length,
+        allocated: allocatedAll.filter((a) => toDayKey(a.allocatedAt) === key)
+          .length,
         available: returnedAll.filter(
           (a) => a.returnedAt && toDayKey(a.returnedAt) === key,
         ).length,
@@ -570,13 +597,25 @@ export class ReportsService {
   async analytics() {
     const now = new Date();
     const MONTHS = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
 
     const [dash, status, dept, heatmap, totalAssets, allocatedRows] =
       await Promise.all([
-        this.dashboard(),
+        // `analytics` is a manager-only endpoint, so it uses the
+        // organisation-wide scope.
+        this.dashboard(MANAGER_SCOPE),
         this.assetStatus(),
         this.departmentAllocation(),
         this.bookingHeatmap(),
@@ -667,8 +706,18 @@ export class ReportsService {
   async employeeChart(userId: string) {
     const now = new Date();
     const MONTHS = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 

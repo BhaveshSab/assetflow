@@ -20,8 +20,15 @@ export interface LogParams {
 export class ActivityService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async log(params: LogParams): Promise<void> {
-    await this.prisma.activityLog.create({
+  /**
+   * `client` lets the caller pass a transaction client so the log row is
+   * written inside the same transaction (and on the same pooled connection).
+   */
+  async log(
+    params: LogParams,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
+    await client.activityLog.create({
       data: {
         actorId: params.actorId ?? null,
         action: params.action,

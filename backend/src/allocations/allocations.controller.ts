@@ -36,10 +36,7 @@ export class AllocationsController {
   /** Allocate an available asset to a user or a department. */
   @Post('allocations')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER)
-  allocate(
-    @Body() dto: CreateAllocationDto,
-    @CurrentUser() user: AuthUser,
-  ) {
+  allocate(@Body() dto: CreateAllocationDto, @CurrentUser() user: AuthUser) {
     return this.allocations.allocate(dto, user);
   }
 
@@ -60,10 +57,7 @@ export class AllocationsController {
    *  DEPARTMENT_HEAD is scoped to their own department by the service. */
   @Get('allocations')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  list(
-    @Query() query: QueryAllocationsDto,
-    @CurrentUser() user: AuthUser,
-  ) {
+  list(@Query() query: QueryAllocationsDto, @CurrentUser() user: AuthUser) {
     return this.allocations.list(query, user);
   }
 
@@ -95,10 +89,7 @@ export class AllocationsController {
   @Post('transfers/:id/approve')
   @HttpCode(200)
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  approveTransfer(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthUser,
-  ) {
+  approveTransfer(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.allocations.approveTransfer(id, user);
   }
 
@@ -106,17 +97,17 @@ export class AllocationsController {
   @Post('transfers/:id/reject')
   @HttpCode(200)
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  rejectTransfer(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthUser,
-  ) {
+  rejectTransfer(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.allocations.rejectTransfer(id, user);
   }
 
   /** List transfer requests — manager roles only. */
   @Get('transfers')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  listTransfers(@Query() query: QueryTransfersDto, @CurrentUser() user: AuthUser) {
+  listTransfers(
+    @Query() query: QueryTransfersDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.allocations.listTransfers(query, user);
   }
 }

@@ -29,7 +29,9 @@ export class DepartmentsService {
         select: { id: true },
       });
       if (dup) {
-        throw new ConflictException('A department with this name already exists');
+        throw new ConflictException(
+          'A department with this name already exists',
+        );
       }
 
       if (dto.parentDepartmentId) {
@@ -80,9 +82,7 @@ export class DepartmentsService {
     const pageSize = Math.min(query.pageSize ?? 50, 200);
 
     const where: Prisma.DepartmentWhereInput = {
-      ...(query.q
-        ? { name: { contains: query.q, mode: 'insensitive' } }
-        : {}),
+      ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
 
@@ -139,7 +139,9 @@ export class DepartmentsService {
 
       if (dto.parentDepartmentId) {
         if (dto.parentDepartmentId === id) {
-          throw new BadRequestException('A department cannot be its own parent');
+          throw new BadRequestException(
+            'A department cannot be its own parent',
+          );
         }
         const parent = await tx.department.findUnique({
           where: { id: dto.parentDepartmentId },

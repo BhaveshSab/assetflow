@@ -1,130 +1,145 @@
-# AssetFlow — Backend
+# AssetFlow API
 
-Backend for **AssetFlow**, an Enterprise Asset & Resource Management System
-(Odoo Hackathon). This folder is self-contained; the React frontend lives in
-`../src`.
+The NestJS 11 + Prisma 6 backend that powers the AssetFlow SPA.
+It exposes every resource under **`/api`**, validates every payload with
+`class-validator`, and authenticates with stateless JWTs.
 
-> **Team note:** This README + [`API.md`](./API.md) are the shared contract.
-> If you're building the frontend (or driving an agent to), code against the
-> endpoints and types documented here so front and back stay in sync.
-
----
-
-## Tech stack & why
-
-| Layer | Choice | Why (short version) |
-|-------|--------|---------------------|
-| Language | **TypeScript** | Same language as the React frontend → shared types, one mental model |
-| Framework | **NestJS** | Modular structure maps to the spec's "reusable modules"; guards give clean, demonstrable RBAC |
-| Database | **PostgreSQL (local Docker)** | Highly relational domain + transactions + booking-overlap checks; runs locally so it's 100% free with no cloud account |
-| ORM | **Prisma** (pinned v6) | One readable schema file, type-safe queries, migrations. v6 (not v7) for stable NestJS integration |
-| Auth | **JWT** (bcrypt hashes) | Matches the frontend's existing localStorage-token flow |
+> 📖 The complete endpoint contract (parameters, status codes, role rules)
+> lives in [`API.md`](./API.md). The project overview, the full environment
+> matrix and the deployment guide live in the [root README](../README.md).
 
 ---
 
-## Getting started
-
-The database runs **locally in Docker** — free, no cloud account, no card.
+## 🚀 Getting started
 
 ```bash
 cd backend
 npm install
-
-# 1. Start a local Postgres (one-time; keeps data in a Docker volume)
-docker run -d --name assetflow-db \
-  -e POSTGRES_USER=assetflow -e POSTGRES_PASSWORD=assetflow -e POSTGRES_DB=assetflow \
-  -p 5433:5432 postgres:16-alpine
-#   (already created? just: docker start assetflow-db)
-
-# 2. Configure env
-cp .env.example .env      # the default DATABASE_URL already points at the container above
-
-# 3. Apply the schema to the database
-npx prisma migrate dev
-
-# 4. (optional) load demo data
-npm run seed
-
-# 5. Run the API
-npm run start:dev         # http://localhost:4000/api
+cp .env.example .env          # edit DATABASE_URL + JWT_SECRET
+npx prisma migrate deploy     # apply the schema
+npm run seed                  # optional demo data (5 accounts, password123)
+npm run start:dev             # http://localhost:4000/api
 ```
 
-> **Ports:** API = **4000**, local DB = **5433** (both chosen to avoid clashing
-> with another project already using 3000 / 5432 on this machine).
+Health check: `curl http://localhost:4000/api` → `Hello World!`
 
-Handy commands:
+---
+
+## ⚙️ Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NODE_ENV` | `development` | `development` \| `test` \| `production` |
+| `DATABASE_URL` | — | **required** — `postgresql://user:pass@host:5432/db` |
+| `JWT_SECRET` | `dev-secret` (dev) | **required in production** — ≥ 32 chars |
+| `JWT_EXPIRES_IN` | `7d` | token lifetime (`15m`, `24h`, `7d`, …) |
+| `BCRYPT_ROUNDS` | `12` | bcrypt cost factor (4 = fastest, 15 = slowest) |
+| `PORT` | `4000` | HTTP port |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:5174` | comma-separated origin allow-list |
+| `THROTTLE_TTL` | `60000` | global limiter window (ms) |
+| `THROTTLE_LIMIT` | `300` | global limiter requests / IP / window |
+| `AUTH_THROTTLE_TTL` | `900000` | sign-in limiter window (ms) |
+| `AUTH_THROTTLE_LIMIT` | `10` | failed sign-ins before the account is blocked |
+
+The environment is validated by [`src/config/env.validation.ts`](./src/config/env.validation.ts)
+at boot — a missing `DATABASE_URL` or a placeholder `JWT_SECRET` in production
+stops the process with an actionable message instead of failing later.
+
+---
+
+## 🗄 Database & Prisma
+
+* `prisma/schema.prisma` is the single source of truth (11 models).
+* `prisma/migrations/**` contains plain SQL, replayed by `prisma migrate deploy`.
+* The client is generated with **`engineType = "client"`** (Rust-free), so it
+  always runs through a **driver adapter**:
+
+  | `DATABASE_URL` host | Adapter |
+  |---------------------|---------|
+  | `*.neon.tech` | `@prisma/adapter-neon` (WebSocket tunnel, port 443) |
+  | anything else | `@prisma/adapter-pg` (`pg`) |
+
+  The factory lives in [`src/prisma/prisma.service.ts`](./src/prisma/prisma.service.ts)
+  and is reused by `prisma/seed.ts`, so the seed and the API always connect the
+  same way.
 
 ```bash
-npm run build          # type-check + compile
-npx prisma studio      # visual DB browser
-npx prisma generate    # regenerate the typed client after schema edits
+npm run prisma:generate   # regenerate the typed client
+npx prisma migrate deploy # apply migrations
+npm run seed              # idempotent demo data
 ```
 
 ---
 
-## Data model (the keystone)
+## 🧪 Tests
 
-Every feature reads/writes these tables. Full definitions in
-[`prisma/schema.prisma`](./prisma/schema.prisma).
+```bash
+npm run test:unit    # 26 checks — no database needed
+npm run test:e2e     # 102 checks — real Postgres (embedded), full HTTP stack
+npm run test:all     # both
+npm run lint         # ESLint + Prettier (src/ and test/)
+npm run build        # tsc → dist/
+```
 
-- **User** — *is* the employee directory. `role` (ADMIN / ASSET_MANAGER /
-  DEPARTMENT_HEAD / EMPLOYEE) is set here and **only an Admin can change it** —
-  signup always creates an EMPLOYEE. This enforces "no self-assigned admin roles."
-- **Department** — supports hierarchy (`parentDepartment`) and a `head` (a User).
-- **AssetCategory** — with optional `customFields` (e.g. warranty period).
-- **Asset** — the core entity. `status` is the lifecycle state machine:
-  `AVAILABLE → ALLOCATED → AVAILABLE`, `AVAILABLE ↔ UNDER_MAINTENANCE`,
-  plus `RESERVED / LOST / RETIRED / DISPOSED`. Auto `assetTag` like `AF-0001`.
-- **Allocation** — who holds an asset (employee or department), with expected
-  return date. Rows are kept as history; overdue = ACTIVE past its return date.
-- **TransferRequest** — the workflow used when an asset is already held:
-  `REQUESTED → APPROVED/REJECTED → COMPLETED`.
-- **Booking** — time-slot reservations of bookable assets, with overlap checks.
-- **MaintenanceRequest** — approval workflow that drives the asset's status.
-- **AuditCycle / AuditAssignment / AuditItem** — scheduled verification cycles.
-- **Notification / ActivityLog** — user notifications + an immutable audit trail.
+The e2e suites boot the **real** Nest application against a real PostgreSQL
+server: [`test/global-setup.ts`](./test/global-setup.ts) starts a
+[PGlite](https://pglite.dev) socket server on `127.0.0.1:54329`, replays every
+migration and injects a test environment. No Docker, no cloud database.
 
----
-
-## Feature build status
-
-| # | Feature | Status |
-|---|---------|--------|
-| 0 | Project scaffold, Prisma, config | ✅ done |
-| 1 | Data model (schema) | ✅ done |
-| 1 | Auth (signup=Employee, login, JWT) + RBAC guard | ✅ done |
-| 2 | Dashboard KPIs (`/reports/dashboard`) | ✅ done |
-| 3 | Org setup (departments, categories, employee directory + role promotion) | ✅ done |
-| 4 | Asset registration & directory | ✅ done |
-| 5 | Allocation & transfer workflow | ✅ done |
-| 6 | Resource booking (overlap validation) | ✅ done |
-| 7 | Maintenance workflow | ✅ done |
-| 8 | Audit cycles | ✅ done |
-| 9 | Reports & analytics (+ CSV export) | ✅ done |
-| 10 | Notifications & activity log | ✅ done |
-
-**All 10 features implemented and tested end-to-end (50/50 E2E checks passing, incl. a concurrency test for the allocation lock).**
-
-### Demo accounts (after `npm run seed`) — password `password123`
-| Email | Role |
-|-------|------|
-| admin@assetflow.com | ADMIN |
-| manager@assetflow.com | ASSET_MANAGER |
-| head@assetflow.com | DEPARTMENT_HEAD |
-| priya@acme.com / raj@acme.com | EMPLOYEE |
+| Suite | Covers |
+|-------|--------|
+| `auth.e2e-spec.ts` | sign-up/sign-in, RBAC, deactivation, throttling |
+| `assets.e2e-spec.ts` | asset tags, filters, status rules, history |
+| `allocations.e2e-spec.ts` | allocate/return/transfer, conflicts, department scoping |
+| `bookings.e2e-spec.ts` | overlap detection, cancellation, re-scheduling |
+| `maintenance.e2e-spec.ts` | the full workflow, invalid jumps, asset state |
+| `audits.e2e-spec.ts` | cycles, auditors, items, discrepancies |
+| `reports.e2e-spec.ts` | KPIs, charts, CSV export (incl. formula-injection guard) |
+| `org.e2e-spec.ts` | departments, categories, employees, roles |
+| `notifications.e2e-spec.ts` | inbox, read state, pings |
+| `scoping.e2e-spec.ts` | row-level scoping + asset/allocation consistency |
+| `app.e2e-spec.ts` | health route, security headers, 404 shape |
 
 ---
 
-## Roles & permissions (RBAC)
+## 🗂 Layout
 
-| Capability | Admin | Asset Manager | Dept Head | Employee |
-|-----------|:-----:|:-------------:|:---------:|:--------:|
-| Org setup (depts, categories, roles) | ✅ | | | |
-| Register / edit assets | ✅ | ✅ | | |
-| Allocate assets | ✅ | ✅ | | |
-| Approve transfers / maintenance / returns | ✅ | ✅ | dept-scope | |
-| Book resources | ✅ | ✅ | ✅ | ✅ |
-| Raise maintenance / return / transfer requests | ✅ | ✅ | ✅ | ✅ |
-| View org-wide analytics | ✅ | | | |
+```
+backend/
+├── api/index.js            # Vercel serverless entry point
+├── prisma/
+│   ├── schema.prisma       # data model
+│   ├── migrations/         # SQL migrations
+│   └── seed.ts             # demo data
+├── src/
+│   ├── common/             # decorators, guards, security helpers, scopes
+│   ├── config/             # environment validation
+│   ├── prisma/             # driver-adapter aware PrismaService
+│   ├── auth/               # sign-up, sign-in, JWT strategy, throttle
+│   ├── assets/ allocations/ bookings/ maintenance/ audits/
+│   ├── org/ reports/ notifications/ activity/
+│   ├── app.module.ts       # root module (env validation, throttler)
+│   ├── configure-app.ts    # helmet, CORS, validation pipe, shutdown hooks
+│   ├── main.ts             # local/dev server
+│   └── serverless.ts       # Vercel entry point
+└── test/                   # Jest e2e suites + embedded Postgres
+```
 
-See [`API.md`](./API.md) for the endpoint-by-endpoint contract.
+---
+
+## 🔒 Security notes
+
+* Passwords are bcrypt-hashed over a **SHA-512 pre-hash**, so passwords longer
+  than bcrypt's 72-byte limit stay distinct.
+* Unknown e-mail and wrong password produce the **same** error *and* the same
+  amount of bcrypt work (timing equalisation).
+* E-mails are normalised (trimmed + lower-cased) and matched case-insensitively.
+* The JWT strategy **re-reads the user on every request**, so deactivating an
+  account or changing a role takes effect immediately.
+* Sign-in is throttled per account **and** per IP; every route additionally
+  has a global per-IP limiter.
+* `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true })` rejects
+  unknown body fields and strips everything that is not declared.
+* Role changes and deactivations of the **last active admin** are refused.
+* Row-level scoping lives in [`src/common/auth/scopes.ts`](./src/common/auth/scopes.ts)
+  and is applied by the allocations, maintenance, bookings and reports services.

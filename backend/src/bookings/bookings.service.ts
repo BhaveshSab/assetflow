@@ -24,6 +24,7 @@ const OUT_OF_SERVICE: AssetStatus[] = [
 import { ActivityService } from '../activity/activity.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { NotificationsService } from '../notifications/notifications.service';
+import { bookingScope } from '../common/auth/scopes';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
@@ -67,6 +68,11 @@ export class BookingsService {
     // endTime must be strictly after startTime.
     if (endTime <= startTime) {
       throw new BadRequestException('endTime must be after startTime');
+    }
+    // A booking that has already started/finished is never what the user
+    // meant — reject it instead of silently storing a stale reservation.
+    if (startTime <= new Date()) {
+      throw new BadRequestException('startTime must be in the future');
     }
 
     const booking = await this.prisma.$transaction(async (tx) => {
@@ -161,12 +167,14 @@ export class BookingsService {
     };
   }
 
-  async findOne(id: string) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id },
+  /** A single booking — only visible to its booker or a manager. */
+  async findOne(user: AuthUser, id: string) {
+    const booking = await this.prisma.booking.findFirst({
+      where: { id, ...bookingScope(user) },
       include: bookingInclude,
     });
     if (!booking) {
+      // Do not leak the existence of someone else's booking.
       throw new NotFoundException('Booking not found');
     }
     return this.withEffectiveStatus(booking);
@@ -226,6 +234,9 @@ export class BookingsService {
 
     if (endTime <= startTime) {
       throw new BadRequestException('endTime must be after startTime');
+    }
+    if (startTime <= new Date()) {
+      throw new BadRequestException('startTime must be in the future');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -296,7 +307,8 @@ export class BookingsService {
         assetId,
         status: { not: BookingStatus.CANCELLED },
         startTime: { lt: endTime },
-        endTime: { gt: startTime },
+        // A booking that already ended can never clash with a future slot.
+        endTime: { gt: new Date(Math.max(startTime.getTime(), Date.now())) },
         ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
       },
     });

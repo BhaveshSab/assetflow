@@ -32,4 +32,18 @@ export default tseslint.config(
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },
+  {
+    // Test code deals with untyped JSON payloads (supertest bodies, mocked
+    // Prisma clients) — the strict type-safety rules only add noise there.
+    files: ['test/**/*.ts', 'src/**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-type-assertion': 'off',
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
 );
