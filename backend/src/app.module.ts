@@ -4,14 +4,16 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
+import { StartupGuard } from './common/guards/startup.guard';
 import { AppService } from './app.service';
 import { ActivityModule } from './activity/activity.module';
 import { AllocationsModule } from './allocations/allocations.module';
 import { AssetsModule } from './assets/assets.module';
 import { AuditsModule } from './audits/audits.module';
+import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { BookingsModule } from './bookings/bookings.module';
-import { validateEnv } from './config/env.validation';
+import { safeValidateEnv } from './config/env.validation';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrgModule } from './org/org.module';
@@ -21,7 +23,10 @@ import { ReportsModule } from './reports/reports.module';
 @Module({
   imports: [
     // Loads .env, validates it and makes ConfigService available everywhere.
-    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    // The validator never throws: an unusable variable is reported through
+    // `startupStatus` (see StartupGuard + GET /api/health) instead of
+    // killing the process during import.
+    ConfigModule.forRoot({ isGlobal: true, validate: safeValidateEnv }),
     PrismaModule,
     // Global per-IP rate limiting. Configured through the environment so a
     // deployment (or the test-suite) can tune it without a code change.
@@ -48,6 +53,7 @@ import { ReportsModule } from './reports/reports.module';
     MaintenanceModule, // #7 Maintenance
     AuditsModule, // #8 Audit cycles
     ReportsModule, // #2 + #9 Dashboard & reports
+    HealthModule, // public health endpoint (GET /api/health)
   ],
   controllers: [AppController],
   providers: [
@@ -55,6 +61,9 @@ import { ReportsModule } from './reports/reports.module';
     // Registered as a global guard so *every* route is rate limited — the
     // per-route JWT/RBAC guards still run afterwards.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // …and a second global guard that turns an invalid environment into a
+    // readable 503 instead of an unreadable crash.
+    { provide: APP_GUARD, useClass: StartupGuard },
   ],
 })
 export class AppModule {}

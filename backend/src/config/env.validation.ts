@@ -14,6 +14,8 @@
  *    boot error rather than as `NaN` deep inside a query.
  */
 
+import { startupStatus } from './startup-status';
+
 export type AppEnv = {
   NODE_ENV: 'development' | 'test' | 'production';
   DATABASE_URL: string;
@@ -152,4 +154,30 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
       1_000_000,
     ),
   };
+}
+
+/**
+ * Validate the environment **without ever throwing**.
+ *
+ * `ConfigModule` calls the validator while the module is being imported. An
+ * exception there kills the whole serverless function during import, which
+ * Vercel reports as an opaque `500 FUNCTION_INVOCATION_FAILED` — the operator
+ * never learns *which* variable was wrong.
+ *
+ * Instead the reason is recorded in `startupStatus`: the API keeps running,
+ * answers `503` with the reason on every request, and `GET /api/health`
+ * reports it.
+ */
+export function safeValidateEnv(
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  try {
+    return validateEnv(raw);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    startupStatus.setError(message);
+    console.error(`[assetflow] invalid environment: ${message}`);
+    // Keep the raw values so the rest of the app still sees what is set.
+    return { ...raw };
+  }
 }

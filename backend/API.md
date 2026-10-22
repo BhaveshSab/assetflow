@@ -162,6 +162,39 @@ State machine: `PENDING → APPROVED/REJECTED → TECHNICIAN_ASSIGNED → IN_PRO
 | Method | Path | Roles | Notes |
 |---|---|---|---|
 | GET | `/api` | public | → `Hello World!` (service health). |
+| GET | `/health` | public | → `{ status, database, timestamp, startupError?, databaseError? }`. `status` is `ok` when everything works and `degraded` when the environment or the database is broken. Never rate-limited, never blocked by the startup guard — this is the route you check when a deployment misbehaves. |
+
+```jsonc
+// GET /api/health  →  200
+{
+  "status": "ok",
+  "database": "up",
+  "timestamp": "2026-10-22T09:41:07.318Z"
+}
+
+// GET /api/health  →  200 (the deployment is up, but misconfigured)
+{
+  "status": "degraded",
+  "database": "down",
+  "startupError": "JWT_SECRET must be at least 32 characters long in production.",
+  "databaseError": "Can't reach database server at db.example.com:5432",
+  "timestamp": "2026-10-22T09:41:07.318Z"
+}
+```
+
+### Degraded deployments (503)
+
+If the environment is invalid (missing `DATABASE_URL`, a placeholder or too
+short `JWT_SECRET`, a non-numeric throttle knob, …) the API **does not crash**:
+it boots, and every route except `/health` answers with
+
+```jsonc
+{ "statusCode": 503, "message": "AssetFlow API is not configured correctly: JWT_SECRET must be at least 32 characters long in production." }
+```
+
+The reason is also repeated in `startupError` on `/health`. This replaces the
+opaque `500 FUNCTION_INVOCATION_FAILED` that a crashed serverless function used
+to produce.
 
 ---
 

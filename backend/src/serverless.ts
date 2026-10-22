@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import type { Request, Response } from 'express';
 
 import { AppModule } from './app.module';
+import { normalizeUrl } from './common/http/normalize-url';
 import { configureApp } from './configure-app';
 
 /**
@@ -22,8 +23,36 @@ async function createApp(): Promise<ExpressApp> {
   return app.getHttpAdapter().getInstance() as ExpressApp;
 }
 
+/**
+ * The request handler.
+ *
+ * Every failure mode is reported as a JSON body with the real reason. The
+ * platform would otherwise show an opaque `500 FUNCTION_INVOCATION_FAILED`
+ * with no hint about what went wrong (a short `JWT_SECRET`, a missing
+ * `DATABASE_URL`, …).
+ */
 export default async function handler(req: Request, res: Response) {
-  cached ??= createApp();
-  const app = await cached;
-  app(req, res);
+  try {
+    cached ??= createApp();
+    const app = await cached;
+
+    const url = normalizeUrl(req.url);
+    if (url !== undefined) req.url = url;
+    app(req, res);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[assetflow] the API could not be initialised:', err);
+
+    if (!res.headersSent) {
+      res.statusCode = 503;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          statusCode: 503,
+          error: 'Service Unavailable',
+          message: `AssetFlow API could not start: ${message}`,
+        }),
+      );
+    }
+  }
 }
