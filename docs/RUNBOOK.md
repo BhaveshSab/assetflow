@@ -138,6 +138,19 @@ The most common causes:
 sudo -u assetflow /opt/assetflow/infra/scripts/backup.sh
 ```
 
+> **On the current host** the checkout is `/home/ubuntu/assetflow` and the dumps
+> live in `/home/ubuntu/backups` (`BACKUP_DIR` in `infra/.env`) — not the
+> `/opt/assetflow` layout the systemd units assume. The schedule there is a user
+> crontab that runs the same scripts:
+>
+> ```bash
+> crontab -l
+> # 30 2 * * * cd /home/ubuntu/assetflow && ./infra/scripts/backup.sh >> /home/ubuntu/backups/backup-cron.log 2>&1
+> # 0 3 * * 0 cd /home/ubuntu/assetflow && ./infra/scripts/restore-verify.sh >> /home/ubuntu/backups/restore-cron.log 2>&1
+> ```
+>
+> The scripts source `infra/.env` themselves, so cron needs no environment.
+
 ---
 
 ## Sign in with Google is unavailable

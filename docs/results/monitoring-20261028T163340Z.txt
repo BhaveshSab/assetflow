@@ -1,0 +1,36 @@
+# The monitoring stack, checked from the host itself
+#
+#   ssh ubuntu@3.107.83.86
+#   curl -s 127.0.0.1:9090/api/v1/targets?state=active
+#   curl -s 127.0.0.1:9090/api/v1/rules
+#   curl -s 127.0.0.1:9093/api/v2/status
+#   curl -s -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" 127.0.0.1:3001/api/search?query=AssetFlow
+#
+# 2026-10-28T16:33Z, EC2 t3.micro, https://3.107.83.86.sslip.io
+
+=== scrape targets (all three must be up) ===
+assetflow-api   http://api:4000/api/metrics             up   2026-10-28T16:33:39Z
+node            http://node-exporter:9100/metrics       up   2026-10-28T16:33:45Z
+postgres        http://postgres-exporter:9187/metrics   up   2026-10-28T16:33:47Z
+
+=== alert rules (11 loaded, all inactive because everything is healthy) ===
+assetflow-api   | AssetflowApiDown            | inactive
+assetflow-api   | AssetflowHighErrorRate      | inactive
+assetflow-api   | AssetflowHighLatency        | inactive
+assetflow-data  | PostgresDown                | inactive
+assetflow-data  | PostgresConnectionsHigh     | inactive
+assetflow-data  | BackupTooOld                | inactive
+assetflow-data  | ThrottleStoreDegraded       | inactive
+assetflow-host  | HostDiskAlmostFull          | inactive
+assetflow-host  | HostDiskFull                | inactive
+assetflow-host  | HostMemoryPressure          | inactive
+assetflow-host  | HostCpuSaturated            | inactive
+total rules: 11
+
+=== Alertmanager ===
+uptime:  2026-10-28T14:10:42Z
+cluster: ready
+
+=== Grafana provisioning ===
+folder      "AssetFlow"                uid bg2lio7vu1fr4d
+dashboard   "AssetFlow — Overview"     uid assetflow-overview  (db/assetflow)

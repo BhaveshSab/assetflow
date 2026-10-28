@@ -12,6 +12,7 @@ that produced it is the evidence.
 | [`k6-20261028T143025Z.log`](./k6-20261028T143025Z.log) | `k6 run` — 25 VUs, 3 minutes, login then `GET /api/assets` | **4,392 requests, 24.23 req/s, p95 35.4 ms, 0.00 % failed, 100 % checks** |
 | [`restore-verify-20261028T144107Z.log`](./restore-verify-20261028T144107Z.log) | `restore-verify.sh` — SHA-256 check, restore into a throwaway database, row-by-row comparison | **RTO 9 s**, 43 KB dump, 5 users / 3 departments / 5 assets |
 | [`deploy-rollback-20261028T153000Z.log`](./deploy-rollback-20261028T153000Z.log) | `deploy.sh` with a health check that cannot pass | **48 s** to detect, roll back and start the previous image |
+| [`monitoring-20261028T163340Z.txt`](./monitoring-20261028T163340Z.txt) | Prometheus targets + rules, Alertmanager status, Grafana provisioning, read from the host | **3/3 targets up, 11 rules loaded**, `AssetFlow — Overview` provisioned |
 | [`alert-test-20261028T144107Z.log`](./alert-test-20261028T144107Z.log) · [`…T144122Z.log`](./alert-test-20261028T144122Z.log) | `trigger-alerts.sh` — the alert is injected into Alertmanager | the alert reached Alertmanager; **Telegram delivery failed: `telegram: Unauthorized (401)`** — the bot token was rejected |
 
 ## How the load test was run
