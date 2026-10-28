@@ -1,0 +1,75 @@
+AssetFlow — S3 backup evidence
+Captured 2026-10-28T18:12Z on the EC2 host (ap-southeast-2)
+
+account: 459252806274 · IAM user: assetflow-s3-service
+bucket:  assetflow-backups-bhavesh-2026
+prefix:  assetflow/backups
+
+=== the nightly script's own output ===
+
+=== AssetFlow backup 20261028T180510Z ===
+destination: assetflow-backups-bhavesh-2026/assetflow/backups
++ pg_dump inside the postgres container
++ sha256sum
++ aws s3 cp (dump)
++ aws s3 cp (checksum)
+pruning local backups older than 14 days
+S3 retention: enforced by the bucket lifecycle rule (see infra/README.md)
+backup finished
+
+=== the objects that landed in S3 ===
+
+2026-10-28 18:03:58   43.0 KiB assetflow-20261028T180221Z.dump
+2026-10-28 18:03:58   98 Bytes assetflow-20261028T180221Z.dump.sha256
+2026-10-28 18:05:14   43.0 KiB assetflow-20261028T180510Z.dump
+2026-10-28 18:05:15   98 Bytes assetflow-20261028T180510Z.dump.sha256
+
+=== versioning ===
+{
+    "Status": "Enabled"
+}
+
+=== public access block ===
+{
+    "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "IgnorePublicAcls": true,
+        "BlockPublicPolicy": true,
+        "RestrictPublicBuckets": true
+    }
+}
+
+=== lifecycle ===
+{
+    "Expiration": {
+        "Days": 365
+    },
+    "ID": "assetflow-backups",
+    "Filter": {},
+    "Status": "Enabled",
+    "Transitions": [
+        {
+            "Days": 30,
+            "StorageClass": "GLACIER_IR"
+        }
+    ],
+    "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+    },
+    "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+    }
+}
+
+=== bucket policy ===
+DenyInsecureTransport Deny {'Bool': {'aws:SecureTransport': 'false'}}
+
+=== default encryption ===
+{
+    "SSEAlgorithm": "AES256"
+}
+
+=== the failure that preceded this ===
+aws sts get-caller-identity  →  InvalidClientTokenId
+(the pasted secret key was 38 characters; AWS secret access keys are 40.
+ With the correct value the same user authenticates and PutObject succeeds.)

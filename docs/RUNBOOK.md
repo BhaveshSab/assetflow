@@ -131,6 +131,8 @@ The most common causes:
 | `AccessDenied` | the IAM role lacks `s3:PutObject` | fix the role (least privilege: only the backup prefix) |
 | `could not connect to the server` | the database was not reachable | check `docker compose ps postgres` |
 | `No space left on device` | the disk is full | see [disk full](#disk-full) |
+| `cannot write to /var/backups/assetflow` | the script ran as a normal user without `BACKUP_DIR` | `BACKUP_DIR=$HOME/backups infra/scripts/backup.sh` (the crontab does this) |
+| `InvalidAccessKeyId` | the key in `infra/.env` is wrong, rotated or truncated — secret keys are **40** characters | rotate the key in IAM, update `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, re-run |
 
 **Run it by hand** (the same way the timer does):
 
@@ -139,17 +141,22 @@ sudo -u assetflow /opt/assetflow/infra/scripts/backup.sh
 ```
 
 > **On the current host** the checkout is `/home/ubuntu/assetflow` and the dumps
-> live in `/home/ubuntu/backups` (`BACKUP_DIR` in `infra/.env`) — not the
-> `/opt/assetflow` layout the systemd units assume. The schedule there is a user
-> crontab that runs the same scripts:
+> live in `/home/ubuntu/backups` — not the `/opt/assetflow` layout the systemd
+> units assume (those units are for a root install; none are installed here).
+> The schedule is a user crontab, so nothing needs root:
 >
 > ```bash
 > crontab -l
+> # BACKUP_DIR=/home/ubuntu/backups
+> # LOG_DIR=/home/ubuntu/backups/logs
 > # 30 2 * * * cd /home/ubuntu/assetflow && ./infra/scripts/backup.sh >> /home/ubuntu/backups/backup-cron.log 2>&1
 > # 0 3 * * 0 cd /home/ubuntu/assetflow && ./infra/scripts/restore-verify.sh >> /home/ubuntu/backups/restore-cron.log 2>&1
 > ```
 >
-> The scripts source `infra/.env` themselves, so cron needs no environment.
+> `BACKUP_DIR` **must** be set for a non-root run: the script's default is
+> `/var/backups/assetflow`, which only root can create, and it now fails with
+> that sentence instead of a bare permissions error. The scripts source
+> `infra/.env` themselves, so cron needs no other environment.
 
 ---
 
@@ -164,7 +171,13 @@ curl -fsS https://<host>/api/auth/config
 ```
 
 * The button is disabled → set `GOOGLE_CLIENT_ID` in `infra/.env`, then
-  `docker compose up -d api`.
+  `docker compose up -d api`. On this host it is set and `/api/auth/config`
+  returns it; the origins registered on the OAuth client are
+  `https://3.107.83.86.sslip.io`, `http://localhost:5173`,
+  `https://localhost:8443` and the Vercel frontend.
+* The Google button renders but the popup closes with nothing → the browser
+  console shows the reason; `origin_mismatch` means the exact origin (scheme +
+  host + port, no path, no trailing slash) is missing from that list.
 * The popup says the origin is not allowed → add the exact origin
   (`https://<host>`, no path) under **Authorized JavaScript origins** in the
   Google Cloud OAuth client.
@@ -190,10 +203,22 @@ curl -sS http://127.0.0.1:9093/api/v2/status | head -30
 ```
 
 * Is the rule firing? → `http://127.0.0.1:9090/alerts` (through the tunnel).
-* Is Alertmanager sending it? → the `alertmanager` log shows the delivery.
+* Is Alertmanager sending it? → **the metric, not the log**:
+  ```bash
+  curl -s http://127.0.0.1:9093/metrics | grep 'alertmanager_notifications_'
+  # alertmanager_notifications_total{integration="telegram"} 3
+  # a non-zero ..._failed_total is the actual failure signal; successful sends
+  # are logged at debug level, so an empty log proves nothing
+  ```
 * Is the Telegram token right? → `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
   in `infra/.env`, then `docker compose up -d alertmanager` (the config is a
-  template — it is rendered at start).
+  template — it is rendered at start). Check the pair *before* restarting:
+  ```bash
+  curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe"
+  curl -sS "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getChat?chat_id=$TELEGRAM_CHAT_ID"
+  ```
+  A bot cannot message a chat that has never messaged it: press **Start** in
+  the chat first, or `getChat` answers `chat not found`.
 
 **Test the whole chain:**
 

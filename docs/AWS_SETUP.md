@@ -92,7 +92,7 @@ Two buckets, both **private**:
 
 | Bucket | What is in it | Lifecycle |
 |--------|---------------|-----------|
-| `assetflow-backups-YYYYMMDD` | the nightly `pg_dump` | expire after 14 days |
+| `assetflow-backups-YYYYMMDD` | the nightly `pg_dump` | Glacier Instant Retrieval after 30 days, expire after 365, noncurrent versions after 30 |
 | `assetflow-archive-YYYYMMDD` | the exported old rows | Glacier after 30 days, expire after 400 days |
 
 For **both** buckets:
@@ -102,9 +102,16 @@ For **both** buckets:
 3. **Server-side encryption** → *SSE-S3* (AES-256).
 4. **Versioning** → enabled (a deleted backup is still recoverable).
 5. **Lifecycle rules**:
-   * `assetflow-backups-*` → *Expire objects after 14 days*
+   * `assetflow-backups-*` → *Transition to Glacier Instant Retrieval after
+     30 days*, *Expire objects after 365 days*, *delete noncurrent versions
+     after 30 days*, *abort incomplete multipart uploads after 7 days*
    * `assetflow-archive-*` → *Transition to Glacier Instant Retrieval after
      30 days*, *Expire after 400 days*
+
+   The 14-day figure belongs to the **host**, not the bucket: the local dumps
+   are pruned after 14 days, S3 keeps a month of dailies in a cheap class and a
+   year of history. A bucket that expires at 14 days cannot answer "what did
+   the data look like last month".
 6. **Bucket policy** → deny everything that is not TLS:
 
 ```json
@@ -198,6 +205,24 @@ sudo apt install -y awscli
 aws sts get-caller-identity        # must work without any key
 ```
 
+### If the checkout is not in `/opt`
+
+The systemd units assume `/opt/assetflow` and the `assetflow` service user. When
+the code lives in the home directory and nothing runs as root (the layout of
+this deployment), use a user crontab instead — `BACKUP_DIR` is required because
+`/var/backups` is root-only:
+
+```bash
+crontab -e
+# BACKUP_DIR=/home/ubuntu/backups
+# LOG_DIR=/home/ubuntu/backups/logs
+# 30 2 * * * cd /home/ubuntu/assetflow && ./infra/scripts/backup.sh >> /home/ubuntu/backups/backup-cron.log 2>&1
+# 0 3 * * 0 cd /home/ubuntu/assetflow && ./infra/scripts/restore-verify.sh >> /home/ubuntu/backups/restore-cron.log 2>&1
+```
+
+Verify it by hand once (`BACKUP_DIR=$HOME/backups infra/scripts/backup.sh`)
+before trusting the clock to do it.
+
 ## 6. The secrets and the variables in GitHub (5 minutes)
 
 Open **Settings → Secrets and variables → Actions**.
@@ -208,14 +233,23 @@ Open **Settings → Secrets and variables → Actions**.
 |----------|-------|
 | `DEPLOY_HOST` | the public IP of the instance |
 | `DEPLOY_USER` | `ubuntu` |
-| `DEPLOY_PATH` | `/opt/assetflow` |
+| `DEPLOY_PATH` | the checkout on the server — `/opt/assetflow` for the systemd layout, `/home/ubuntu/assetflow` on this host |
 
 **Secrets**:
 
 | Secret | Value |
 |--------|-------|
 | `DEPLOY_SSH_KEY` | the content of the `.pem` file |
-| `GHCR_TOKEN` | the access key of the deploy user |
+
+The workflow pushes the image with the built-in `GITHUB_TOKEN`, so no personal
+token is needed there. The **host** does need one to pull a private image — once,
+by hand:
+
+```bash
+docker login ghcr.io -u <github-user>                                  # a PAT with read:packages
+# or make the package public: GitHub → Packages → assetflow-api → Settings → Change visibility
+then: IMAGE=ghcr.io/bhaveshsab/assetflow-api:<sha> infra/scripts/deploy.sh
+```
 
 Why the host is a *variable* and not a secret: the deployment waits until
 `DEPLOY_HOST` exists (`if: vars.DEPLOY_HOST != ''`), and a job condition may

@@ -1,0 +1,47 @@
+AssetFlow — Telegram alerting evidence
+Captured 2026-10-28T18:12Z on the EC2 host
+
+bot:     @AssetFlowAlertBot
+chat id: <redacted, numeric> (private chat, type=private)
+
+=== credential check ===
+
+request:  GET https://api.telegram.org/bot<token>/getMe
+response: ok= True  username=AssetFlowAlertBot
+
+request:  GET https://api.telegram.org/bot<token>/getChat?chat_id=<chat id>
+response: ok= True  type= private  name= Mr.Fine
+
+=== the alert path, end to end ===
+
+$ infra/scripts/trigger-alerts.sh all
+
+→ injecting AssetflowApiDown — expect a Telegram message
+→ injecting BackupTooOld — expect a Telegram message
+→ injecting HostDiskAlmostFull — expect a Telegram message
+waiting 45s for Alertmanager → Telegram…
+the alerts were sent to Alertmanager
+
+=== proof that Alertmanager delivered them ===
+
+$ curl -s http://127.0.0.1:9093/metrics | grep alertmanager_notifications
+
+alertmanager_notifications_total{integration="telegram"} 3
+
+(no alertmanager_notifications_failed_total series exists — every attempt
+ succeeded. Alertmanager only logs successful sends at debug level, so the
+ metric is the authoritative record, not the log.)
+
+=== the receiver, as loaded by Alertmanager ===
+
+telegram receiver present: True
+chat id set: True
+send_resolved: true
+parse_mode: HTML
+
+=== how it is wired ===
+
+Prometheus rule fires → Alertmanager (127.0.0.1:9093) → receiver "telegram"
+→ api.telegram.org. The credentials live in infra/.env (mode 600, git-ignored)
+and reach the container through env_file; render.sh substitutes them into
+alertmanager.yml at container start, so they are never baked into an image.

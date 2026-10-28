@@ -25,12 +25,12 @@ the data transfer. Everything else is fixed.
 |------|------|-----------|---------|------|
 | EC2 `t3.micro` | 730 h | $0.0132 / h | **$9.64** | the API + PostgreSQL + Redis + all five monitoring containers |
 | EBS `gp3` | 30 GB | $0.08 / GB-month | **$2.40** | the database volume |
-| S3 — backups | < 1 MB | $0.0245 / GB-month | **≈ $0.00** | 14 daily dumps of 43 KB in `assetflow-media-bhavesh-2026` — *not billed yet: no upload has succeeded* |
+| S3 — backups | < 1 MB | $0.0245 / GB-month | **≈ $0.00** | 43 KiB dumps in `assetflow-backups-bhavesh-2026`, versioned, SSE-S3; older versions live 30 days, objects expire at 365 |
 | S3 — archive | none yet | $0.0245 / GB-month | **$0.00** | the old rows move to Glacier after 30 days |
 | S3 requests | ~30 PUT/month | $0.005 / 1 000 | **$0.00** | one `PutObject` per nightly backup |
 | Data transfer | < 1 GB | first 100 GB free | **$0.00** | the S3 traffic inside the region is free |
 | Monitoring | — | — | **$0.00** | Prometheus, Grafana, Alertmanager, two exporters — containers on the same host |
-| **Total** | | | **$12.04 / month** | plus a few cents once the bucket exists |
+| **Total** | | | **$12.04 / month** | plus a few cents of S3 once the dumps accumulate |
 
 > **Free tier:** a new account gets 750 h of `t3.micro` and 30 GB of EBS per
 > month for 12 months. In that window the bill for this stack is **$0.00** —
@@ -52,7 +52,11 @@ the data transfer. Everything else is fixed.
    deleted. The rule is in [AWS_SETUP](./AWS_SETUP.md).
 2. **The logs rotate** — 10 MB × 3 files per container, `journald` is capped
    at 500 MB.
-3. **The backups are pruned** — 14 days locally *and* in S3.
+3. **The backups are pruned** — 14 days of dumps on the host, and a bucket
+   lifecycle rule on the S3 side (30 days to Glacier Instant Retrieval, expired
+   at 365, noncurrent versions deleted at 30). The rule does the pruning even if
+   the host never wakes up again — which is exactly when you cannot run a
+   cleanup script on it.
 4. **One instance, sized by a measurement** — the load test decides whether a
    t3.micro is enough; it is not a guess.
 5. **A budget alarm before anything else** — 50 %, 80 % and 100 % of the
@@ -70,8 +74,9 @@ the data transfer. Everything else is fixed.
 | The CPU during the load test | **max 43.9 %, avg 21.5 %** | Prometheus `node_cpu_seconds_total`, 14:30–14:34 Z |
 | The memory in use | 67.3 % of 1 GB | Prometheus `node_memory_MemAvailable_bytes` |
 | The size of the database after the seed | **8.4 MB** (`pg_database_size`) | `psql` in the Postgres container |
-| The size of one backup | **43 KB** | `ls -lh ~/backups/*.dump` |
+| The size of one backup | **43 KiB** | `ls -lh ~/backups/*.dump` |
 | The duration of one backup | **0.93 s** | a timed `infra/scripts/backup.sh` run |
+| The restore (RTO) | **8 s** local, **14 s** from S3 | [results/restore-from-s3-20261028T181200Z.txt](./results/restore-from-s3-20261028T181200Z.txt) |
 | The recommended instance size | **t3.micro** — 56 % CPU headroom left at 25 concurrent users | derived from the p95 and the CPU above |
 
 > **What the load test does and does not say.** `k6-load.js` logs in once per

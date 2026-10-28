@@ -213,22 +213,35 @@ gets). When the verified Google email already belongs to a password account,
 the Google identity is linked to it — the person keeps their existing role,
 assets and bookings.
 
-**Where this deployment stands:** the flow is implemented end to end (the
-button, the ID-token verification, the account linking, the e2e coverage) but
-`GOOGLE_CLIENT_ID` is **not set yet**, so the sign-in page intentionally hides
-the Google button instead of offering one that cannot work. To switch it on,
-create the Web-application client with
-`https://3.107.83.86.sslip.io` as an authorized JavaScript origin, then:
+**Where this deployment stands:** it is **switched on**. The Web-application
+client is registered with four authorized JavaScript origins —
+`https://3.107.83.86.sslip.io`, `http://localhost:5173`,
+`https://localhost:8443` and the Vercel frontend — and the API serves the id:
 
 ```bash
-# on the server
-printf 'GOOGLE_CLIENT_ID=%s\n' '1234-abc.apps.googleusercontent.com' >> infra/.env
-docker compose -f infra/docker-compose.yml up -d api
-curl -fsS https://3.107.83.86.sslip.io/api/auth/config   # → {"googleClientId":"…"}
+$ curl -fsS https://3.107.83.86.sslip.io/api/auth/config
+{"googleClientId":"385068047594-…apps.googleusercontent.com"}
 ```
 
+The button is rendered by Google Identity Services on
+[the sign-in page](https://3.107.83.86.sslip.io/signin) with no console error,
+which is only possible when the origin is authorized for that client. The
+server rejects tokens it did not issue — a forged ID token gets `401`, a
+malformed one `400`:
+
+```bash
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://3.107.83.86.sslip.io/api/auth/google \
+    -H 'Content-Type: application/json' -d '{"credential":"<forged>"}'
+401
+```
+
+The last step — a real Google account creating its AssetFlow user — needs one
+human click on that button; it cannot be scripted from a terminal without
+someone's Google session.
+
 No client secret is involved and the SPA needs no rebuild — it reads the id
-from the API at runtime.
+from the API at runtime. For a *new* deployment: create the client, add the
+origins, set `GOOGLE_CLIENT_ID` in `infra/.env`, `docker compose up -d api`.
 
 ---
 
@@ -600,17 +613,20 @@ output is in [`docs/results/`](docs/results).
 |------|----------|-------|
 | Load test (25 VUs, 3 min) | **24.23 req/s, p95 35.4 ms, 0.00 % errors**, 4,392 requests | [k6 log](docs/results/k6-20261028T143025Z.log) |
 | CPU during the load test | max **43.9 %**, avg 21.5 % — a t3.micro is enough | Prometheus |
-| Backup → verified restore | 43 KB dump, **RTO 9 s**, every table compared row by row | [restore log](docs/results/restore-verify-20261028T144107Z.log) |
+| Backup → verified restore | 43 KiB dump, **RTO 8 s** locally and **14 s** re-fetched from S3; every table compared row by row | [restore log](docs/results/restore-from-s3-20261028T181200Z.txt) |
+| Backup in S3 | uploaded, **versioned**, SSE-AES256, public access blocked, TLS-only policy, lifecycle 30 d → Glacier IR / 365 d expire | [S3 evidence](docs/results/s3-backup-20261028T180510Z.txt) |
+| Alerting | `trigger-alerts.sh all` → **3 Telegram notifications, 0 failures** | [alert evidence](docs/results/telegram-alert-20261028T181000Z.txt) |
 | Backup duration | **0.93 s** (`pg_dump` + SHA-256 + prune) | timed run |
 | Failed deploy → automatic rollback | **48 s** until the previous image was healthy again | [rollback log](docs/results/deploy-rollback-20261028T153000Z.log) |
 | Rate limiter across a restart | the Redis counter survived `docker compose restart api` | `redis-cli KEYS 'auth:*'` |
 
-**Not proven yet, and not claimed:** the S3 upload (the bucket
-`assetflow-media-bhavesh-2026` exists in ap-southeast-2 and `backup.sh`
-reaches `PutObject`, but AWS rejects the credential with `InvalidAccessKeyId`
-— the pasted secret is 38 characters, AWS uses 40), Telegram delivery (the Bot
-API rejects the token with `401`), and the full host rebuild (it needs the
-upload first). Each one is listed with its exact error in
+**Not proven yet, and not claimed:** the full host rebuild — terminate the
+instance, launch a fresh one, restore from S3 — because the S3 user has no
+`ec2:*` permission; the procedure and the IAM policy it needs are in
+[`docs/REBUILD_DRILL.md`](docs/REBUILD_DRILL.md). The GitHub deploy workflow
+has also not run end to end: it waits until `DEPLOY_HOST` is set as a
+repository variable. Everything else in the table above was measured on the
+host, and every claim with its evidence is in
 [`docs/RESUME_EVIDENCE.md`](docs/RESUME_EVIDENCE.md).
 
 **What it demonstrates**

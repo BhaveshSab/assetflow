@@ -1,0 +1,42 @@
+AssetFlow — restore drill, performed from the S3 object
+2026-10-28T18:12Z, EC2 t3.micro (ap-southeast-2)
+
+This is the stronger drill: the dump is downloaded from S3 (not read from the
+local disk), so it proves the object that leaves the host is the object that
+comes back.
+
+$ aws s3 cp s3://assetflow-backups-bhavesh-2026/assetflow/backups/ /tmp/s3-restore/ --recursive
+downloaded: /tmp/s3-restore/assetflow-20261028T180510Z.dump (44K)
+
+$ infra/scripts/restore-verify.sh --from /tmp/s3-restore/assetflow-20261028T180510Z.dump
+
+=== restore verification ===
+dump:      /tmp/s3-restore/assetflow-20261028T180510Z.dump
+size:      44K
+checksum:  e4b8b1e4c0a265fb…
+the checksum matches
++ starting the throwaway database
+waiting for the database to accept connections
++ restoring the dump
++ sanity checks
+restored users: 5
+restored assets: 5
++ comparing the row counts with the live database
+  User: live=5 restored=5
+  Department: live=3 restored=3
+  Asset: live=5 restored=5
+  Allocation: live=0 restored=0
+  Notification: live=0 restored=0
+  ActivityLog: live=0 restored=0
+=== the restore took 14 seconds (RTO) ===
+the backup can be restored
+removing the throwaway container
+
+=== the same drill from the local dump, minutes earlier ===
+
+restored users: 5 · restored assets: 5 · every table equal to the live one
+=== the restore took 8 seconds (RTO) ===
+
+So the measured RTO is 8 s when the dump is already on the host and 14 s when
+it has to be fetched back from S3 first (the throwaway container start
+dominates both). The 14 s figure is the one to quote for a host rebuild.

@@ -84,18 +84,22 @@ The measurements are in [`../docs/results`](../docs/results):
 |---|---|
 | Load test (25 VUs, 3 min) | 4,392 requests, **24.23 req/s, p95 35.4 ms, 0.00 % failed** |
 | CPU during it | max 43.9 %, avg 21.5 % — the instance has headroom |
-| Backup → verified restore | 43 KB dump, **RTO 9 s**, checksum + row-by-row comparison |
+| Backup → verified restore | 43 KiB dump, **RTO 8 s** local / **14 s** from S3, checksum + row-by-row comparison |
 | Failed deploy → rollback | **48 s** back to the previous, healthy image |
 | Redis limiter across a restart | the counter survived `docker compose restart api` |
 
-**Open items on this host:** `S3_BUCKET` points at
-`assetflow-media-bhavesh-2026` (ap-southeast-2) and `backup.sh` reaches
-`PutObject`, but AWS rejects the credential (`InvalidAccessKeyId` — the pasted
-secret is 38 characters, AWS uses 40), so backups stay on the local disk; the
-Telegram token is rejected by the Bot API (`401`), so alerts stop at
-Alertmanager; `GOOGLE_CLIENT_ID` is unset, so the sign-in page hides the
-Google button. The commands each one needs are in
-[`../docs/RESUME_EVIDENCE.md`](../docs/RESUME_EVIDENCE.md).
+**On this host, all three are now live:** `S3_BUCKET` is the dedicated
+`assetflow-backups-bhavesh-2026` — versioned, public access blocked, SSE-AES256,
+`DenyInsecureTransport`, lifecycle *30 d → Glacier Instant Retrieval, expire
+365 d* — and a 43 KiB dump with its SHA-256 sits in
+`s3://assetflow-backups-bhavesh-2026/assetflow/backups/`. Telegram delivers
+(`alertmanager_notifications_total{integration="telegram"} 3`, zero failures),
+and `GOOGLE_CLIENT_ID` is set so the sign-in page renders Google's button.
+The raw output for each is in [`../docs/results/`](../docs/results).
+
+**Still open:** the host-rebuild drill (the S3 user cannot call `ec2:*`) and the
+GitHub deploy workflow (it waits for `DEPLOY_HOST`). See
+[`../docs/REBUILD_DRILL.md`](../docs/REBUILD_DRILL.md).
 
 ## Deploying a new version
 
