@@ -32,3 +32,4 @@ pnpm-debug.log*
 # TLS material and ACME challenges (never commit a private key)
 infra/certs/
 infra/certbot-www/
+infra/textfile/

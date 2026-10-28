@@ -257,7 +257,9 @@ services:
       - --collector.textfile.directory=/textfile
     volumes:
       - /:/host:ro,rslave
-      - node-textfile:/textfile:ro
+      # The scripts write their metrics to infra/textfile on the host; a named
+      # volume would hide them from the exporter.
+      - ./textfile:/textfile:ro
     networks: [edge, backend]
     pid: host
     logging: *default-logging
@@ -285,4 +287,3 @@ volumes:
   grafana-data:
   prometheus-data:
   alertmanager-data:
-  node-textfile:

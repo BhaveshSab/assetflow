@@ -91,7 +91,7 @@ compose_local() {
 # The value is read by Prometheus as `assetflow_backup_last_success_timestamp_seconds`.
 write_textfile_metric() {
     local name="$1" value="$2" help="$3"
-    local dir="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+    local dir="${TEXTFILE_DIR:-${INFRA_DIR}/textfile}"
     mkdir -p "$dir" 2>/dev/null || return 0
     {
         printf '# HELP %s %s\n' "$name" "$help"

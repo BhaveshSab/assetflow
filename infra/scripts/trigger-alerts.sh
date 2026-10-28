@@ -17,7 +17,7 @@ WHAT="${1:-all}"
 case "$WHAT" in
     -*) WHAT=all ;;
 esac
-TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+TEXTFILE_DIR="${TEXTFILE_DIR:-${INFRA_DIR}/textfile}"
 
 restore() {
     if [ "$DRY_RUN" = true ]; then return; fi
