@@ -3,12 +3,30 @@
 > The strongest line on the resume is not "I ran a backup". It is "I destroyed
 > the server and the service was back in N minutes, from S3, with the data".
 >
-> **Status: not executed yet.** The credentials in `infra/.env`
-> (`assetflow-s3-service`) are S3-only — `ec2:DescribeInstances` answers
-> `UnauthorizedOperation` — so the destroy/relaunch half needs either the policy
-> below or the console. Everything that can be rehearsed without destroying
-> anything (backup → S3 → download → restore → verified row counts) **is**
-> measured: [results/restore-from-s3-20261028T181200Z.txt](./results/restore-from-s3-20261028T181200Z.txt).
+> **Status: not executed yet — blocked on one IAM policy.**
+> Re-checked 2026-10-28T18:23Z: the `assetflow-s3-service` key is S3-only.
+>
+> | Call | Result |
+> |------|--------|
+> | `ec2:DescribeInstances` | `UnauthorizedOperation` |
+> | `ec2:DescribeImages` | `UnauthorizedOperation` |
+> | `ec2:DescribeSecurityGroups` | `UnauthorizedOperation` |
+> | `ec2:DescribeKeyPairs` | `UnauthorizedOperation` |
+> | `ec2:DescribeVpcs` | `UnauthorizedOperation` |
+> | `iam:GetUser` | `AccessDenied` |
+>
+> So the destroy/relaunch half cannot start: without `DescribeInstances` there
+> is no AMI id, no security group and no subnet to relaunch *with*, and
+> terminating in that state is permanent downtime. Attach the policy below
+> first. Everything that can be rehearsed without destroying anything
+> (backup → S3 → download → restore → verified row counts) **is** measured:
+> [results/restore-from-s3-20261028T181200Z.txt](./results/restore-from-s3-20261028T181200Z.txt).
+>
+> **Already prepared for the run:** a fresh dump at
+> `assetflow/backups/assetflow-20261028T182311Z.dump` (43 KiB, 18:23Z — RPO is
+> minutes, not a day), and `infra/.env` copied off the host to
+> `~/assetflow-infra-env-20261028.txt` (sha256 `9aa8d40ffc96ec9d…`, 29 lines).
+> The only thing missing is the permission.
 
 ## What the drill proves
 
@@ -75,6 +93,33 @@ Attach to the IAM user (scope `Resource` to the account and region):
 The describe actions are harmless; `TerminateInstances` and `ReleaseAddress`
 are not. Use a separate user for the drill, and detach the policy afterwards —
 the backup script running on the host should never hold it.
+
+**Where to attach it (console, about 2 minutes):**
+
+1. AWS console → **IAM → Users → `assetflow-s3-service` → Permissions**
+2. **Add permissions → Create inline policy → JSON**
+3. Paste the document above → **Next** → name it `assetflow-rebuild-drill`
+4. **Create policy**
+5. Back on the host, prove it: `aws ec2 describe-instances --region ap-southeast-2 --max-items 1`
+   must print an instance instead of `UnauthorizedOperation`
+
+Then say the word and the drill runs: terminate, relaunch, bootstrap, restore
+from S3, verify, and the elapsed time becomes the RTO.
+
+### One decision to make before it runs
+
+There is **no Elastic IP** on the instance, so a relaunch comes back on a
+**different public IP** — and therefore a different hostname
+(`<new-ip>.sslip.io`), a certificate to re-issue, and a README/CORS update.
+Two ways to handle it:
+
+* **Keep the old address** → allocate an Elastic IP and associate it with the
+  new instance (the policy above already allows it). Costs nothing while it is
+  attached to a running instance.
+* **Accept the new address** → faster drill, but `3.107.83.86.sslip.io` dies
+  with the instance and every document that mentions it has to change.
+
+Either way the drill is the same work; the first keeps the resume link stable.
 
 ## The drill
 
