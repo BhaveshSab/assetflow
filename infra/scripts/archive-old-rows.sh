@@ -42,16 +42,19 @@ done
 
 [ -n "$TABLE" ] || die "--table is required (e.g. --table ActivityLog)"
 case "$TABLE" in
-    User|Dpartment|AssetCategory|Asset|Allocation|TransferRequest|Booking|MaintenanceRequest|AuditCycle|AuditAssignment|AuditItem|Notification|ActivityLog) ;;
+    User|Department|AssetCategory|Asset|Allocation|TransferRequest|Booking|MaintenanceRequest|AuditCycle|AuditAssignment|AuditItem|Notification|ActivityLog) ;;
     *) die "unknown table: ${TABLE}" ;;
 esac
 
 say "=== archive ${TABLE} (older than ${OLDER_THAN_DAYS} days) ==="
 
-export PGPASSWORD="${PGPASSWORD:-}"
-PSQL_ARGS=(--host="${PGHOST:-postgres}" --port="${PGPORT:-5432}"
-           --username="${PGUSER:-assetflow}" --dbname="${PGDATABASE:-assetflow}"
-           --no-align --tuples-only --quiet)
+DB_PASSWORD="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
+psql_exec() {
+    # No published Postgres port: run psql inside the container.
+    compose exec -T -e PGPASSWORD="$DB_PASSWORD" postgres \
+        psql --username="${PGUSER:-assetflow}" --dbname="${PGDATABASE:-assetflow}" \
+        --no-align --tuples-only --quiet "$@"
+}
 
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 OUT_FILE="${DEST_DIR}/${TABLE}-${STAMP}.ndjson.gz"
@@ -72,7 +75,7 @@ if [ "$DRY_RUN" = true ]; then
     exit 0
 fi
 
-psql "${PSQL_ARGS[@]}" -c \
+psql_exec -c \
     "COPY (SELECT row_to_json(t) FROM \"${TABLE}\" t WHERE \"createdAt\" < now() - interval '${OLDER_THAN_DAYS} days') TO STDOUT" \
     | gzip -9 > "$OUT_FILE"
 
@@ -118,7 +121,7 @@ if [ "$APPLY" != true ]; then
 fi
 
 say "+ deleting the archived rows"
-DELETED="$(psql "${PSQL_ARGS[@]}" -tAc \
+DELETED="$(psql_exec -tAc \
     "WITH deleted AS (DELETE FROM \"${TABLE}\" WHERE \"createdAt\" < now() - interval '${OLDER_THAN_DAYS} days' RETURNING 1) SELECT count(*) FROM deleted")"
 say "deleted ${DELETED:-0} rows"
 

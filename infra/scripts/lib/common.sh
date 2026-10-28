@@ -51,6 +51,15 @@ init_script() {
         # The log must never be the reason a script fails.
         touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
     fi
+
+    # Manual runs get the same environment systemd provides through
+    # EnvironmentFile. Secrets stay on the host (the file is git-ignored).
+    if [ -f "${INFRA_DIR}/.env" ]; then
+        set -a
+        # shellcheck disable=SC1091
+        . "${INFRA_DIR}/.env"
+        set +a
+    fi
 }
 
 # Writes a line to stdout *and* to the log file.

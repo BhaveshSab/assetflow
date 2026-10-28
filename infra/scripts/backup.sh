@@ -47,17 +47,21 @@ fi
 # 1. The dump ---------------------------------------------------------------
 # --format=custom (Fc) is compressed, restorable with pg_restore and can be
 # restored in parallel — a plain SQL dump would have to be replayed serially.
-export PGPASSWORD="${PGPASSWORD:-}"
+DB_PASSWORD="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
+[ -n "$DB_PASSWORD" ] || die "POSTGRES_PASSWORD is not set (check infra/.env)"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] pg_dump --format=custom --file=${DUMP_FILE} ..."
+    say "[dry-run] compose exec postgres pg_dump --format=custom --file=${DUMP_FILE} ..."
 else
-    say "+ pg_dump --format=custom --file=${DUMP_FILE}"
-    pg_dump --format=custom --file="$DUMP_FILE" \
-        --host="${PGHOST:-postgres}" \
-        --port="${PGPORT:-5432}" \
+    say "+ pg_dump inside the postgres container"
+    # The database is on an internal network with no host port — run the
+    # client in the container and stream the dump to the host.
+    compose exec -T -e PGPASSWORD="$DB_PASSWORD" postgres \
+        pg_dump --format=custom \
+        --host=127.0.0.1 \
         --username="${PGUSER:-assetflow}" \
         --dbname="${PGDATABASE:-assetflow}" \
-        --no-owner --no-privileges
+        --no-owner --no-privileges \
+        > "$DUMP_FILE"
 fi
 
 # 2. The checksum -----------------------------------------------------------

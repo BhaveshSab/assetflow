@@ -9,6 +9,8 @@ Requires=docker.service
 Type=oneshot
 User=assetflow
 Group=assetflow
+# The restore check starts a throwaway container with the Docker socket.
+SupplementaryGroups=docker
 WorkingDirectory=/opt/assetflow
 EnvironmentFile=/opt/assetflow/infra/.env
 ExecStart=/opt/assetflow/infra/scripts/restore-verify.sh

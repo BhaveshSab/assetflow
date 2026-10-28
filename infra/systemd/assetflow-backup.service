@@ -9,6 +9,8 @@ Requires=docker.service
 Type=oneshot
 User=assetflow
 Group=assetflow
+# The scripts query Postgres through `docker compose exec`.
+SupplementaryGroups=docker
 WorkingDirectory=/opt/assetflow
 EnvironmentFile=/opt/assetflow/infra/.env
 ExecStart=/opt/assetflow/infra/scripts/backup.sh

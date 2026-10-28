@@ -127,12 +127,13 @@ say "restored assets: ${ASSETS:-0}"
 
 # Compare the row counts with the live database.
 say "+ comparing the row counts with the live database"
-export PGPASSWORD="${PGPASSWORD:-}"
+DB_PASSWORD="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"
 compare_count() {
     local table="$1"
     local live restored
-    live="$(psql --host="${PGHOST:-postgres}" --port="${PGPORT:-5432}" \
-        --username="${PGUSER:-assetflow}" --dbname="${PGDATABASE:-assetflow}" \
+    # The live database has no host port; query it in its own container.
+    live="$(compose exec -T -e PGPASSWORD="$DB_PASSWORD" postgres \
+        psql --username="${PGUSER:-assetflow}" --dbname="${PGDATABASE:-assetflow}" \
         -tAc "SELECT count(*) FROM \"${table}\"" 2>/dev/null || echo "n/a")"
     restored="$(docker exec "$CONTAINER" psql -U "$RESTORE_USER" -d "$RESTORE_DB" -tAc \
         "SELECT count(*) FROM \"${table}\"" 2>/dev/null || echo "n/a")"
