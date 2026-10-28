@@ -21,9 +21,21 @@ source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
 IMAGE="${IMAGE:-ghcr.io/bhaveshsab/assetflow-api:latest}"
+# The migration image is built from the same commit, so its tag must match:
+#   …/assetflow-api:abc123  ->  …/assetflow-migrate:abc123
+# Any other image name keeps the compose default (or an explicit override).
+if [ -z "${MIGRATE_IMAGE:-}" ]; then
+    case "$IMAGE" in
+        *-api:*) MIGRATE_IMAGE="${IMAGE%-api:*}-migrate:${IMAGE##*:}" ;;
+        *) MIGRATE_IMAGE="ghcr.io/bhaveshsab/assetflow-migrate:latest" ;;
+    esac
+fi
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1/api/health/ready}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-10}"
-PREVIOUS_IMAGE_FILE="/var/lib/assetflow/previous-image"
+# The image that was running before this deployment. It has to be writable by
+# the deploy user — the GitHub workflow connects as an ordinary account, not
+# as root — so it defaults to a per-user state directory.
+PREVIOUS_IMAGE_FILE="${PREVIOUS_IMAGE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/assetflow/previous-image}"
 
 say "=== deploying ${IMAGE} ==="
 
@@ -39,12 +51,12 @@ fi
 if [ "$DRY_RUN" != true ]; then
     mkdir -p "$(dirname "$PREVIOUS_IMAGE_FILE")"
     CURRENT="$(compose ps -q api 2>/dev/null | xargs -r docker inspect --format '{{.Config.Image}}' 2>/dev/null || true)"
-    if [ -n "$CURRENT" ] && [ -f "$PREVIOUS_IMAGE_FILE" ]; then
-        cp "$PREVIOUS_IMAGE_FILE" "${PREVIOUS_IMAGE_FILE}.tmp"
+    if [ -n "$CURRENT" ]; then
+        # The file always holds the image that is running *before* the new
+        # one starts, so a second failed deployment still rolls back to the
+        # last version that was actually healthy.
         echo "$CURRENT" > "${PREVIOUS_IMAGE_FILE}.tmp"
         mv "${PREVIOUS_IMAGE_FILE}.tmp" "$PREVIOUS_IMAGE_FILE"
-    elif [ -n "$CURRENT" ]; then
-        echo "$CURRENT" > "$PREVIOUS_IMAGE_FILE"
     fi
     say "  the image in use before the deployment: ${CURRENT:-<none>}"
 fi
@@ -52,17 +64,21 @@ fi
 # 2. The migrations ---------------------------------------------------------
 say "+ applying the migrations (one-shot container)"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] compose run --rm migrate"
+    say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm migrate"
 else
-    IMAGE_TAG="$IMAGE" compose run --rm migrate
+    # -T: do not attach stdin. The GitHub workflow pipes this script into
+    # `ssh bash -s`, and an attached container would consume the rest of it.
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T migrate
 fi
 
 # 3. The new container ------------------------------------------------------
 say "+ starting the new version"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] compose up -d api"
+    say "[dry-run] API_IMAGE=${IMAGE} compose up -d api"
 else
-    compose up -d --no-deps api
+    # The compose file reads API_IMAGE; without it, compose would start the
+    # `latest` tag and the deployment would silently ignore $IMAGE.
+    API_IMAGE="$IMAGE" compose up -d --no-deps api
 fi
 
 # 4. The health check -------------------------------------------------------
@@ -74,7 +90,10 @@ for attempt in $(seq 1 "$HEALTH_RETRIES"); do
         break
     fi
     sleep 5
-    if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+    # Require a literal 200. `curl -f` alone also accepts a 301, so a
+    # HTTP→HTTPS redirect would report a dead API as healthy.
+    STATUS="$(curl -skS -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL" 2>/dev/null || true)"
+    if [ "$STATUS" = "200" ]; then
         HEALTHY=true
         say "  healthy after ${attempt} attempt(s)"
         break
@@ -87,7 +106,7 @@ if [ "$HEALTHY" != true ]; then
     if [ -f "$PREVIOUS_IMAGE_FILE" ] && [ "$DRY_RUN" != true ]; then
         PREVIOUS="$(cat "$PREVIOUS_IMAGE_FILE")"
         say "+ rolling back to ${PREVIOUS}"
-        IMAGE="$PREVIOUS" compose up -d --no-deps api
+        API_IMAGE="$PREVIOUS" compose up -d --no-deps api
     else
         say "+ no previous image known — the old container stays as it is"
     fi

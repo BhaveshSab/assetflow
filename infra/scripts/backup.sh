@@ -29,6 +29,12 @@ source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/assetflow}"
+# `infra/.env.example` ships a placeholder bucket. Treat it as "no bucket" so
+# a laptop run writes the dump locally and warns, instead of failing on an
+# upload nobody configured.
+if [ "${S3_BUCKET:-}" = "your-backup-bucket" ]; then
+    S3_BUCKET=""
+fi
 S3_PREFIX="${S3_PREFIX:-assetflow/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"

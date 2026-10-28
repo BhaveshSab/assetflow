@@ -35,7 +35,9 @@ services:
       context: ..
       dockerfile: infra/docker/Dockerfile.api
       target: runtime
-    image: ghcr.io/bhaveshsab/assetflow-api:latest
+    # Parameterised so a deployment can start an exact tag (the SHA built by
+    # CI) and roll back to the one that was running before.
+    image: ${API_IMAGE:-ghcr.io/bhaveshsab/assetflow-api:latest}
     restart: unless-stopped
     env_file:
       - path: .env
@@ -144,7 +146,7 @@ services:
     # A distinct tag: the migrate stage is the builder (with dev deps), the
     # runtime stage is not. Sharing one tag let the migration image overwrite
     # the API image.
-    image: ghcr.io/bhaveshsab/assetflow-migrate:latest
+    image: ${MIGRATE_IMAGE:-ghcr.io/bhaveshsab/assetflow-migrate:latest}
     env_file:
       - path: .env
         required: false

@@ -199,10 +199,10 @@ docker compose ps
 docker compose images
 
 # the deployment script keeps the previous image
-cat /var/lib/assetflow/previous-image
+cat ~/.local/state/assetflow/previous-image
 
 # roll back
-IMAGE=$(cat /var/lib/assetflow/previous-image) infra/scripts/deploy.sh
+IMAGE=$(cat ~/.local/state/assetflow/previous-image) infra/scripts/deploy.sh
 ```
 
 The deployment script does this automatically when the health check fails —

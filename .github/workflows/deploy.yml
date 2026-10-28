@@ -93,13 +93,19 @@ jobs:
           IMAGE="${IMAGE}" infra/scripts/deploy.sh
           REMOTE
 
-      - name: Verify the deployment
+      - name: Verify the deployment on the host
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
         run: |
           set -euo pipefail
+          # Probe from the host itself. Over the public interface Nginx
+          # answers HTTP with a 301 to HTTPS, and `curl -f` accepts a 301 —
+          # the check would pass even with the API down.
           for attempt in $(seq 1 10); do
-            if curl -fsS --max-time 5 "http://${DEPLOY_HOST}/api/health/ready"; then
+            if ssh -o StrictHostKeyChecking=accept-new \
+                 "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                 'curl -fsS --max-time 5 http://127.0.0.1/api/health/ready'; then
               echo "the API is healthy"
               exit 0
             fi
