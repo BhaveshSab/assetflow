@@ -61,8 +61,9 @@ say() {
     fi
 }
 
-# The directory of the repository (two levels up from this file).
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The repository root (this file is infra/scripts/lib/common.sh — three
+# levels below it: lib -> scripts -> infra -> repository).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 INFRA_DIR="${REPO_ROOT}/infra"
 
 # The compose project — the same files on the laptop and on the server.
