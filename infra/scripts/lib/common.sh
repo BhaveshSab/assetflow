@@ -28,6 +28,8 @@ usage() {
 
 # Starts the log file (one per run) and the common flags.
 init_script() {
+    # Read by the scripts that source this library.
+    # shellcheck disable=SC2034
     DRY_RUN=false
     while [ $# -gt 0 ]; do
         case "$1" in
