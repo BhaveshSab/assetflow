@@ -32,6 +32,9 @@ RUN npx prisma generate
 
 COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json ./
 COPY backend/src ./src
+# The small operational scripts (the migration entry point) travel with the
+# image — the runtime stage copies them from here.
+COPY backend/scripts ./scripts
 RUN npm run build && npm prune --omit=dev
 
 # -------------------------------------------------------------- runtime stage
