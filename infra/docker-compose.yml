@@ -37,7 +37,9 @@ services:
       target: runtime
     image: ghcr.io/bhaveshsab/assetflow-api:latest
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
       NODE_ENV: production
       PORT: "4000"
@@ -134,7 +136,9 @@ services:
       target: migrate
     image: ghcr.io/bhaveshsab/assetflow-api:latest
     profiles: ["tools"]
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}
     depends_on:
@@ -203,7 +207,9 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - "envsubst < /etc/alertmanager/alertmanager.template.yml > /etc/alertmanager/alertmanager.yml && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager"
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./alertmanager/alertmanager.template.yml:/etc/alertmanager/alertmanager.template.yml:ro
       - alertmanager-data:/alertmanager

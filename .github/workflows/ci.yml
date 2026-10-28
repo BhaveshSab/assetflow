@@ -27,9 +27,9 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -60,9 +60,9 @@ jobs:
       run:
         working-directory: .
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -84,20 +84,29 @@ jobs:
     name: Infrastructure (shellcheck, images)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
 
       - name: Check the shell scripts
         run: |
-          shellcheck --severity=warning --external-sources \
-            infra/scripts/*.sh infra/scripts/lib/*.sh
+          set +e
+          shellcheck --severity=warning --external-sources --format=gcc \
+            infra/scripts/*.sh infra/scripts/lib/*.sh > /tmp/shellcheck.txt 2>&1
+          code=$?
+          cat /tmp/shellcheck.txt
+          # Every finding also becomes an annotation, so it is visible in the
+          # pull request and not only in the log of the job.
+          while IFS= read -r finding; do
+            echo "::error title=shellcheck::${finding}"
+          done < /tmp/shellcheck.txt
+          exit $code
 
       - name: Check the compose files
-        run: docker compose -f infra/docker-compose.yml config --quiet
-      - name: Check the compose files (local override)
         run: |
+          cp infra/.env.example infra/.env
+          docker compose -f infra/docker-compose.yml config --quiet
           docker compose -f infra/docker-compose.yml \
                          -f infra/docker-compose.local.yml config --quiet
 
