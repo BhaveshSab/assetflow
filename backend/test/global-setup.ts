@@ -34,25 +34,32 @@ async function applyMigrations(db: PGlite) {
 
 export default async function globalSetup() {
   const db = await PGlite.create();
-  const port = Number(process.env.TEST_PG_PORT ?? 54329);
+  // Port 0 lets the OS pick a free port. A fixed port is not portable: on
+  // Windows + Hyper-V, WinNAT reserves whole ranges (e.g. 54259–54358), and
+  // binding inside one fails with EACCES. `TEST_PG_PORT` still overrides it.
+  const requestedPort = process.env.TEST_PG_PORT
+    ? Number(process.env.TEST_PG_PORT)
+    : 0;
 
   const server = new PGLiteSocketServer({
     db,
-    port,
+    port: requestedPort,
     host: '127.0.0.1',
     // The default is 1 — the API opens a small pool, so allow a few clients.
     maxConnections: 20,
   });
   await server.start();
 
+  // `getServerConn()` reports the port the OS actually bound ("host:port").
+  const address = server.getServerConn();
   const applied = await applyMigrations(db);
 
   console.log(
-    `\n🧪 Test database ready on 127.0.0.1:${port} (${applied} migration(s) applied)\n`,
+    `\n🧪 Test database ready on ${address} (${applied} migration(s) applied)\n`,
   );
 
   // The workers inherit this environment.
-  process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
+  process.env.DATABASE_URL = `postgresql://postgres:postgres@${address}/postgres`;
   process.env.JWT_SECRET = 'test-secret-do-not-use-in-production-000000';
   process.env.JWT_EXPIRES_IN = '1h';
   process.env.NODE_ENV = 'test';
