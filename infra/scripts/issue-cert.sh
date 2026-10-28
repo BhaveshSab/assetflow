@@ -63,12 +63,21 @@ fi
 
 say "=== requesting a Let's Encrypt certificate for ${DOMAIN} ==="
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] certbot certonly --webroot -w ${WEBROOT_DIR} --config-dir ${CERT_ROOT} -d ${DOMAIN} --email ${EMAIL}"
+    say "[dry-run] certbot certonly --webroot -w ${WEBROOT_DIR} --config-dir ${CERT_ROOT} --cert-name assetflow -d ${DOMAIN} --email ${EMAIL}"
     exit 0
 fi
 
 command -v certbot >/dev/null 2>&1 || die "certbot is not installed (apt install certbot)"
 mkdir -p "$CERT_ROOT" "$WEBROOT_DIR"
+
+# A self-signed bootstrap certificate is a plain directory; certbot wants
+# `live/assetflow` to be its own symlink tree. Move the bootstrap aside. Nginx
+# keeps serving the already-loaded certificate until the reload after issue.
+if [ -d "$CERT_DIR" ] && [ ! -L "$CERT_DIR" ]; then
+    BOOTSTRAP_DIR="${CERT_DIR}.bootstrap-$(date -u '+%Y%m%dT%H%M%SZ')"
+    say "moving the bootstrap certificate to ${BOOTSTRAP_DIR}"
+    mv "$CERT_DIR" "$BOOTSTRAP_DIR"
+fi
 
 export CERT_ROOT WEBROOT_DIR
 certbot certonly \
@@ -76,6 +85,7 @@ certbot certonly \
     --config-dir "$CERT_ROOT" \
     --work-dir "${CERT_ROOT}/work" \
     --logs-dir "${CERT_ROOT}/logs" \
+    --cert-name assetflow \
     -d "$DOMAIN" \
     --email "$EMAIL" \
     --agree-tos \
