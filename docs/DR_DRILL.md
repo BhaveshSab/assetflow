@@ -69,16 +69,22 @@ aws s3 cp "s3://$S3_BUCKET/assetflow/backups/" /var/backups/assetflow/ --recursi
 sudo -u assetflow infra/scripts/restore-verify.sh
 ```
 
-## The results (fill in with your *own* numbers)
+## The results (measured 2026-10-28, `t3.micro`, ap-southeast-2)
 
 | Measurement | Value | How it was measured |
 |-------------|-------|---------------------|
-| The size of one backup | TBD | `ls -lh /var/backups/assetflow/*.dump` |
-| The duration of the backup | TBD | the log of `backup.sh` |
-| The duration of the restore (RTO) | TBD | `restore-verify.sh` prints it |
-| The age of the newest backup (RPO) | TBD | `ls -lt /var/backups/assetflow/` |
-| The rows restored | TBD | the output of `restore-verify.sh` |
-| The time a full host rebuild takes | TBD | the drill above, step by step |
+| The size of one backup | **43 KB** | `ls -lh ~/backups/assetflow-20261028T144015Z.dump` |
+| The duration of the backup | **0.93 s** | a timed `infra/scripts/backup.sh` run (`pg_dump` + SHA-256 + prune) |
+| The duration of the restore (RTO) | **9 s** | [`results/restore-verify-20261028T144107Z.log`](./results/restore-verify-20261028T144107Z.log) |
+| The age of the newest backup (RPO) | **52 s** during the drill; **≤ 24 h** in production (the 02:30 timer) | the dump timestamp vs. the restore timestamp |
+| The rows restored | **5 users, 3 departments, 5 assets**, 0 allocations/notifications/activity rows | the output of `restore-verify.sh`, which compares every table with the live database |
+| The time a full host rebuild takes | **not measured yet** — the drill destroys the instance, so it is scheduled as its own exercise | the steps above, timed end to end |
+
+> The drill restored a **43 KB dump into a throwaway database in 9 seconds**
+> and compared every table against production before declaring it good. The
+> honest limit: this is a logical dump of a small seeded database, so the RTO
+> scales with the dump, not with the disk — measure it again when the data
+> grows.
 
 > Copy the real output into `docs/results/` — a screenshot of the terminal is
 > worth more than a number you typed into a document.

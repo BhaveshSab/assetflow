@@ -213,6 +213,23 @@ gets). When the verified Google email already belongs to a password account,
 the Google identity is linked to it — the person keeps their existing role,
 assets and bookings.
 
+**Where this deployment stands:** the flow is implemented end to end (the
+button, the ID-token verification, the account linking, the e2e coverage) but
+`GOOGLE_CLIENT_ID` is **not set yet**, so the sign-in page intentionally hides
+the Google button instead of offering one that cannot work. To switch it on,
+create the Web-application client with
+`https://3.107.83.86.sslip.io` as an authorized JavaScript origin, then:
+
+```bash
+# on the server
+printf 'GOOGLE_CLIENT_ID=%s\n' '1234-abc.apps.googleusercontent.com' >> infra/.env
+docker compose -f infra/docker-compose.yml up -d api
+curl -fsS https://3.107.83.86.sslip.io/api/auth/config   # → {"googleClientId":"…"}
+```
+
+No client secret is involved and the SPA needs no rebuild — it reads the id
+from the API at runtime.
+
 ---
 
 ## 🔐 Environment variables — every parameter
@@ -572,6 +589,27 @@ The ports come from `infra/.env` (`HTTP_PORT`, `HTTPS_PORT`) — the local
 override opens the API port and removes the resource limits, it never repeats
 a port of the base file (compose appends lists, and that is a port conflict).
 The whole guide is in [`infra/README.md`](infra/README.md).
+
+### This deployment, measured
+
+A `t3.micro` in `ap-southeast-2` runs the whole stack behind Nginx with a
+Let's Encrypt certificate at <https://3.107.83.86.sslip.io>. The raw terminal
+output is in [`docs/results/`](docs/results).
+
+| What | Measured | Where |
+|------|----------|-------|
+| Load test (25 VUs, 3 min) | **24.23 req/s, p95 35.4 ms, 0.00 % errors**, 4,392 requests | [k6 log](docs/results/k6-20261028T143025Z.log) |
+| CPU during the load test | max **43.9 %**, avg 21.5 % — a t3.micro is enough | Prometheus |
+| Backup → verified restore | 43 KB dump, **RTO 9 s**, every table compared row by row | [restore log](docs/results/restore-verify-20261028T144107Z.log) |
+| Backup duration | **0.93 s** (`pg_dump` + SHA-256 + prune) | timed run |
+| Failed deploy → automatic rollback | **48 s** until the previous image was healthy again | [rollback log](docs/results/deploy-rollback-20261028T153000Z.log) |
+| Rate limiter across a restart | the Redis counter survived `docker compose restart api` | `redis-cli KEYS 'auth:*'` |
+
+**Not proven yet, and not claimed:** the S3 upload (no valid AWS credential or
+bucket on the host), Telegram delivery (the Bot API rejects the token with
+`401`), and the full host rebuild (it needs the bucket first). Each one is
+listed with its exact error in
+[`docs/RESUME_EVIDENCE.md`](docs/RESUME_EVIDENCE.md).
 
 **What it demonstrates**
 
