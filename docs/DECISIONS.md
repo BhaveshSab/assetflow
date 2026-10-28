@@ -7,7 +7,7 @@ answer one, it is not in the stack.
 |---|----------|--------------------------|-----------------------------|
 | 1 | **One host, containers** | "run the infrastructure on-site and in the cloud" | a VM with the app installed by hand — no reproducible image, no rollback |
 | 2 | **Nginx as the only public entry** | "low-latency streaming over unreliable networks" + the security requirements | publishing the API port — Nginx terminates TLS, adds the headers and hides the topology |
-| 3 | **A separate `backend` network with `internal: true`** | "least privilege / do not expose the data" | one flat network — the database would be reachable from every container |
+| 3 | **A separate `backend` network with `internal: true`** | "least privilege / do not expose the data" | one flat network — the database would be reachable from every container. Postgres is published only on `127.0.0.1` because the host backup/restore scripts need a TCP endpoint; it is never reachable from another host. |
 | 4 | **Redis for the rate-limit counters** | "reliable service" + a real security hole | the in-process counter: it resets on every restart and is not shared between replicas — a brute-force attack got `limit x instances` attempts |
 | 5 | **Redis fails open to the local limiter** | "availability" | failing closed would take the whole API down when Redis hiccups; the degradation is reported in `/api/health` and in a metric instead |
 | 6 | **Prometheus + Grafana + Alertmanager** | "monitoring and on-call" | a log-only setup — logs explain *what* happened, metrics tell you *that* something is wrong before a user does |

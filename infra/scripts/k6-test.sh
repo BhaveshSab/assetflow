@@ -34,8 +34,14 @@ say "target:   ${BASE_URL}"
 say "users:    ${VUS} for ${DURATION}"
 say "output:   ${OUT}"
 
+K6_TLS=()
+if [ "${K6_INSECURE:-false}" = true ]; then
+    # Only for a first boot with the bootstrap self-signed certificate.
+    K6_TLS=(--insecure-skip-tls-verify)
+fi
+
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] k6 run -e BASE_URL=${BASE_URL} -e VUS=${VUS} -e DURATION=${DURATION} infra/scripts/k6-load.js"
+    say "[dry-run] k6 run ${K6_TLS[*]:-} -e BASE_URL=${BASE_URL} -e VUS=${VUS} -e DURATION=${DURATION} infra/scripts/k6-load.js"
     exit 0
 fi
 
@@ -50,7 +56,7 @@ else
 fi
 
 # `pipefail` is already set: a failing k6 exits non-zero even through tee.
-"${K6[@]}" run \
+"${K6[@]}" run "${K6_TLS[@]}" \
     -e BASE_URL="$BASE_URL" \
     -e VUS="$VUS" \
     -e DURATION="$DURATION" \

@@ -88,6 +88,10 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Loopback only: the host's backup / restore scripts need a TCP endpoint.
+    # It is never reachable from another machine (Docker binds 127.0.0.1).
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assetflow} -d ${POSTGRES_DB:-assetflow}"]
