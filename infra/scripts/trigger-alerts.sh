@@ -27,7 +27,7 @@ WAIT_SECONDS="${WAIT_SECONDS:-45}"
 alert_payload() {
     local name="$1" summary="$2" description="$3" ends_at="$4"
     cat <<EOF
-{
+[{
   "labels": {
     "alertname": "${name}",
     "severity": "critical",
@@ -42,7 +42,7 @@ alert_payload() {
   "startsAt": "$(date -u -d '-2 minutes' '+%Y-%m-%dT%H:%M:%SZ')",
   "endsAt": "${ends_at}",
   "generatorURL": "https://github.com/BhaveshSab/assetflow"
-}
+}]
 EOF
 }
 
