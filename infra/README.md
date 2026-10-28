@@ -18,7 +18,7 @@ alertmanager ─▶ telegram
 | Path | What it is |
 |------|------------|
 | `docker-compose.yml` | the stack — production shaped: the database and Redis have no route to the internet, the monitoring tools are bound to `127.0.0.1` |
-| `docker-compose.local.yml` | the override for the laptop demo (opens the extra ports) |
+| `docker-compose.local.yml` | the override for the laptop demo (opens the API port, removes the resource limits) |
 | `docker/Dockerfile.api` | the API image — multi-stage, non-root, with a health check |
 | `docker/Dockerfile.nginx` | Nginx + the built SPA (same-origin API calls) |
 | `nginx/` | the TLS configuration, the security headers, the rate limit |
@@ -42,6 +42,23 @@ docker compose -f infra/docker-compose.yml \
 
 open https://localhost:8443
 ```
+
+The ports come from `infra/.env`:
+
+| Variable | Laptop | Server |
+|----------|--------|--------|
+| `HTTP_PORT` | `8080` | `80` |
+| `HTTPS_PORT` | `8443` | `443` |
+| `CORS_ORIGINS` | `https://localhost:8443` | `https://<your-host>` |
+
+On the laptop the monitoring stays on `127.0.0.1`
+(Grafana on <http://localhost:3001>, Prometheus on <http://localhost:9090>) —
+on a server those ports are reachable through an SSH tunnel only.
+
+> The local override must **not** repeat a port of the base file: compose
+> appends lists, and two entries for the same container port are a port
+> conflict. That is why the ports are in `infra/.env` and not in the
+> override.
 
 ## The first run (server)
 

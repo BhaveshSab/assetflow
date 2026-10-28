@@ -516,13 +516,18 @@ alertmanager ─▶ telegram
 | The deployment over SSH with an automatic rollback | [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) |
 
 ```bash
-cp infra/.env.example infra/.env        # the secrets, the S3 bucket, Telegram
+cp infra/.env.example infra/.env        # the secrets, the ports, the S3 bucket, Telegram
 sudo infra/scripts/issue-cert.sh --self-signed
 
 docker compose -f infra/docker-compose.yml \
                -f infra/docker-compose.local.yml up -d --build
 # → https://localhost:8443  ·  Grafana: http://localhost:3001  ·  Prometheus: http://localhost:9090
 ```
+
+The ports come from `infra/.env` (`HTTP_PORT`, `HTTPS_PORT`) — the local
+override opens the API port and removes the resource limits, it never repeats
+a port of the base file (compose appends lists, and that is a port conflict).
+The whole guide is in [`infra/README.md`](infra/README.md).
 
 **What it demonstrates**
 

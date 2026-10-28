@@ -26,6 +26,9 @@ jobs:
   deploy:
     name: Build, push and deploy
     runs-on: ubuntu-latest
+    # Without a server there is nothing to deploy to — the job waits instead
+    # of failing (the secrets are added in Settings → Secrets and variables).
+    if: ${{ github.event_name == 'workflow_dispatch' || secrets.DEPLOY_HOST != '' }}
     permissions:
       contents: read
       packages: write
