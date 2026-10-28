@@ -88,8 +88,10 @@ The measurements are in [`../docs/results`](../docs/results):
 | Failed deploy → rollback | **48 s** back to the previous, healthy image |
 | Redis limiter across a restart | the counter survived `docker compose restart api` |
 
-**Open items on this host:** `S3_BUCKET` is empty and the AWS credential is
-rejected (`InvalidClientTokenId`), so backups stay on the local disk; the
+**Open items on this host:** `S3_BUCKET` points at
+`assetflow-media-bhavesh-2026` (ap-southeast-2) and `backup.sh` reaches
+`PutObject`, but AWS rejects the credential (`InvalidAccessKeyId` — the pasted
+secret is 38 characters, AWS uses 40), so backups stay on the local disk; the
 Telegram token is rejected by the Bot API (`401`), so alerts stop at
 Alertmanager; `GOOGLE_CLIENT_ID` is unset, so the sign-in page hides the
 Google button. The commands each one needs are in

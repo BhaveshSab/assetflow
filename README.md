@@ -605,10 +605,12 @@ output is in [`docs/results/`](docs/results).
 | Failed deploy → automatic rollback | **48 s** until the previous image was healthy again | [rollback log](docs/results/deploy-rollback-20261028T153000Z.log) |
 | Rate limiter across a restart | the Redis counter survived `docker compose restart api` | `redis-cli KEYS 'auth:*'` |
 
-**Not proven yet, and not claimed:** the S3 upload (no valid AWS credential or
-bucket on the host), Telegram delivery (the Bot API rejects the token with
-`401`), and the full host rebuild (it needs the bucket first). Each one is
-listed with its exact error in
+**Not proven yet, and not claimed:** the S3 upload (the bucket
+`assetflow-media-bhavesh-2026` exists in ap-southeast-2 and `backup.sh`
+reaches `PutObject`, but AWS rejects the credential with `InvalidAccessKeyId`
+— the pasted secret is 38 characters, AWS uses 40), Telegram delivery (the Bot
+API rejects the token with `401`), and the full host rebuild (it needs the
+upload first). Each one is listed with its exact error in
 [`docs/RESUME_EVIDENCE.md`](docs/RESUME_EVIDENCE.md).
 
 **What it demonstrates**

@@ -28,8 +28,12 @@ run: max 43.9 %, avg 21.5 % (Prometheus).
 
 ## The honest gaps
 
-- **No S3 upload has been measured.** The host has no valid AWS credential and
-  `S3_BUCKET` is empty, so `backup.sh` writes locally and warns.
+- **No S3 upload has been measured.** The bucket
+  `assetflow-media-bhavesh-2026` exists in ap-southeast-2 (it answers `403`
+  unsigned, i.e. it is private and real), and `S3_BUCKET` now points at it, but
+  AWS rejects the credential with `InvalidAccessKeyId`: the pasted secret is 38
+  characters and AWS secret access keys are 40. The dump, the checksum and the
+  14-day prune are verified; the upload is not.
 - **No Telegram message has been received.** The token in `infra/.env` is
   rejected by the Bot API; the Alertmanager → Telegram chain is wired but
   unproven until a valid token is set.

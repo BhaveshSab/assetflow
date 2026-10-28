@@ -25,7 +25,7 @@ the data transfer. Everything else is fixed.
 |------|------|-----------|---------|------|
 | EC2 `t3.micro` | 730 h | $0.0132 / h | **$9.64** | the API + PostgreSQL + Redis + all five monitoring containers |
 | EBS `gp3` | 30 GB | $0.08 / GB-month | **$2.40** | the database volume |
-| S3 — backups | < 1 MB | $0.0245 / GB-month | **≈ $0.00** | 14 daily dumps of 43 KB — *not billed yet: no bucket exists* |
+| S3 — backups | < 1 MB | $0.0245 / GB-month | **≈ $0.00** | 14 daily dumps of 43 KB in `assetflow-media-bhavesh-2026` — *not billed yet: no upload has succeeded* |
 | S3 — archive | none yet | $0.0245 / GB-month | **$0.00** | the old rows move to Glacier after 30 days |
 | S3 requests | ~30 PUT/month | $0.005 / 1 000 | **$0.00** | one `PutObject` per nightly backup |
 | Data transfer | < 1 GB | first 100 GB free | **$0.00** | the S3 traffic inside the region is free |

@@ -15,14 +15,14 @@ Let's Encrypt certificate (issued 2026-10-28, expires 2027-01-26).
 |---|-----------|-------------|--------------------|
 | 1 | "The API, PostgreSQL and Redis run as containers behind Nginx with TLS" | `docker compose ps` · `curl -k https://<host>/api/health` | **9 containers healthy**; the API answers `{"status":"ok","database":"up","rateLimitStore":"redis","redis":"up"}`; TLS issuer `Let's Encrypt CN=YE1` |
 | 2 | "The nightly backup is verified by restoring it" | `infra/scripts/restore-verify.sh` | **9 s** from dump to verified restore (RTO); 43 KB dump; SHA-256 checked; 5 users / 3 departments / 5 assets compared row-by-row |
-| 3 | "The backup is 14-day rolling and lives in a private, versioned S3 bucket" | `aws s3 ls s3://$S3_BUCKET/assetflow/backups/` | **not verified** — no S3 bucket is provisioned yet (the AWS keys on the host are rejected with `InvalidClientTokenId`, and `S3_BUCKET` is empty). The local dump + checksum path is verified; the upload path is not |
+| 3 | "The backup is 14-day rolling and lives in a private, versioned S3 bucket" | `aws s3 ls s3://$S3_BUCKET/assetflow/backups/` | **bucket exists, upload not verified** — `assetflow-media-bhavesh-2026` (ap-southeast-2) answers `403` unsigned, so it is private and real; `backup.sh` reaches `PutObject` and AWS answers `InvalidAccessKeyId` because the pasted secret is 38 characters (AWS secrets are 40). The local dump + checksum + prune path is verified |
 | 4 | "Prometheus + Grafana with N alert rules, tested on purpose" | `infra/scripts/trigger-alerts.sh` | **7 rules**; the test alert reached Alertmanager; **Telegram delivery is not verified** — the bot token is rejected by Telegram (`401 Unauthorized`) |
 | 5 | "The API answers with a JSON log line per request, including a request id" | `docker compose logs api \| tail -1` | observed: `{"ts":…,"level":"info","event":"http_request","requestId":"3e30c3f9-…","method":"GET","route":"/api/does-not-exist","status":404,"durationMs":0.7}` |
 | 6 | "The rate-limit counters are shared through Redis and survive a restart" | `docker compose restart api` → the counter is still there | verified: `auth:throttle:nobody@example.com\|3.107.83.86` was still in Redis after the API container restarted |
 | 7 | "CI runs lint, 62 unit tests, 114 e2e tests, 26 frontend tests, the builds and shellcheck" | the CI badge in the README | **202 checks** (62 + 114 + 26), all green locally on 2026-10-28; both container images build in CI |
 | 8 | "The deployment over SSH rolls back automatically" | `IMAGE=… infra/scripts/deploy.sh` (with a failing health check) | **48 s** from start to a rolled-back, healthy container (pull → migrate → 3 failed health attempts → rollback) |
 | 9 | "The load test" | [`docs/results/k6-20261028T143025Z.log`](./results/k6-20261028T143025Z.log) | **24.23 req/s at p95 35.4 ms**, 0.00 % failed, 4,392 requests, 25 VUs for 3 min; CPU peaked at 43.9 % (avg 21.5 %) |
-| 10 | "The monthly cost" | [`docs/COSTS.md`](./COSTS.md) | **$12.04/month** of fixed list price (EC2 + EBS) + a few cents of S3; the S3 part is not billed yet because the bucket does not exist |
+| 10 | "The monthly cost" | [`docs/COSTS.md`](./COSTS.md) | **$12.04/month** of fixed list price (EC2 + EBS) + a few cents of S3; the S3 part is not billed yet because no upload has succeeded |
 
 ## The commands that produce the evidence
 
@@ -61,12 +61,12 @@ k6 run infra/scripts/k6-load.js
 |-------|--------|
 | containers, TLS, health, JSON logs | measured on the EC2 host |
 | backup → restore verification | measured (9 s, 43 KB) |
-| S3 upload, versioning, lifecycle | **not measured** — needs a valid AWS credential and a bucket |
+| S3 upload, versioning, lifecycle | **not measured** — the bucket exists, the credential is rejected (`InvalidAccessKeyId`; the secret is 38 characters, AWS uses 40) |
 | Prometheus rules firing | the rules evaluate and the test alert reaches Alertmanager; **Telegram delivery needs a valid bot token** |
 | load test | measured (24.23 req/s, p95 35.4 ms, 0 % errors) |
 | deployment rollback | measured (48 s) |
 | the GitHub deploy workflow | **not run end to end** — it needs `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_PATH` variables and a `DEPLOY_SSH_KEY` secret; the GHCR packages are also private, so the host needs `docker login ghcr.io` (or a public package) |
-| monthly cost | list price for EC2 + EBS; the S3 line is not billed because the bucket does not exist |
+| monthly cost | list price for EC2 + EBS; the S3 line is not billed because no upload has succeeded |
 
 ## The screenshots worth having
 
