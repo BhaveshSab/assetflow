@@ -106,9 +106,20 @@ jobs:
       - name: Check the compose files
         run: |
           cp infra/.env.example infra/.env
-          docker compose -f infra/docker-compose.yml config --quiet
-          docker compose -f infra/docker-compose.yml \
-                         -f infra/docker-compose.local.yml config --quiet
+          status=0
+          for args in "-f infra/docker-compose.yml" \
+                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml"; do
+            output=$(docker compose $args config --quiet 2>&1)
+            code=$?
+            if [ "$code" -ne 0 ]; then
+              status=1
+              echo "::error title=compose::docker compose $args → exit $code"
+              while IFS= read -r line; do
+                echo "::error title=compose::${line}"
+              done <<< "$output"
+            fi
+          done
+          exit $status
 
       - name: Build the API image
         uses: docker/build-push-action@v6

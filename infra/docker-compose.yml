@@ -135,7 +135,6 @@ services:
       dockerfile: infra/docker/Dockerfile.api
       target: migrate
     image: ghcr.io/bhaveshsab/assetflow-api:latest
-    profiles: ["tools"]
     env_file:
       - path: .env
         required: false
