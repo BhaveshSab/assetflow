@@ -140,6 +140,35 @@ sudo -u assetflow /opt/assetflow/infra/scripts/backup.sh
 
 ---
 
+## Sign in with Google is unavailable
+
+The page reads the configuration from the API, so the first check is public:
+
+```bash
+curl -fsS https://<host>/api/auth/config
+# {"googleClientId":null}  → GOOGLE_CLIENT_ID is not set in the API environment
+# {"googleClientId":"…"}   → configured; the problem is the page origin
+```
+
+* The button is disabled → set `GOOGLE_CLIENT_ID` in `infra/.env`, then
+  `docker compose up -d api`.
+* The popup says the origin is not allowed → add the exact origin
+  (`https://<host>`, no path) under **Authorized JavaScript origins** in the
+  Google Cloud OAuth client.
+* `503 Google sign-in is not configured` → same as the null case.
+* `401 Google sign-in failed` → the token was expired, malformed or issued for
+  another client id; retry from the page. The API deliberately does not echo
+  the verification error.
+
+## Renew the TLS certificate
+
+```bash
+cd /opt/assetflow
+sudo certbot renew --config-dir infra/certs --webroot -w infra/certbot-www
+docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
+openssl x509 -enddate -noout -in infra/certs/live/assetflow/fullchain.pem
+```
+
 ## The alerts do not arrive
 
 ```bash

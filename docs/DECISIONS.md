@@ -23,6 +23,9 @@ answer one, it is not in the stack.
 | 16 | **The SPA is served from the same origin** | "no CORS, no hardcoded hostnames" | a separate frontend host — then the SPA needs the API URL at build time and the browser needs CORS |
 | 17 | **The monitoring ports are bound to `127.0.0.1`** | "never expose the monitoring publicly" | publishing Grafana on 0.0.0.0 — it would be the first thing an attacker finds |
 | 18 | **A daily archive of the old rows to S3** | "data lifecycle — the part a data-infrastructure role actually owns" | deleting the rows (loses the history) or keeping them forever (the volume grows until the disk is full) |
+| 19 | **Google Identity Services ID-token flow (no client secret)** | "Sign in with Google" without a secret in the deployment | the authorization-code flow — it needs a client secret in the environment and a redirect URI per origin; here the API verifies the signed ID token against Google's public keys |
+| 20 | **A Google identity links to the account with the same verified email** | "one person, one account" | a second account per sign-in method — the person would lose their role, assets and bookings when they switch to Google |
+| 21 | **TLS material lives in `infra/certs` and is bind-mounted** | "the certificate the host issues is the one Nginx serves" | a named volume (Docker Desktop/WSL cannot see the host path) and the host `/etc/letsencrypt` (invisible to the container) — both broke the first boot in practice |
 
 ## Things that were considered and are deliberately missing
 

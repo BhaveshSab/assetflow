@@ -3,6 +3,8 @@
  *
  * - POST  /auth/signup  { name, email, password }  → { token, user }
  * - POST  /auth/login   { email, password }        → { token, user }
+ * - GET   /auth/config                            → { googleClientId }
+ * - POST  /auth/google  { credential }            → { token, user }
  * - GET   /auth/me                                → user (refreshes role)
  *
  * The JWT is persisted under `localStorage.token` (all components read it) and
@@ -39,6 +41,11 @@ export interface AuthPayload {
   email: string;
   password: string;
   name?: string;
+}
+
+export interface AuthConfig {
+  /** The public Google OAuth client id, or null when Google is not configured. */
+  googleClientId: string | null;
 }
 
 const SESSION_KEY = "session";
@@ -99,6 +106,29 @@ export async function apiSignUp(payload: AuthPayload): Promise<AuthResponse> {
     name: payload.name,
     email: payload.email,
     password: payload.password,
+  });
+  saveSession(session);
+  return session;
+}
+
+/**
+ * GET /auth/config — the public Google client id the sign-in button needs.
+ * A failure is not fatal: the page simply keeps Google hidden.
+ */
+export async function apiAuthConfig(): Promise<AuthConfig> {
+  const res = await fetch(`${BASE_URL}/auth/config`);
+  if (!res.ok) {
+    throw new Error(`Could not load the sign-in configuration (${res.status})`);
+  }
+  return (await res.json()) as AuthConfig;
+}
+
+/** Exchange a Google ID token for an AssetFlow session. */
+export async function apiGoogleSignIn(
+  credential: string,
+): Promise<AuthResponse> {
+  const session = await requestAuth<AuthResponse>("/auth/google", {
+    credential,
   });
   saveSession(session);
   return session;

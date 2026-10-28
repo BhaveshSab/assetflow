@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { AuthSwitch, type AuthSwitchSubmitEvent } from "@/components/ui/auth-switch";
 import {
+  apiAuthConfig,
   apiSignIn,
   apiSignUp,
   saveSession,
   type AuthPayload,
+  type AuthResponse,
 } from "@/lib/auth";
 
 type AuthMode = "signin" | "signup";
@@ -22,6 +25,35 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // null = Google is not configured (or the config call failed) → the button
+  // stays hidden/disabled instead of opening a dead end.
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiAuthConfig()
+      .then((config) => {
+        if (!cancelled) setGoogleClientId(config.googleClientId);
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleClientId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleGoogleSuccess = useCallback(
+    (session: AuthResponse) => {
+      saveSession(session);
+      navigate("/Dashboard");
+    },
+    [navigate]
+  );
+
+  const handleGoogleError = useCallback((message: string) => {
+    setError(message);
+  }, []);
 
   const handleSubmit = async (data: AuthSwitchSubmitEvent) => {
     setError(undefined);
@@ -58,6 +90,16 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
       loading={loading}
       error={error}
       onSubmit={handleSubmit}
+      googleSlot={
+        googleClientId ? (
+          <GoogleSignInButton
+            clientId={googleClientId}
+            disabled={loading}
+            onSuccess={handleGoogleSuccess}
+            onError={handleGoogleError}
+          />
+        ) : undefined
+      }
     />
   );
 }

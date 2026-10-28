@@ -52,7 +52,7 @@ It covers the complete lifecycle:
 
 | # | Module | What you get |
 |---|--------|--------------|
-| 1 | **Authentication** | Sign-up (always an Employee), sign-in, JWT sessions, deactivation-aware guards |
+| 1 | **Authentication** | Sign-up (always an Employee), email/password sign-in, **Sign in with Google** (verified ID token, account linking), JWT sessions, deactivation-aware guards |
 | 2 | **Dashboards** | Role-specific KPI dashboards (Admin / Manager / Employee) with live charts |
 | 3 | **Organisation setup** | Departments (with hierarchy + head), asset categories (with custom fields), employee directory |
 | 4 | **Asset directory** | Auto-tagged assets (`AF-0001`), search, filters, full history per asset |
@@ -184,6 +184,35 @@ npm run seed                  # creates these accounts (password: password123)
 > The SPA talks to the **real** API — a wrong password (or an account that has
 > been deactivated) is rejected, there is no offline demo mode.
 
+### 4️⃣ Sign in with Google (optional)
+
+Google is **off by default** and turns on the moment a client id is present.
+No client secret is stored anywhere: the browser receives a signed ID token
+from Google Identity Services and the API verifies it against Google's public
+keys ([`auth.service.ts`](backend/src/auth/auth.service.ts)).
+
+1. Google Cloud Console → **APIs & Services → Credentials** → **Create OAuth
+   client ID** → **Web application**.
+2. Add the origins that will show the button, for example:
+   `http://localhost:5173`, `https://your-frontend.vercel.app`,
+   `https://3.107.83.86.sslip.io`. There is **no redirect URI** to add — the
+   ID-token flow opens a popup and returns the token to the page.
+3. Put the client id (it ends in `.apps.googleusercontent.com`) in
+   `backend/.env` or `infra/.env`:
+
+   ```bash
+   GOOGLE_CLIENT_ID="1234567890-abc.apps.googleusercontent.com"
+   ```
+
+4. Restart the API (or `docker compose up -d api`). The sign-in page reads
+   `GET /api/auth/config`; if the id is missing, the Google button is disabled
+   instead of failing on click.
+
+A first Google sign-in creates an **EMPLOYEE** (the same role a normal signup
+gets). When the verified Google email already belongs to a password account,
+the Google identity is linked to it — the person keeps their existing role,
+assets and bookings.
+
 ---
 
 ## 🔐 Environment variables — every parameter
@@ -193,6 +222,10 @@ npm run seed                  # creates these accounts (password: password123)
 | Variable | Type | Default | Required | Description |
 |----------|------|---------|:--------:|-------------|
 | `VITE_API_BASE_URL` | string | `http://localhost:4000/api` | no | Base URL of the API **including** the `/api` prefix. Inlined at build time — changing it needs a rebuild. |
+
+> The Google client id is **not** a frontend build variable: the SPA reads it
+> from `GET /api/auth/config` at runtime, so rotating it does not need a
+> frontend rebuild.
 
 ### Backend (`/backend/.env`)
 
@@ -209,6 +242,7 @@ All backend variables are **validated at boot**
 | `DATABASE_URL_UNPOOLED` | string | — | no | Direct (unpooled) URL used **for migrations only** — Prisma needs a direct connection, PgBouncer (Neon's pooled endpoint) does not support it. `npm run prisma:migrate` picks it up automatically. |
 | `JWT_SECRET` | string | `dev-secret` (dev only) | **yes in production** | Secret used to sign access tokens. Must be **≥ 32 characters** and unique in production. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`. |
 | `JWT_EXPIRES_IN` | string | `7d` | no | Token lifetime — `15m`, `24h`, `7d`, … |
+| `GOOGLE_CLIENT_ID` | string | — | no | Public OAuth **client id** of a Google "Web application". Enables `/auth/google` and the button on the sign-in page. No client secret is used. |
 | `BCRYPT_ROUNDS` | number | `12` | no | Password hashing cost. 4 = fastest (tests), 12 = secure default, 15 = slowest. |
 | `PORT` | number | `4000` | no | Port the API listens on. |
 | `CORS_ORIGINS` | string | `http://localhost:5173,http://localhost:5174` | no | Comma-separated list of allowed browser origins (no trailing slash). |
@@ -281,7 +315,7 @@ curl http://localhost:4000/api/assets \
 
 **Health** — `GET /health` (public) — `status` (`ok` / `degraded`), `database` (`up` / `down`), `rateLimitStore` (`redis` / `memory`) · `GET /health/ready` — the readiness probe (200 / 503)
 
-**Auth** — `POST /auth/signup` · `POST /auth/login` · `GET /auth/me`
+**Auth** — `POST /auth/signup` · `POST /auth/login` · `GET /auth/config` (Google availability) · `POST /auth/google` (ID-token exchange) · `GET /auth/me`
 
 **Organisation** — `POST|GET /org/departments` · `GET|PATCH /org/departments/:id` ·
 `POST|GET /org/categories` · `GET|PATCH /org/categories/:id` ·
@@ -320,7 +354,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **190 automated checks** that run against a **real
+The project ships with **202 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -342,9 +376,9 @@ npm test
 
 | Suite | Command | What it covers |
 |-------|---------|----------------|
-| Backend unit | `cd backend && npm run test:unit` | **55 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, database-driver selection, the Redis-backed rate limiter |
-| Backend e2e | `cd backend && npm run test:e2e` | **111 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health, observability |
-| Frontend | `npm test` | **24 checks** — API client, session handling, avatar initials |
+| Backend unit | `cd backend && npm run test:unit` | **62 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
+| Backend e2e | `cd backend && npm run test:e2e` | **114 checks** — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health, observability |
+| Frontend | `npm test` | **26 checks** — API client, session handling, Google config/exchange, avatar initials |
 | Lint | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
 
 What the e2e suite proves, among other things:
@@ -374,6 +408,7 @@ What the e2e suite proves, among other things:
 | User enumeration | unknown e-mail and wrong password return the *same* message, and the same bcrypt work is performed in both cases |
 | E-mail identity | addresses are normalised (trimmed + lower-cased) and compared case-insensitively — `A@x.com` and `a@x.com` are one account |
 | Sessions | stateless JWTs; every request re-reads the user, so a deactivation or role change takes effect **immediately** |
+| Google sign-in | the ID token is verified server-side (signature, issuer, audience, expiry) and the email must be verified by Google; the browser cannot assert an identity. The client id is public; no client secret exists. |
 | Authorisation | `JwtAuthGuard` + `RolesGuard` on every route, plus department scoping inside the services |
 | Brute force | per-account + per-IP sign-in limiter (`429`), plus a global per-IP throttle on every route |
 | Injection | Prisma parameterises every query; DTOs are validated and stripped (`whitelist` + `forbidNonWhitelisted`) |
@@ -423,6 +458,7 @@ one for the SPA (repository root) and one for the API (`backend/`).
    | `DATABASE_URL_UNPOOLED` | Neon's **direct** URL — needed for migrations only (optional if `DATABASE_URL` is already direct) |
    | `JWT_SECRET` | `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
    | `JWT_EXPIRES_IN` | `7d` |
+   | `GOOGLE_CLIENT_ID` | optional — the public client id from Google Cloud Console (see below) |
    | `CORS_ORIGINS` | fill in after step 2, then redeploy |
    | `NODE_ENV` | `production` |
 
@@ -458,6 +494,14 @@ In the **API** project set
 `CORS_ORIGINS=https://<frontend-project>.vercel.app` (comma-separate extra
 origins, no trailing slash) and redeploy. Without it the browser blocks every
 API call.
+
+### 3b. Enable Google sign-in (optional)
+
+Create the **Web application** OAuth client described in the
+**Sign in with Google** section above, add
+`https://<frontend-project>.vercel.app` to its **Authorized JavaScript
+origins**, then set `GOOGLE_CLIENT_ID` in the **API** project and redeploy.
+The frontend needs no rebuild — it asks the API for the id at runtime.
 
 ### 4. Verify
 
@@ -610,6 +654,8 @@ assetflow/
 | `Neon: … WebSocket / not supported` / `the connection attempt failed` | a **pooled** URL was used with the WebSocket driver | either use the direct `*.neon.tech` URL, or keep the pooled URL — the driver is chosen automatically now |
 | `/api/health` returns `503` with a message | the environment is invalid — the message names the exact variable | fix the variable named in `startupError` and redeploy |
 | `JWT_SECRET must be …` at boot | placeholder secret with `NODE_ENV=production` | generate a real one (see [parameters](#-environment-variables--every-parameter)) |
+| The Google button is disabled | `GOOGLE_CLIENT_ID` is empty (or the API restarted without it) | set it in the API environment and restart; `GET /api/auth/config` shows `{"googleClientId": null}` until then |
+| Google sign-in says "origin is not allowed" | the page origin is missing from the OAuth client | add it under **Authorized JavaScript origins** (exact scheme + host, no path) |
 | `Could not locate the Query Engine` | the Prisma client was not generated | `cd backend && npx prisma generate` |
 | `prisma: command not found` (exit 127) in a Vercel build | the CLI was invoked outside npm | keep the build command empty so `backend/vercel.json` is used |
 | Every browser call fails with a CORS error | `CORS_ORIGINS` does not contain the frontend origin | add it (no trailing slash, Production **and** Preview) and redeploy the API |

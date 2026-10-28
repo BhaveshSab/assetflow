@@ -135,7 +135,11 @@ model User {
   id           String       @id @default(cuid())
   name         String
   email        String       @unique
-  passwordHash String
+  // Password sign-in is optional: an account created through "Sign in with
+  // Google" has no password, and a Google identity is linked to an existing
+  // password account on first use.
+  passwordHash String?
+  googleId     String?      @unique
   role         Role         @default(EMPLOYEE)
   status       RecordStatus @default(ACTIVE)
 

@@ -28,3 +28,7 @@ pnpm-debug.log*
 
 # Build artifacts
 *.tsbuildinfo
+
+# TLS material and ACME challenges (never commit a private key)
+infra/certs/
+infra/certbot-www/

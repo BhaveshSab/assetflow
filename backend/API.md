@@ -7,7 +7,7 @@
 ## Conventions
 
 - **Auth:** send the JWT as `Authorization: Bearer <token>` on every protected
-  route. Get the token from `/auth/signup` or `/auth/login`.
+  route. Get the token from `/auth/signup`, `/auth/login` or `/auth/google`.
 - **Content type:** `application/json` (except the CSV export, which returns `text/csv`).
 - **Errors:** non-2xx look like `{ "statusCode": 409, "message": "...", "error": "Conflict" }`.
   The allocation-conflict 409 additionally includes `currentHolder`, `currentDepartment`, `currentAllocationId`.
@@ -39,9 +39,11 @@ disclosed.
 |---|---|---|---|
 | POST | `/auth/signup` | public | `{ name, email, password }` → `{ token, user }`. Always creates an **EMPLOYEE** — a caller can never self-assign a role. Password ≥ 8 chars. |
 | POST | `/auth/login` | public | `{ email, password }` → `{ token, user }`. E-mail matching is case-insensitive. Unknown account and wrong password return the **same** message after the same amount of work. Repeated failures are throttled (`429`). |
+| GET | `/auth/config` | public | → `{ googleClientId }` — `null` when `GOOGLE_CLIENT_ID` is unset. The sign-in page uses it to render or disable the Google button. |
+| POST | `/auth/google` | public | `{ credential }` — the Google Identity Services ID token → `{ token, user }`. The token is verified server-side (signature, issuer, audience, expiry) and the email must be verified. A new email creates an **EMPLOYEE**; an existing email links the Google identity. `503` when Google is not configured, `401` when the token is invalid. |
 | GET | `/auth/me` | any auth | → current `{ id, name, email, role, departmentId }`. A deactivated account's token stops working immediately. |
 
-`user` shape everywhere: `{ id, name, email, role, status, departmentId }`. **passwordHash is never returned.**
+`user` shape everywhere: `{ id, name, email, role, status, departmentId }`. **passwordHash is never returned.** It is nullable in the database: an account created through Google has no password, and a password login for such an account fails exactly like a wrong password.
 
 ## Organization Setup (#3) ✅
 

@@ -65,11 +65,42 @@ sequenceDiagram
     A->>A: metrics (counter + duration histogram)
 ```
 
+## Authentication, including Google
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant G as Google Identity Services
+    participant A as API (NestJS)
+    participant P as PostgreSQL
+
+    B->>A: GET /api/auth/config
+    A-->>B: { googleClientId } (null = disabled)
+    B->>G: load gsi/client, render button
+    G-->>B: signed ID token (sub, email, email_verified)
+    B->>A: POST /api/auth/google { credential }
+    A->>G: verify signature / issuer / audience / expiry (public keys)
+    A->>P: find user by verified email (case-insensitive)
+    alt existing account
+        A->>P: link googleId on first use
+    else new account
+        A->>P: create EMPLOYEE (passwordHash = null)
+    end
+    A-->>B: AssetFlow JWT
+```
+
+No client secret exists in the stack. The Google client id is public by
+design; the security comes from verifying the token **server-side** and
+requiring `email_verified`. A Google identity is linked to an existing
+password account only when the verified email matches, so roles, allocations
+and bookings survive the switch in sign-in method. `passwordHash` is nullable
+and `googleId` is unique in the Prisma schema.
+
 ## The containers
 
 | Container | Image | Published port | Why it exists |
 |-----------|-------|-----------------|---------------|
-| `nginx` | built from `infra/docker/Dockerfile.nginx` | 80, 443 | TLS, the security headers, the SPA and the only public entry point |
+| `nginx` | built from `infra/docker/Dockerfile.nginx` | 80, 443 | TLS (`infra/certs` bind-mounted), security headers incl. the Google CSP, the SPA and the only public entry point |
 | `api` | built from `infra/docker/Dockerfile.api` | – (internal) | the NestJS application, non-root, with a health check |
 | `postgres` | `postgres:16.4-alpine` | – (internal) | the database, on a network **without** a route to the internet |
 | `redis` | `redis:7.4-alpine` | – (internal) | the shared rate-limit counters (see [DECISIONS](./DECISIONS.md#redis)) |

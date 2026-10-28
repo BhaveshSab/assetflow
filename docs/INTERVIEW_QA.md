@@ -200,3 +200,14 @@ point-in-time recovery), the secrets live in a file on the host, and the
 monitoring is a single Prometheus. For a real deployment I would add WAL
 archiving, a managed database and a second instance — the trade-offs are in
 [DECISIONS.md](./DECISIONS.md).
+
+### 21. How does "Sign in with Google" work without an OAuth client secret?
+
+Google Identity Services returns a **signed ID token** to the page. The API
+verifies it with `google-auth-library` against Google's public keys —
+signature, issuer, audience (the client id) and expiry — and requires
+`email_verified`. The client id is public, so there is nothing secret to leak;
+the authorization-code flow would add a client secret and a redirect URI per
+origin without improving this flow. A first sign-in creates an EMPLOYEE; a
+verified email that already has a password account links the Google identity
+to it, so the person keeps their role and data.

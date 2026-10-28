@@ -65,6 +65,10 @@ export default async function globalSetup() {
   process.env.THROTTLE_TTL = '60000';
   process.env.AUTH_THROTTLE_LIMIT = '1000';
   process.env.AUTH_THROTTLE_TTL = '60000';
+  // Google sign-in is optional and needs a real client id; the suite covers
+  // the "not configured" path. The configured path is unit-tested with a
+  // mocked token verifier.
+  delete process.env.GOOGLE_CLIENT_ID;
 
   return async () => {
     await server.stop();

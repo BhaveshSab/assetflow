@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  apiAuthConfig,
+  apiGoogleSignIn,
   apiSignIn,
   apiSignUp,
   clearSession,
@@ -75,6 +77,36 @@ describe("auth client", () => {
     await expect(
       apiSignIn({ email: "ada@example.com", password: "nope" }),
     ).rejects.toThrow("Invalid email or password");
+  });
+
+  it("loads the public sign-in configuration", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        googleClientId: "client.apps.googleusercontent.com",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiAuthConfig()).resolves.toEqual({
+      googleClientId: "client.apps.googleusercontent.com",
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain("/auth/config");
+  });
+
+  it("exchanges a Google credential and stores the session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => session,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await apiGoogleSignIn("google-id-token");
+
+    expect(fetchMock.mock.calls[0][0]).toContain("/auth/google");
+    expect(fetchMock.mock.calls[0][1].body).toContain("google-id-token");
+    expect(result.token).toBe("jwt-token");
+    expect(getSession()?.token).toBe("jwt-token");
   });
 
   it("signs up with a name", async () => {

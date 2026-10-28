@@ -172,10 +172,14 @@ git clone https://github.com/BhaveshSab/assetflow.git /opt/assetflow
 cd /opt/assetflow
 
 cp infra/.env.example infra/.env
-$EDITOR infra/.env                            # the secrets, the S3 bucket, Telegram
+$EDITOR infra/.env                            # secrets, S3 bucket, Telegram, GOOGLE_CLIENT_ID
 
-sudo infra/scripts/issue-cert.sh --domain <your-domain> --email <you@example.com>
+# Nginx needs a certificate to boot, and HTTP-01 needs Nginx on :80.
+# Bootstrap with a self-signed certificate, then issue the real one.
+sudo infra/scripts/issue-cert.sh --self-signed
 docker compose -f infra/docker-compose.yml up -d --build
+sudo infra/scripts/issue-cert.sh --domain <your-domain> --email <you@example.com>
+docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
 ```
 
 ## 5. The scheduled backups (5 minutes)

@@ -25,8 +25,9 @@ alertmanager ─▶ telegram
 | `prometheus/` | the scrape configuration and the alert rules |
 | `grafana/` | the provisioned dashboard |
 | `alertmanager/` | the Telegram receiver (a template — the credentials come from the environment) |
-| `scripts/` | backup, restore verification, archiving, hardening, deployment, alerts |
+| `scripts/` | backup, restore verification, archiving, hardening, deployment, alerts, certificate |
 | `systemd/` | the timers that run the backup and the restore verification |
+| `certs/` · `certbot-www/` | **generated** TLS material and ACME challenges — bind-mounted into Nginx, never committed (`.gitignore`) |
 
 ## The first run (laptop)
 
@@ -35,12 +36,20 @@ cd assetflow
 cp infra/.env.example infra/.env
 $EDITOR infra/.env                    # the passwords and the JWT secret
 
-sudo infra/scripts/issue-cert.sh --self-signed   # a demo certificate
+sudo infra/scripts/issue-cert.sh --self-signed   # writes infra/certs, mounted into Nginx
 
 docker compose -f infra/docker-compose.yml \
                -f infra/docker-compose.local.yml up -d --build
 
 open https://localhost:8443
+```
+
+Google sign-in is optional. Put the **public** client id (no client secret)
+in `infra/.env` and restart the API:
+
+```bash
+GOOGLE_CLIENT_ID="1234567890-abc.apps.googleusercontent.com"
+docker compose -f infra/docker-compose.yml up -d api
 ```
 
 The ports come from `infra/.env`:
@@ -62,10 +71,25 @@ on a server those ports are reachable through an SSH tunnel only.
 
 ## The first run (server)
 
+Nginx will not start without a certificate, and Let's Encrypt's HTTP-01
+challenge needs Nginx on port 80. So the **first** certificate is a
+self-signed bootstrap one; the real certificate is issued through the running
+edge and then reloaded:
+
 ```bash
 sudo infra/scripts/harden-server.sh                # key-only SSH, UFW, updates
-sudo infra/scripts/issue-cert.sh --domain <host> --email <you@example.com>
+sudo infra/scripts/issue-cert.sh --self-signed     # bootstrap for the first boot
 docker compose -f infra/docker-compose.yml up -d --build
+sudo infra/scripts/issue-cert.sh --domain <host> --email <you@example.com>
+docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
+```
+
+The certificate lives in `infra/certs/live/assetflow` on the host and is
+bind-mounted at `/etc/letsencrypt` in the container. Renewal:
+
+```bash
+sudo certbot renew --config-dir infra/certs --webroot -w infra/certbot-www
+docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
 ```
 
 The documentation lives in [`../docs`](../docs):

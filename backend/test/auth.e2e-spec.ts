@@ -171,6 +171,34 @@ describe('Auth & RBAC (e2e)', () => {
     });
   });
 
+  describe('GET /auth/config', () => {
+    it('reports Google sign-in as unavailable when no client id is set', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/auth/config')
+        .expect(200);
+
+      expect(res.body).toEqual({ googleClientId: null });
+    });
+  });
+
+  describe('POST /auth/google', () => {
+    it('answers 503 when Google sign-in is not configured', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/auth/google')
+        .send({ credential: 'x'.repeat(30) })
+        .expect(503);
+
+      expect(String(res.body.message)).toMatch(/not configured/i);
+    });
+
+    it('rejects a malformed body', async () => {
+      await request(app.getHttpServer())
+        .post('/api/auth/google')
+        .send({ credential: 'short' })
+        .expect(400);
+    });
+  });
+
   describe('GET /auth/me', () => {
     it('returns the current user for a valid token', async () => {
       const { token } = await createUserWithToken(app, {

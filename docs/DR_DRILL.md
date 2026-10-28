@@ -58,8 +58,9 @@ This is the case the S3 backup really exists for.
 ```bash
 # on a *new* server
 sudo infra/scripts/harden-server.sh
-sudo infra/scripts/issue-cert.sh --domain <host> --email <you@example.com>
 cp infra/.env.example infra/.env && $EDITOR infra/.env    # the same secrets
+sudo infra/scripts/issue-cert.sh --self-signed             # bootstrap
+# (restore the data first — the certificate can be re-issued later)
 docker compose -f infra/docker-compose.yml up -d --build
 docker compose run --rm migrate
 

@@ -49,6 +49,8 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis:6379
       # Prometheus scrapes this endpoint.
       METRICS_ENABLED: "true"
+      # Optional: the public Google OAuth client id (no client secret).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -160,8 +162,12 @@ services:
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - letsencrypt:/etc/letsencrypt:ro
-      - certbot-www:/var/www/certbot:ro
+      # The certificate is issued on the host into ./certs (see
+      # scripts/issue-cert.sh) and mounted here. Bind mounts — not named
+      # volumes — so certbot on the host writes the exact files Nginx reads,
+      # including on renewal.
+      - ./certs:/etc/letsencrypt:ro
+      - ./certbot-www:/var/www/certbot:ro
     depends_on:
       api:
         condition: service_healthy
@@ -279,6 +285,4 @@ volumes:
   grafana-data:
   prometheus-data:
   alertmanager-data:
-  letsencrypt:
-  certbot-www:
   node-textfile:

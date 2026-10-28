@@ -59,6 +59,12 @@ export interface AuthSwitchProps
   error?: string;
   /** Route path for the OTHER mode. Renders the side-panel CTA + footer link as <Link>. */
   otherTo?: string;
+  /**
+   * Optional Google sign-in control (the real Google Identity Services
+   * button). When omitted, a disabled placeholder is shown — Google is an
+   * optional integration, not a dead button.
+   */
+  googleSlot?: React.ReactNode;
 }
 
 const OTHER_MODE: Record<AuthMode, AuthMode> = {
@@ -154,7 +160,8 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
       brand,
       loading = false,
       error,
-      otherTo
+      otherTo,
+      googleSlot
     },
     ref
   ) => {
@@ -316,11 +323,19 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
           </div>
 
           {/* social */}
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            <Button type="button" variant="outline" className="h-11" disabled={loading}>
-              <GoogleIcon className="h-4 w-4" />
-              Google
-            </Button>
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {googleSlot ?? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11"
+                disabled
+                title="Google sign-in is not configured on this server"
+              >
+                <GoogleIcon className="h-4 w-4" />
+                Google
+              </Button>
+            )}
             <Button type="button" variant="outline" className="h-11" disabled={loading}>
               <Github className="h-4 w-4" />
               GitHub

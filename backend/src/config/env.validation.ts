@@ -21,6 +21,12 @@ export type AppEnv = {
   DATABASE_URL: string;
   JWT_SECRET: string;
   JWT_EXPIRES_IN: string;
+  /**
+   * Optional Google OAuth client id (the public "Web application" client id).
+   * When it is missing, the API reports Google sign-in as unconfigured and
+   * the sign-in page hides the button instead of offering a dead end.
+   */
+  GOOGLE_CLIENT_ID?: string;
   PORT: number;
   CORS_ORIGINS: string;
   BCRYPT_ROUNDS: number;
@@ -143,12 +149,17 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
     'METRICS_ENABLED',
   );
 
+  // Optional: the public Google OAuth client id. No client secret is needed
+  // with the Google Identity Services ID-token flow.
+  const googleClientId = asString(raw.GOOGLE_CLIENT_ID).trim();
+
   return {
     NODE_ENV: nodeEnv,
     DATABASE_URL: databaseUrl,
     JWT_SECRET: jwtSecret,
     JWT_EXPIRES_IN:
       asString(raw.JWT_EXPIRES_IN).trim() || DEFAULTS.JWT_EXPIRES_IN,
+    ...(googleClientId ? { GOOGLE_CLIENT_ID: googleClientId } : {}),
     PORT: port,
     CORS_ORIGINS: asString(raw.CORS_ORIGINS).trim() || DEFAULTS.CORS_ORIGINS,
     BCRYPT_ROUNDS: asInt(
