@@ -140,7 +140,10 @@ services:
       context: ..
       dockerfile: infra/docker/Dockerfile.api
       target: migrate
-    image: ghcr.io/bhaveshsab/assetflow-api:latest
+    # A distinct tag: the migrate stage is the builder (with dev deps), the
+    # runtime stage is not. Sharing one tag let the migration image overwrite
+    # the API image.
+    image: ghcr.io/bhaveshsab/assetflow-migrate:latest
     env_file:
       - path: .env
         required: false
