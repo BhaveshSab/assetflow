@@ -194,15 +194,32 @@ sudo apt install -y awscli
 aws sts get-caller-identity        # must work without any key
 ```
 
-## 6. The secrets in GitHub (5 minutes)
+## 6. The secrets and the variables in GitHub (5 minutes)
+
+Open **Settings → Secrets and variables → Actions**.
+
+**Variables** (they are not secret — the tab next to "Secrets"):
+
+| Variable | Value |
+|----------|-------|
+| `DEPLOY_HOST` | the public IP of the instance |
+| `DEPLOY_USER` | `ubuntu` |
+| `DEPLOY_PATH` | `/opt/assetflow` |
+
+**Secrets**:
 
 | Secret | Value |
 |--------|-------|
-| `DEPLOY_HOST` | the public IP of the instance |
-| `DEPLOY_USER` | `ubuntu` |
 | `DEPLOY_SSH_KEY` | the content of the `.pem` file |
-| `DEPLOY_PATH` | `/opt/assetflow` |
 | `GHCR_TOKEN` | the access key of the deploy user |
+
+Why the host is a *variable* and not a secret: the deployment waits until
+`DEPLOY_HOST` exists (`if: vars.DEPLOY_HOST != ''`), and a job condition may
+only read the `vars` context — not `secrets`. Until the variable is set, the
+deployment is skipped instead of failing.
+
+> The image is pushed with the built-in `GITHUB_TOKEN` (`packages: write`),
+> so `GHCR_TOKEN` is only needed for a registry outside GitHub.
 
 ## 7. The verification (5 minutes)
 
