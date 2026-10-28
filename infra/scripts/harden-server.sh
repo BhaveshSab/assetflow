@@ -13,10 +13,15 @@
 #
 # Exit codes: 0 = ok, 1 = error
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
-[ "$(id -u)" -eq 0 ] || die "this script needs root (run it with sudo)"
+if [ "$(id -u)" -ne 0 ]; then
+    # A dry run changes nothing, so it does not need root.
+    [ "$DRY_RUN" = true ] || die "this script needs root (run it with sudo)"
+    warn "not running as root — the dry run only prints what would change"
+fi
 
 say "=== hardening the server ==="
 

@@ -16,6 +16,7 @@
 #
 # Exit codes: 0 = deployed, 1 = the deployment failed (and was rolled back)
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 

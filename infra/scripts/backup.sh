@@ -24,6 +24,7 @@
 #
 # Exit codes: 0 = backup created, 1 = error, 2 = wrong usage
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
@@ -37,7 +38,11 @@ CHECKSUM_FILE="${DUMP_FILE}.sha256"
 say "=== AssetFlow backup ${STAMP} ==="
 say "destination: ${S3_BUCKET:-<unset>}/${S3_PREFIX}"
 
-mkdir -p "$BACKUP_DIR"
+if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] mkdir -p ${BACKUP_DIR}"
+else
+    mkdir -p "$BACKUP_DIR"
+fi
 
 # 1. The dump ---------------------------------------------------------------
 # --format=custom (Fc) is compressed, restorable with pg_restore and can be

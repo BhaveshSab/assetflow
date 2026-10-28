@@ -15,6 +15,7 @@
 #
 # Exit codes: 0 = ok, 1 = error
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
@@ -27,13 +28,13 @@ while [ $# -gt 0 ]; do
         --domain) DOMAIN="$2"; shift ;;
         --email) EMAIL="$2"; shift ;;
         --self-signed) SELF_SIGNED=true ;;
+        --dry-run|--help|-h) : ;;
         *) die "unknown argument: $1" ;;
     esac
     shift
 done
 
 CERT_DIR="${CERT_DIR:-/etc/letsencrypt/live/assetflow}"
-HTTP_PORT="${HTTP_PORT:-80}"
 
 if [ "$SELF_SIGNED" = true ] || [ -z "$DOMAIN" ]; then
     say "=== creating a self-signed certificate ==="

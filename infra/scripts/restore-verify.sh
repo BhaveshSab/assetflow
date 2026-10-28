@@ -18,6 +18,7 @@
 #
 # Exit codes: 0 = the restore worked, 1 = it did not
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
@@ -26,6 +27,7 @@ DUMP_FILE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --from) DUMP_FILE="$2"; shift ;;
+        --dry-run|--help|-h) : ;;
         *) die "unknown argument: $1" ;;
     esac
     shift
@@ -34,6 +36,15 @@ done
 if [ -z "$DUMP_FILE" ]; then
     # The newest dump wins.
     DUMP_FILE="$(ls -1t "${BACKUP_DIR}"/assetflow-*.dump 2>/dev/null | head -1 || true)"
+fi
+
+if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] the newest dump of ${BACKUP_DIR} would be restored into a throwaway container"
+    say "[dry-run] docker run --rm -d --name assetflow-restore-test -e POSTGRES_PASSWORD=… postgres:16-alpine"
+    say "[dry-run] pg_restore --clean --if-exists --dbname postgres <the dump>"
+    say "[dry-run] the row counts would be compared with the live database"
+    say "[dry-run] the container would be deleted and the RTO written to a metric"
+    exit 0
 fi
 
 [ -n "$DUMP_FILE" ] || die "no dump found in ${BACKUP_DIR} — run backup.sh first"

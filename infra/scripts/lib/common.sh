@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+#
 # Shared helpers for the AssetFlow operations scripts.
 #
 # Sourced by every script in this directory:
@@ -31,7 +33,9 @@ init_script() {
         case "$1" in
             --dry-run) DRY_RUN=true ;;
             --help|-h) usage ;;
-            *) die "unknown argument: $1" ;;
+            # The calling script parses its own arguments — an unknown one is
+            # reported there, not here.
+            *) : ;;
         esac
         shift
     done
@@ -48,17 +52,9 @@ init_script() {
 # Writes a line to stdout *and* to the log file.
 say() {
     printf '%s\n' "$*"
-    [ -n "${LOG_FILE:-}" ] && printf '%s\n' "$*" >> "$LOG_FILE" || true
-}
-
-# Runs a command, or only prints it in dry-run mode.
-run() {
-    if [ "$DRY_RUN" = true ]; then
-        say "[dry-run] $*"
-        return 0
+    if [ -n "${LOG_FILE:-}" ]; then
+        printf '%s\n' "$*" >> "$LOG_FILE"
     fi
-    say "+ $*"
-    "$@"
 }
 
 # The directory of the repository (two levels up from this file).
@@ -85,11 +81,6 @@ compose_local() {
             -f "$INFRA_DIR/docker-compose.yml" \
             -f "$INFRA_DIR/docker-compose.local.yml" "$@"
     fi
-}
-
-# The database container name (the compose service name + the project name).
-db_container() {
-    compose ps --services --filter status=running 2>/dev/null | grep -x postgres || true
 }
 
 # Writes a metric for the node_exporter textfile collector.

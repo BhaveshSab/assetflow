@@ -18,6 +18,7 @@
 #
 # Exit codes: 0 = ok, 1 = error, 2 = wrong usage
 set -euo pipefail
+# shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 init_script "$@"
 
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
         --table) TABLE="$2"; shift ;;
         --older-than) OLDER_THAN_DAYS="$2"; shift ;;
         --apply) APPLY=true ;;
+        --dry-run|--help|-h) : ;;
         *) die "unknown argument: $1" ;;
     esac
     shift
@@ -55,7 +57,11 @@ STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 OUT_FILE="${DEST_DIR}/${TABLE}-${STAMP}.ndjson.gz"
 MANIFEST_FILE="${OUT_FILE}.manifest.json"
 
-mkdir -p "$DEST_DIR"
+if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] mkdir -p ${DEST_DIR}"
+else
+    mkdir -p "$DEST_DIR"
+fi
 
 # 1. The export -------------------------------------------------------------
 # json_agg turns every row into one JSON object per line; gzip keeps the
