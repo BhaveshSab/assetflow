@@ -102,12 +102,13 @@ else
     find "$BACKUP_DIR" -name 'assetflow-*.dump*' -type f -mtime "+${RETENTION_DAYS}" -delete
 fi
 
-if [ -n "${S3_BUCKET:-}" ] && [ "$DRY_RUN" != true ]; then
-    say "pruning S3 backups older than ${RETENTION_DAYS} days"
-    # --keep-days is only available on the S3 sync commands.
-    aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}/" "$BACKUP_DIR/s3-sync" \
-        --keep-days "$RETENTION_DAYS" --only-show-errors || \
-        warn "the S3 retention pass failed — check the IAM policy"
+if [ -n "${S3_BUCKET:-}" ]; then
+    # The S3 side is pruned by the bucket's lifecycle rule (30 days to
+    # Glacier Instant Retrieval, expire at 365), not by this script. Two
+    # reasons: `aws s3 sync` has no age filter (`--keep-days` does not
+    # exist), and a client-side sweep needs delete rights a backup writer
+    # should not have. Lifecycle runs even if this host never wakes up.
+    say "S3 retention: enforced by the bucket lifecycle rule (see infra/README.md)"
 fi
 
 # 5. The metric -------------------------------------------------------------
