@@ -1,0 +1,21 @@
+# Never send secrets or local state to the Docker daemon.
+.git
+.gitignore
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+.env
+**/.env
+**/.env.*
+!**/.env.example
+infra/certs
+infra/certbot-www
+infra/textfile
+docs
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+*.tsbuildinfo
