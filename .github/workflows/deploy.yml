@@ -29,8 +29,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # The build cache of the images is kept in the GitHub Actions cache.
+      actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Log in to the container registry
         uses: docker/login-action@v3
@@ -40,7 +42,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push the API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/docker/Dockerfile.api
