@@ -6,6 +6,10 @@
 >
 > The commands are the ones in this repository — an interviewer can run them
 > too.
+>
+> The resume wording itself, five bullets built from these rows, is in
+> [RESUME_BULLETS](./RESUME_BULLETS.md) — together with the claims that must
+> **not** be made yet.
 
 **The measured host:** AWS EC2 `t3.micro` in `ap-southeast-2` (Sydney), account
 `459252806274`, instance tag `assetflow-s3-service`, Ubuntu, `3.107.83.86`,
