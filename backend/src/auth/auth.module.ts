@@ -3,10 +3,18 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { RedisService } from '../common/redis/redis.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
-import { LoginThrottleService } from './login-throttle.service';
+import {
+  InMemoryLoginAttemptStore,
+  RedisLoginAttemptStore,
+} from './login-throttle.store';
+import {
+  LOGIN_ATTEMPT_STORE,
+  LoginThrottleService,
+} from './login-throttle.service';
 
 @Module({
   imports: [
@@ -26,7 +34,22 @@ import { LoginThrottleService } from './login-throttle.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, LoginThrottleService],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    LoginThrottleService,
+    {
+      // The sign-in counters live in Redis when `REDIS_URL` is configured
+      // (shared by every instance, survives a restart); otherwise they stay
+      // in the process, exactly as before.
+      provide: LOGIN_ATTEMPT_STORE,
+      useFactory: (redis: RedisService) =>
+        redis.enabled
+          ? new RedisLoginAttemptStore(redis)
+          : new InMemoryLoginAttemptStore(),
+      inject: [RedisService],
+    },
+  ],
   exports: [AuthService],
 })
 export class AuthModule {}

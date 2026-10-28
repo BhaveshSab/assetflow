@@ -162,7 +162,9 @@ State machine: `PENDING → APPROVED/REJECTED → TECHNICIAN_ASSIGNED → IN_PRO
 | Method | Path | Roles | Notes |
 |---|---|---|---|
 | GET | `/api` | public | → `Hello World!` (service health). |
-| GET | `/health` | public | → `{ status, database, timestamp, startupError?, databaseError? }`. `status` is `ok` when everything works and `degraded` when the environment or the database is broken. Never rate-limited, never blocked by the startup guard — this is the route you check when a deployment misbehaves. |
+| GET | `/health` | public | → `{ status, database, rateLimitStore, redis, timestamp, startupError?, databaseError? }`. `status` is `ok` when everything works and `degraded` when the environment or the database is broken. Never rate-limited, never blocked by the startup guard — this is the route you check when a deployment misbehaves. |
+| GET | `/health/ready` | public | → `{ status: "ready" \| "not-ready", database, … }` — the readiness probe of the container/load balancer: `200` when the database answers, `503` when it does not. |
+| GET | `/metrics` | public (only when `METRICS_ENABLED=true`) | the Prometheus exposition format (`assetflow_http_requests_total`, `assetflow_http_request_duration_seconds`, `assetflow_throttle_store_degraded`, …). Disabled by default — it exposes the request rates. |
 
 ```jsonc
 // GET /api/health  →  200
@@ -181,6 +183,12 @@ State machine: `PENDING → APPROVED/REJECTED → TECHNICIAN_ASSIGNED → IN_PRO
   "timestamp": "2026-10-22T09:41:07.318Z"
 }
 ```
+
+### Headers
+
+Every response carries an `x-request-id` — the one from the request when it
+was sent, a generated UUID otherwise. It appears in the log line of that
+request, which is how a user report is traced through the system.
 
 ### Degraded deployments (503)
 

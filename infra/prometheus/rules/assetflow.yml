@@ -1,0 +1,134 @@
+# The alert rules.
+#
+# Every rule answers a question an on-call engineer would ask:
+#   "Is the API up?  Are users getting errors?  Is it slow?  Is the disk
+#    full?  Is the database gone?  Is the backup still running?  Did the
+#    shared rate-limit store break?"
+#
+# The thresholds are deliberately conservative for a student project: a false
+# alarm at 3 AM is worse than a slightly late detection.
+
+groups:
+  - name: assetflow-api
+    rules:
+      - alert: AssetflowApiDown
+        expr: up{job="assetflow-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The AssetFlow API does not answer"
+          description: "Prometheus has been unable to scrape {{ $labels.instance }} for 2 minutes. The API is either down or the deployment failed."
+          runbook: "docs/RUNBOOK.md#api-down"
+
+      - alert: AssetflowHighErrorRate
+        expr: |
+          sum(rate(assetflow_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(assetflow_http_requests_total[5m])), 0.001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5% of the requests fail with a 5xx"
+          description: "The error ratio has been above 5% for 10 minutes. Check the API logs for the failing routes."
+          runbook: "docs/RUNBOOK.md#many-5xx-errors"
+
+      - alert: AssetflowHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(assetflow_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The 95th percentile of the API latency is above one second"
+          description: "p95 is {{ $value }}s. Check the database (slow query?) and the host (CPU, IO)."
+
+  - name: assetflow-host
+    rules:
+      - alert: HostDiskAlmostFull
+        expr: |
+          (
+            1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+                 / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The disk of {{ $labels.mountpoint }} is more than 85% full"
+          description: "Only {{ $value | humanizePercentage }} of free space is left. Docker images and log files are the usual suspects."
+          runbook: "docs/RUNBOOK.md#disk-full"
+
+      - alert: HostDiskFull
+        expr: |
+          (
+            1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+                 / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+          ) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The disk of {{ $labels.mountpoint }} is almost full"
+          description: "The host is about to stop writing — the database and the API will fail."
+
+      - alert: HostMemoryPressure
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The host uses more than 90% of its memory"
+
+      - alert: HostCpuSaturated
+        expr: |
+          1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The host CPU has been above 90% for 15 minutes"
+
+  - name: assetflow-data
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is not reachable"
+          description: "Every API request that touches the database is failing."
+          runbook: "docs/RUNBOOK.md#database-down"
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The database has more than 80 open connections"
+
+      - alert: BackupTooOld
+        expr: assetflow_backup_last_success_timestamp_seconds < (time() - 26 * 3600)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The last successful backup is older than 26 hours"
+          description: "The nightly backup has not completed. Without it a restore would lose a day of data."
+          runbook: "docs/RUNBOOK.md#backup-failed"
+
+      - alert: ThrottleStoreDegraded
+        expr: assetflow_throttle_store_degraded == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The shared rate-limit store (Redis) is unavailable"
+          description: "The API falls back to the per-process limiter — the limit is no longer global."

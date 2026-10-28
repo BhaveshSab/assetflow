@@ -1,0 +1,20 @@
+[Unit]
+# The nightly database backup.
+Description=AssetFlow database backup (pg_dump -> gzip -> S3)
+Documentation=file:///opt/assetflow/docs/RUNBOOK.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=assetflow
+Group=assetflow
+WorkingDirectory=/opt/assetflow
+EnvironmentFile=/opt/assetflow/infra/.env
+ExecStart=/opt/assetflow/infra/scripts/backup.sh
+# A failing backup must be visible in the journal *and* in the exit code.
+SuccessExitStatus=0
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

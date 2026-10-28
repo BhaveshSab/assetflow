@@ -37,7 +37,7 @@ export async function resetDatabase(app: INestApplication) {
 
   // The brute-force counter is in-process — clear it between tests so one
   // suite cannot lock another one out.
-  app.get(LoginThrottleService).reset();
+  await app.get(LoginThrottleService).reset();
 }
 
 export type TestUser = {

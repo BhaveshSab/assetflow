@@ -1,0 +1,122 @@
+# The continuous integration of AssetFlow.
+#
+# Every pull request runs the same checks as the main branch:
+#   backend  → lint, unit tests, e2e tests, build
+#   frontend → type check, unit tests, build
+#   infra    → shellcheck of the operations scripts, the container images
+#
+# The e2e suite needs no database server: it starts an embedded Postgres
+# (PGlite) inside the job.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, unit, e2e, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install the dependencies
+        run: npm ci
+
+      - name: Generate the Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint -- --no-fix
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (type check, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  infra:
+    name: Infrastructure (shellcheck, images)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the shell scripts
+        uses: ludeeus/action-shellcheck@stable
+        with:
+          scandir: infra/scripts
+          additional_files: 'infra/scripts/lib/common.sh'
+          severity: warning
+
+      - name: Check the compose files
+        run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: Check the compose files (local override)
+        run: |
+          docker compose -f infra/docker-compose.yml \
+                         -f infra/docker-compose.local.yml config --quiet
+
+      - name: Build the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          target: runtime
+          push: false
+          tags: assetflow-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.nginx
+          push: false
+          tags: assetflow-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

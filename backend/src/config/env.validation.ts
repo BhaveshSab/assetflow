@@ -28,6 +28,10 @@ export type AppEnv = {
   THROTTLE_LIMIT: number;
   AUTH_THROTTLE_TTL: number;
   AUTH_THROTTLE_LIMIT: number;
+  /** Optional Redis connection string — enables the shared rate-limit store. */
+  REDIS_URL?: string;
+  /** Whether `GET /api/metrics` is enabled. */
+  METRICS_ENABLED: boolean;
 };
 
 const DEFAULTS = {
@@ -40,6 +44,7 @@ const DEFAULTS = {
   THROTTLE_LIMIT: 300,
   AUTH_THROTTLE_TTL: 15 * 60_000,
   AUTH_THROTTLE_LIMIT: 10,
+  METRICS_ENABLED: false,
 } as const;
 
 /** Minimal secret that must NOT be used outside local development. */
@@ -77,6 +82,18 @@ function asInt(
 }
 
 /**
+ * Booleans arrive as the strings `"true"` / `"false"` (or `"1"` / `"0"`).
+ */
+function asBoolean(value: unknown, fallback: boolean, name: string): boolean {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const raw = asString(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(raw)) return true;
+  if (['false', '0', 'no', 'off'].includes(raw)) return false;
+  throw new Error(`${name} must be "true" or "false" (received "${raw}").`);
+}
+
+/**
  * `ConfigModule.forRoot({ validate })` hook.
  *
  * @throws Error with an actionable message when the environment is unusable.
@@ -109,6 +126,22 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
   }
 
   const port = asInt(raw.PORT, DEFAULTS.PORT, 'PORT', 1, 65_535);
+
+  // Optional: the shared store for the rate-limit counters. When it is set
+  // the limits are global (all instances/replicas share them) instead of
+  // per-process.
+  const redisUrl = asString(raw.REDIS_URL).trim();
+  if (redisUrl && !/^rediss?:\/\//i.test(redisUrl)) {
+    throw new Error(
+      'REDIS_URL must be a redis:// or rediss:// connection string.',
+    );
+  }
+
+  const metricsEnabled = asBoolean(
+    raw.METRICS_ENABLED,
+    DEFAULTS.METRICS_ENABLED,
+    'METRICS_ENABLED',
+  );
 
   return {
     NODE_ENV: nodeEnv,
@@ -153,6 +186,8 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
       1,
       1_000_000,
     ),
+    ...(redisUrl ? { REDIS_URL: redisUrl } : {}),
+    METRICS_ENABLED: metricsEnabled,
   };
 }
 

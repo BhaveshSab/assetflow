@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 
+import { InMemoryLoginAttemptStore } from './login-throttle.store';
 import {
   LoginThrottleService,
   TooManyRequestsException,
@@ -24,65 +25,88 @@ describe('LoginThrottleService', () => {
     delete process.env.AUTH_THROTTLE_TTL;
   });
 
-  it('blocks the key after the configured number of failures', () => {
-    const service = new LoginThrottleService(config({}));
+  it('blocks the key after the configured number of failures', async () => {
+    const service = new LoginThrottleService(
+      config({}),
+      new InMemoryLoginAttemptStore(),
+    );
     const key = 'ada@example.com|1.2.3.4';
 
-    service.recordFailure(key);
-    service.recordFailure(key);
-    expect(() => service.assertNotBlocked(key)).not.toThrow();
+    await service.recordFailure(key);
+    await service.recordFailure(key);
+    await expect(service.assertNotBlocked(key)).resolves.toBeUndefined();
 
-    service.recordFailure(key);
-    expect(() => service.assertNotBlocked(key)).toThrow(
+    await service.recordFailure(key);
+    await expect(service.assertNotBlocked(key)).rejects.toThrow(
       TooManyRequestsException,
     );
   });
 
-  it('keeps different keys independent', () => {
-    const service = new LoginThrottleService(config({}));
-    service.recordFailure('a@example.com|1.1.1.1');
-    service.recordFailure('a@example.com|1.1.1.1');
-    service.recordFailure('a@example.com|1.1.1.1');
+  it('keeps different keys independent', async () => {
+    const service = new LoginThrottleService(
+      config({}),
+      new InMemoryLoginAttemptStore(),
+    );
+    await service.recordFailure('a@example.com|1.1.1.1');
+    await service.recordFailure('a@example.com|1.1.1.1');
+    await service.recordFailure('a@example.com|1.1.1.1');
 
-    expect(() => service.assertNotBlocked('a@example.com|1.1.1.1')).toThrow();
-    expect(() =>
+    await expect(
+      service.assertNotBlocked('a@example.com|1.1.1.1'),
+    ).rejects.toThrow();
+    await expect(
       service.assertNotBlocked('b@example.com|1.1.1.1'),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('clears the counter after a successful sign-in', () => {
-    const service = new LoginThrottleService(config({}));
+  it('clears the counter after a successful sign-in', async () => {
+    const service = new LoginThrottleService(
+      config({}),
+      new InMemoryLoginAttemptStore(),
+    );
     const key = 'ada@example.com|1.2.3.4';
 
-    service.recordFailure(key);
-    service.recordFailure(key);
-    service.recordSuccess(key);
-    service.recordFailure(key);
+    await service.recordFailure(key);
+    await service.recordFailure(key);
+    await service.recordSuccess(key);
+    await service.recordFailure(key);
 
-    expect(() => service.assertNotBlocked(key)).not.toThrow();
+    await expect(service.assertNotBlocked(key)).resolves.toBeUndefined();
   });
 
-  it('resets every key', () => {
-    const service = new LoginThrottleService(config({}));
+  it('resets every key', async () => {
+    const service = new LoginThrottleService(
+      config({}),
+      new InMemoryLoginAttemptStore(),
+    );
     const key = 'ada@example.com|1.2.3.4';
-    service.recordFailure(key);
-    service.recordFailure(key);
-    service.recordFailure(key);
-    expect(() => service.assertNotBlocked(key)).toThrow();
+    await service.recordFailure(key);
+    await service.recordFailure(key);
+    await service.recordFailure(key);
+    await expect(service.assertNotBlocked(key)).rejects.toThrow();
 
-    service.reset();
-    expect(() => service.assertNotBlocked(key)).not.toThrow();
+    await service.reset();
+    await expect(service.assertNotBlocked(key)).resolves.toBeUndefined();
   });
 
-  it('honours the configured limit', () => {
+  it('honours the configured limit', async () => {
     // process.env wins over the injected config, so clear it for this case.
     delete process.env.AUTH_THROTTLE_LIMIT;
     const service = new LoginThrottleService(
       config({ AUTH_THROTTLE_LIMIT: 1 }),
+      new InMemoryLoginAttemptStore(),
     );
     const key = 'ada@example.com|1.2.3.4';
 
-    service.recordFailure(key);
-    expect(() => service.assertNotBlocked(key)).toThrow();
+    await service.recordFailure(key);
+    await expect(service.assertNotBlocked(key)).rejects.toThrow();
+  });
+
+  it('reports which store it uses', () => {
+    const memory = new LoginThrottleService(
+      config({}),
+      new InMemoryLoginAttemptStore(),
+    );
+    expect(memory.kind).toBe('memory');
   });
 });

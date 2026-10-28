@@ -1,0 +1,47 @@
+# The laptop demo — an override of docker-compose.yml.
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.local.yml up -d --build
+#
+# It opens the ports that are only reachable through an SSH tunnel on a real
+# server, and it removes the resource limits (a laptop is not a server).
+
+services:
+  api:
+    ports:
+      - "4000:4000"
+    deploy:
+      resources:
+        limits: {}
+
+  nginx:
+    ports:
+      - "8080:80"
+      - "8443:443"
+
+  prometheus:
+    ports:
+      - "9090:9090"
+    deploy:
+      resources:
+        limits: {}
+
+  alertmanager:
+    ports:
+      - "9093:9093"
+
+  grafana:
+    ports:
+      - "3001:3000"
+    deploy:
+      resources:
+        limits: {}
+
+  postgres:
+    deploy:
+      resources:
+        limits: {}
+
+  redis:
+    deploy:
+      resources:
+        limits: {}

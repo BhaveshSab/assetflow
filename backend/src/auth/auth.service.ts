@@ -74,7 +74,7 @@ export class AuthService {
     const throttleKey = `${email}|${clientIp}`;
 
     // Refuse early when this account/IP pair is currently blocked.
-    this.throttle.assertNotBlocked(throttleKey);
+    await this.throttle.assertNotBlocked(throttleKey);
 
     const user = await this.prisma.user.findFirst({
       where: { email: { equals: email, mode: 'insensitive' } },
@@ -89,15 +89,15 @@ export class AuthService {
 
     // Same error whether the email is unknown or the password is wrong.
     if (!user || !passwordMatches) {
-      this.throttle.recordFailure(throttleKey);
+      await this.throttle.recordFailure(throttleKey);
       throw new UnauthorizedException('Invalid email or password');
     }
     if (user.status === RecordStatus.INACTIVE) {
-      this.throttle.recordFailure(throttleKey);
+      await this.throttle.recordFailure(throttleKey);
       throw new UnauthorizedException('This account is deactivated');
     }
 
-    this.throttle.recordSuccess(throttleKey);
+    await this.throttle.recordSuccess(throttleKey);
     return this.buildAuthResponse(user);
   }
 

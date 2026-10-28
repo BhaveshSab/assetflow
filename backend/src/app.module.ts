@@ -1,20 +1,29 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
-import { StartupGuard } from './common/guards/startup.guard';
-import { AppService } from './app.service';
 import { ActivityModule } from './activity/activity.module';
 import { AllocationsModule } from './allocations/allocations.module';
 import { AssetsModule } from './assets/assets.module';
 import { AuditsModule } from './audits/audits.module';
-import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { StartupGuard } from './common/guards/startup.guard';
+import { RequestContextMiddleware } from './common/http/request-context.middleware';
+import { RedisModule } from './common/redis/redis.module';
+import { RedisThrottlerStorage } from './common/rate-limit/redis-throttler.storage';
+import { AppService } from './app.service';
+import { HealthModule } from './health/health.module';
 import { safeValidateEnv } from './config/env.validation';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrgModule } from './org/org.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -28,18 +37,27 @@ import { ReportsModule } from './reports/reports.module';
     // killing the process during import.
     ConfigModule.forRoot({ isGlobal: true, validate: safeValidateEnv }),
     PrismaModule,
+    // The optional shared store for the rate-limit counters (Redis).
+    RedisModule,
+    // Prometheus metrics (GET /api/metrics, disabled unless enabled).
+    MetricsModule,
     // Global per-IP rate limiting. Configured through the environment so a
     // deployment (or the test-suite) can tune it without a code change.
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => [
-        {
-          name: 'default',
-          ttl: config.get<number>('THROTTLE_TTL') ?? 60_000,
-          limit: config.get<number>('THROTTLE_LIMIT') ?? 300,
-        },
-      ],
+      inject: [ConfigService, RedisThrottlerStorage],
+      useFactory: (config: ConfigService, storage: RedisThrottlerStorage) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: config.get<number>('THROTTLE_TTL') ?? 60_000,
+            limit: config.get<number>('THROTTLE_LIMIT') ?? 300,
+          },
+        ],
+        // The counters are shared through Redis when `REDIS_URL` is set;
+        // the storage falls back to the in-process counters when it is not.
+        storage,
+      }),
     }),
     // Cross-cutting, @Global — available to every feature module.
     ActivityModule,
@@ -66,4 +84,12 @@ import { ReportsModule } from './reports/reports.module';
     { provide: APP_GUARD, useClass: StartupGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // Every request gets an id, is measured and produces one JSON log line.
+    consumer
+      .apply(RequestContextMiddleware)
+      .exclude({ path: 'health', method: RequestMethod.GET })
+      .forRoutes('*');
+  }
+}

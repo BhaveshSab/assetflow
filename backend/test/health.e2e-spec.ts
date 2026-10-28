@@ -56,6 +56,25 @@ describe('Health (e2e)', () => {
     expect(health.body.startupError).toMatch(/JWT_SECRET/);
   });
 
+  it('reports readiness for the container probe', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/health/ready')
+      .expect(200);
+
+    expect(res.body.status).toBe('ready');
+    expect(res.body.database).toBe('up');
+  });
+
+  it('reports which rate-limit store is in use', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/health')
+      .expect(200);
+
+    // Without REDIS_URL the counters stay in the process.
+    expect(res.body.rateLimitStore).toBe('memory');
+    expect(res.body.redis).toBe('disabled');
+  });
+
   it('does not block the health route when everything is fine', async () => {
     const res = await request(app.getHttpServer())
       .get('/api/health')

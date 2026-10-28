@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 
 import { AppModule } from './app.module';
 import { normalizeUrl } from './common/http/normalize-url';
+import { JsonLogger } from './common/logging/json-logger';
 import { configureApp } from './configure-app';
 
 /**
@@ -17,7 +18,7 @@ type ExpressApp = (req: Request, res: Response) => void;
 let cached: Promise<ExpressApp> | undefined;
 
 async function createApp(): Promise<ExpressApp> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { logger: new JsonLogger() });
   configureApp(app);
   await app.init();
   return app.getHttpAdapter().getInstance() as ExpressApp;

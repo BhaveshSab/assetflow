@@ -46,6 +46,8 @@ curl http://localhost:4000/api/health   # → { "status": "ok", "database": "up"
 | `THROTTLE_LIMIT` | `300` | global limiter requests / IP / window |
 | `AUTH_THROTTLE_TTL` | `900000` | sign-in limiter window (ms) |
 | `AUTH_THROTTLE_LIMIT` | `10` | failed sign-ins before the account is blocked |
+| `REDIS_URL` | — | optional — `redis://[:password@]host:6379`; when set, the rate-limit counters are **shared** by every instance and survive a restart |
+| `METRICS_ENABLED` | `false` | exposes `GET /api/metrics` (Prometheus) — keep it off on a public deployment |
 
 The environment is validated by [`src/config/env.validation.ts`](./src/config/env.validation.ts)
 at boot. A missing `DATABASE_URL` or a placeholder `JWT_SECRET` in production
@@ -94,8 +96,8 @@ npm run seed              # idempotent demo data
 ## 🧪 Tests
 
 ```bash
-npm run test:unit    # 45 checks — no database needed
-npm run test:e2e     # 105 checks — real Postgres (embedded), full HTTP stack
+npm run test:unit    # 55 checks — no database needed
+npm run test:e2e     # 111 checks — real Postgres (embedded), full HTTP stack
 npm run test:all     # both
 npm run lint         # ESLint + Prettier (src/ and test/)
 npm run build        # tsc → dist/
@@ -119,7 +121,8 @@ migration and injects a test environment. No Docker, no cloud database.
 | `notifications.e2e-spec.ts` | inbox, read state, pings |
 | `scoping.e2e-spec.ts` | row-level scoping + asset/allocation consistency |
 | `app.e2e-spec.ts` | health route, security headers, 404 shape |
-| `health.e2e-spec.ts` | public `GET /api/health`, 503 on an invalid environment |
+| `health.e2e-spec.ts` | public `GET /api/health` + `/api/health/ready`, 503 on an invalid environment |
+| `observability.e2e-spec.ts` | the request id, the structured logs, the Prometheus endpoint |
 
 ---
 
@@ -160,6 +163,26 @@ backend/
 | Neon WebSocket handshake fails | a pooled URL was used with the WebSocket driver | use the direct `*.neon.tech` URL, or keep the pooled URL — the driver is now chosen automatically |
 | `CORS` errors in the browser | `CORS_ORIGINS` misses the frontend origin | add it (no trailing slash) and redeploy |
 | `Query Engine could not be located` | the Prisma client was not generated | `npm run prisma:generate` — Vercel does this in `npm run vercel-build` |
+
+---
+
+## 📈 Observability & the shared rate limiter
+
+| Piece | What it does |
+|-------|--------------|
+| `GET /api/metrics` | the Prometheus endpoint — request counter, duration histogram, the state of the shared store. Disabled unless `METRICS_ENABLED=true` |
+| `RequestContextMiddleware` | gives every request an id (`x-request-id`, taken from the incoming header when there is one), measures it and writes **one JSON object per line** to the log |
+| `JsonLogger` | the same format for the logs of Nest itself |
+| `RedisThrottlerStorage` | keeps the rate-limit counters in Redis, so the limit is **global** instead of per process |
+| `RedisLoginAttemptStore` | keeps the failed-sign-in counters in Redis — without it a restart (or a new serverless instance) resets the brute-force protection |
+
+Both stores **fail open to the in-process counter** when Redis is
+unreachable: the API keeps serving, and the degradation is reported through
+`GET /api/health` (`redis: "down"`) and the
+`assetflow_throttle_store_degraded` metric.
+
+The self-hosted deployment of all of this lives in [`../infra`](../infra) and
+is documented in [`../docs`](../docs).
 
 ---
 
