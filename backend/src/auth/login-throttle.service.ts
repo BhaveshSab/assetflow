@@ -1,5 +1,8 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
+import type { LoginAttemptStore } from './login-throttle.store';
+import { InMemoryLoginAttemptStore } from './login-throttle.store';
 
 /** 429 — Nest has no dedicated class for it, so build one explicitly. */
 export class TooManyRequestsException extends HttpException {
@@ -8,14 +11,8 @@ export class TooManyRequestsException extends HttpException {
   }
 }
 
-type AttemptRecord = {
-  failures: number;
-  firstFailureAt: number;
-  blockedUntil: number;
-};
-
-/** Hard cap so a flood of unique keys can never grow the map without bound. */
-const MAX_TRACKED_KEYS = 10_000;
+/** Injection token for the store that keeps the failed-sign-in counters. */
+export const LOGIN_ATTEMPT_STORE = 'LOGIN_ATTEMPT_STORE';
 
 /**
  * Per-account brute-force protection for the sign-in endpoint.
@@ -24,66 +21,52 @@ const MAX_TRACKED_KEYS = 10_000;
  * further attempts once the limit is reached. A successful sign-in clears the
  * counter.
  *
- * The store is in-process (per instance). On a serverless deployment each
- * instance keeps its own counters, which is a known trade-off — it still
- * blocks a single brute-force run, it just does not synchronise across
- * instances. The global per-IP throttle (see `AppModule`) covers that case.
+ * The counters live in a {@link LoginAttemptStore}: the in-process map by
+ * default, Redis when `REDIS_URL` is configured. The Redis store is what
+ * makes the protection meaningful behind several instances or after a
+ * restart — see `login-throttle.store.ts`.
  */
 @Injectable()
 export class LoginThrottleService {
-  private readonly attempts = new Map<string, AttemptRecord>();
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(LOGIN_ATTEMPT_STORE)
+    private readonly store: LoginAttemptStore = new InMemoryLoginAttemptStore(),
+  ) {}
 
-  constructor(private readonly config: ConfigService) {}
+  /** Which store is in use (`memory` or `redis`). */
+  get kind(): 'memory' | 'redis' {
+    return this.store.kind;
+  }
 
   /** Throws 429 when the key is currently blocked. */
-  assertNotBlocked(key: string): void {
-    const record = this.attempts.get(key);
-    if (!record) return;
+  async assertNotBlocked(key: string): Promise<void> {
+    const blockedForMs = await this.store.isBlocked(key);
+    if (blockedForMs <= 0) return;
 
-    const now = Date.now();
-    if (record.blockedUntil > now) {
-      const seconds = Math.ceil((record.blockedUntil - now) / 1000);
-      throw new TooManyRequestsException(
-        `Too many failed sign-in attempts. Please try again in ${seconds} second(s).`,
-      );
-    }
-    // The block expired — start a fresh window on the next failure.
-    if (record.blockedUntil !== 0 && now >= record.blockedUntil) {
-      this.attempts.delete(key);
-    }
+    const seconds = Math.ceil(blockedForMs / 1000);
+    throw new TooManyRequestsException(
+      `Too many failed sign-in attempts. Please try again in ${seconds} second(s).`,
+    );
   }
 
   /** Register a failed attempt; blocks the key once the limit is exceeded. */
-  recordFailure(key: string): void {
-    const now = Date.now();
-    const ttl = this.limitWindowMs();
-    const limit = this.maxFailures();
-
-    const record = this.attempts.get(key);
-    if (!record || now - record.firstFailureAt > ttl) {
-      this.pruneIfNeeded();
-      this.attempts.set(key, {
-        failures: 1,
-        firstFailureAt: now,
-        blockedUntil: limit <= 1 ? now + ttl : 0,
-      });
-      return;
-    }
-
-    record.failures += 1;
-    if (record.failures >= limit) {
-      record.blockedUntil = now + ttl;
-    }
+  async recordFailure(key: string): Promise<void> {
+    await this.store.recordFailure(
+      key,
+      this.maxFailures(),
+      this.limitWindowMs(),
+    );
   }
 
   /** A successful sign-in wipes the counter for that key. */
-  recordSuccess(key: string): void {
-    this.attempts.delete(key);
+  async recordSuccess(key: string): Promise<void> {
+    await this.store.recordSuccess(key);
   }
 
   /** Test helper — drops every tracked key. */
-  reset(): void {
-    this.attempts.clear();
+  async reset(): Promise<void> {
+    await this.store.reset();
   }
 
   private maxFailures(): number {
@@ -105,20 +88,5 @@ export class LoginThrottleService {
     const raw = process.env[key] ?? this.config.get<string>(key) ?? undefined;
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-  }
-
-  /** Keeps the map bounded — drops the oldest entries when it grows too big. */
-  private pruneIfNeeded(): void {
-    if (this.attempts.size < MAX_TRACKED_KEYS) return;
-    const now = Date.now();
-    for (const [key, record] of this.attempts) {
-      if (record.blockedUntil <= now) this.attempts.delete(key);
-    }
-    // Still too big (all entries are blocked): drop the oldest ones.
-    while (this.attempts.size >= MAX_TRACKED_KEYS) {
-      const oldest = this.attempts.keys().next();
-      if (oldest.done) break;
-      this.attempts.delete(oldest.value);
-    }
   }
 }

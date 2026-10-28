@@ -32,6 +32,7 @@ resource an organisation owns — from one laptop to a thousand.
 - [Testing](#-testing)
 - [Security model](#-security-model)
 - [Deploying to Vercel](#-deploying-to-vercel)
+- [Self-hosted infrastructure](#-self-hosted-infrastructure)
 - [Project layout](#-project-layout)
 - [Troubleshooting](#-troubleshooting)
 
@@ -215,6 +216,8 @@ All backend variables are **validated at boot**
 | `THROTTLE_LIMIT` | number | `300` | no | Requests per IP per window across **all** routes. |
 | `AUTH_THROTTLE_TTL` | number (ms) | `900000` | no | Window of the sign-in brute-force limiter. |
 | `AUTH_THROTTLE_LIMIT` | number | `10` | no | Failed sign-ins per account+IP before the account is blocked. |
+| `REDIS_URL` | string | — | no | `redis://[:password@]host:6379` — when it is set, the rate-limit counters (and the failed-sign-in counters) are **shared** by every instance and survive a restart. Without it they live in the process. |
+| `METRICS_ENABLED` | boolean | `false` | no | Exposes `GET /api/metrics` (the Prometheus endpoint). Keep it off on a public deployment — the self-hosted stack turns it on and lets only the internal Nginx reach it. |
 
 <details>
 <summary>🔎 Ports at a glance</summary>
@@ -276,7 +279,7 @@ curl http://localhost:4000/api/assets \
 <details>
 <summary>📚 All 60+ endpoints (grouped)</summary>
 
-**Health** — `GET /health` (public) — `status` (`ok` / `degraded`), `database` (`up` / `down`)
+**Health** — `GET /health` (public) — `status` (`ok` / `degraded`), `database` (`up` / `down`), `rateLimitStore` (`redis` / `memory`) · `GET /health/ready` — the readiness probe (200 / 503)
 
 **Auth** — `POST /auth/signup` · `POST /auth/login` · `GET /auth/me`
 
@@ -317,7 +320,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **174 automated checks** that run against a **real
+The project ships with **190 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -339,8 +342,8 @@ npm test
 
 | Suite | Command | What it covers |
 |-------|---------|----------------|
-| Backend unit | `cd backend && npm run test:unit` | **45 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, database-driver selection |
-| Backend e2e | `cd backend && npm run test:e2e` | **105 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health |
+| Backend unit | `cd backend && npm run test:unit` | **55 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, database-driver selection, the Redis-backed rate limiter |
+| Backend e2e | `cd backend && npm run test:e2e` | **111 checks** — auth & RBAC, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health, observability |
 | Frontend | `npm test` | **24 checks** — API client, session handling, avatar initials |
 | Lint | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
 
@@ -485,6 +488,79 @@ project's runtime logs.
 
 ---
 
+## 🧱 Self-hosted infrastructure
+
+The Vercel deployment above is the *serverless* variant. This is the
+**self-hosted** one: the API, the database, the cache and the monitoring run
+as containers on one Ubuntu host, behind Nginx with TLS.
+
+```
+internet ──▶ nginx (443, TLS) ──┬──▶ api (4000) ──▶ postgres
+                                │                  └▶ redis
+                                └──▶ the built React SPA (static files)
+
+prometheus ──▶ api, node-exporter, postgres-exporter     (internal network)
+grafana    ──▶ prometheus                                  (127.0.0.1 only)
+alertmanager ─▶ telegram
+```
+
+| What | Where |
+|------|-------|
+| The compose stack (production shaped) | [`infra/docker-compose.yml`](infra/docker-compose.yml) |
+| The images (multi-stage, non-root) | [`infra/docker/`](infra/docker) |
+| Nginx, TLS, the security headers | [`infra/nginx/`](infra/nginx) |
+| Prometheus, the alert rules, Grafana | [`infra/prometheus/`](infra/prometheus), [`infra/grafana/`](infra/grafana) |
+| The backup, the restore check, the archive, the hardening | [`infra/scripts/`](infra/scripts) |
+| The nightly timers | [`infra/systemd/`](infra/systemd) |
+| The CI pipeline (lint, tests, shellcheck, images) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| The deployment over SSH with an automatic rollback | [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) |
+
+```bash
+cp infra/.env.example infra/.env        # the secrets, the ports, the S3 bucket, Telegram
+sudo infra/scripts/issue-cert.sh --self-signed
+
+docker compose -f infra/docker-compose.yml \
+               -f infra/docker-compose.local.yml up -d --build
+# → https://localhost:8443  ·  Grafana: http://localhost:3001  ·  Prometheus: http://localhost:9090
+```
+
+The ports come from `infra/.env` (`HTTP_PORT`, `HTTPS_PORT`) — the local
+override opens the API port and removes the resource limits, it never repeats
+a port of the base file (compose appends lists, and that is a port conflict).
+The whole guide is in [`infra/README.md`](infra/README.md).
+
+**What it demonstrates**
+
+| Area | Where |
+|------|-------|
+| Linux & Bash | `set -euo pipefail`, idempotent scripts, `--dry-run` everywhere, systemd timers |
+| Containers | a multi-stage, non-root image with a health check, resource limits, an internal network for the data |
+| Networking | one public entry point, TLS, the security headers, the database without a route to the internet |
+| Observability | `GET /api/metrics`, one JSON log line per request with a request id, a provisioned Grafana dashboard, 7 alert rules |
+| Reliability | a nightly `pg_dump` → S3, a **restore verification every week**, an automatic rollback on a failed deployment |
+| Cost | a budget alarm first, a lifecycle rule for the archive, an instance size derived from a measured load test |
+| Data lifecycle | the old rows of a table are exported to compressed NDJSON in S3 with a manifest — deleted only after the manifest was verified |
+
+**The documentation** — the part an interviewer reads:
+[architecture](docs/ARCHITECTURE.md) ·
+[runbook](docs/RUNBOOK.md) ·
+[DR drill](docs/DR_DRILL.md) ·
+[decisions](docs/DECISIONS.md) ·
+[costs](docs/COSTS.md) ·
+[AWS setup](docs/AWS_SETUP.md) ·
+[interview Q&A](docs/INTERVIEW_QA.md) ·
+[resume evidence](docs/RESUME_EVIDENCE.md) ·
+[learning log](docs/LEARNING_LOG.md)
+
+> **What this does not cover** — on purpose, and documented in
+> [the decision log](docs/DECISIONS.md): no Kubernetes, no Terraform, no
+> multi-AZ, no point-in-time recovery (the backups are logical dumps), no
+> secrets manager, no log aggregation, no CDN. Every one of those is a
+> product of its own to operate — and each of them needs a reason that this
+> project does not have yet.
+
+---
+
 ## 📁 Project layout
 
 ```
@@ -504,11 +580,19 @@ assetflow/
 │   │   └── seed.ts            # idempotent demo data
 │   ├── src/
 │   │   ├── config/            # environment validation
-│   │   ├── common/security/   # password + e-mail helpers
+│   │   ├── common/            # security helpers, scopes, Redis, logging
+│   │   ├── metrics/           # the Prometheus endpoint
 │   │   ├── auth/ assets/ allocations/ bookings/ maintenance/
 │   │   ├── audits/ org/ reports/ notifications/ activity/
 │   │   └── prisma/            # driver-adapter aware PrismaService
 │   └── test/                  # Jest e2e suites + embedded Postgres
+├── infra/                     # the self-hosted deployment (see above)
+│   ├── docker/                # the two images
+│   ├── nginx/ prometheus/ grafana/ alertmanager/
+│   ├── scripts/               # backup, restore check, archive, hardening
+│   └── systemd/               # the timers
+├── docs/                      # architecture, runbook, DR drill, costs, AWS
+├── .github/workflows/         # CI + the deployment over SSH
 ├── vercel.json                # SPA build + SPA rewrite
 └── backend/vercel.json        # API build + serverless rewrite
 ```

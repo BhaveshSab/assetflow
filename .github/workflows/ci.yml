@@ -1,0 +1,150 @@
+# The continuous integration of AssetFlow.
+#
+# Every pull request runs the same checks as the main branch:
+#   backend  → lint, unit tests, e2e tests, build
+#   frontend → type check, unit tests, build
+#   infra    → shellcheck of the operations scripts, the container images
+#
+# The e2e suite needs no database server: it starts an embedded Postgres
+# (PGlite) inside the job.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, unit, e2e, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install the dependencies
+        run: npm ci
+
+      - name: Generate the Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint -- --no-fix
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (type check, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  infra:
+    name: Infrastructure (shellcheck, images)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The build cache of the images is kept in the GitHub Actions cache.
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Check the shell scripts
+        run: |
+          set +e
+          shellcheck --severity=warning --external-sources --format=gcc \
+            infra/scripts/*.sh infra/scripts/lib/*.sh > /tmp/shellcheck.txt 2>&1
+          code=$?
+          cat /tmp/shellcheck.txt
+          # Every finding also becomes an annotation, so it is visible in the
+          # pull request and not only in the log of the job.
+          while IFS= read -r finding; do
+            echo "::error title=shellcheck::${finding}"
+          done < /tmp/shellcheck.txt
+          exit $code
+
+      - name: Check the compose files
+        run: |
+          cp infra/.env.example infra/.env
+          status=0
+          for args in "-f infra/docker-compose.yml" \
+                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml"; do
+            output=$(docker compose $args config --quiet 2>&1)
+            code=$?
+            if [ "$code" -ne 0 ]; then
+              status=1
+              echo "::error title=compose::docker compose $args → exit $code"
+              while IFS= read -r line; do
+                echo "::error title=compose::${line}"
+              done <<< "$output"
+            fi
+          done
+          exit $status
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the API image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          target: runtime
+          push: false
+          tags: assetflow-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the web image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.nginx
+          push: false
+          tags: assetflow-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

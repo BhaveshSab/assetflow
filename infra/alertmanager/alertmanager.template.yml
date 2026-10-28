@@ -1,0 +1,38 @@
+# The Alertmanager configuration.
+#
+# The file is a *template*: `envsubst` renders it before Alertmanager starts,
+# so the Telegram credentials come from the environment (and never from the
+# repository). Copy it to `alertmanager.yml` if you want to edit it by hand.
+
+route:
+  receiver: telegram
+  group_by: [alertname, service]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # A warning does not wake anybody up at 3 AM — it waits for the next
+    # repeat interval.
+    - matchers:
+        - severity = warning
+      repeat_interval: 12h
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token: ${TELEGRAM_BOT_TOKEN}
+        chat_id: ${TELEGRAM_CHAT_ID}
+        send_resolved: true
+        parse_mode: HTML
+
+  # The catch-all: alerts that arrive before the Telegram credentials are
+  # configured end up here instead of failing the whole configuration.
+  - name: null
+
+inhibit_rules:
+  # A critical alert silences the warnings of the same service.
+  - source_matchers:
+      - severity = critical
+    target_matchers:
+      - severity = warning
+    equal: [alertname, service]

@@ -1,0 +1,12 @@
+[Unit]
+# Every Sunday at 03:00 — right after the nightly backup.
+Description=Verify the AssetFlow backup every week
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=assetflow-restore-verify.service
+
+[Install]
+WantedBy=timers.target

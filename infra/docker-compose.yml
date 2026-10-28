@@ -1,0 +1,284 @@
+# The AssetFlow stack — one host, several containers.
+#
+#   docker compose -f infra/docker-compose.yml up -d --build
+#
+# Shape of the network:
+#
+#   internet ──▶ nginx (443) ──┬──▶ api (4000) ──▶ postgres
+#                               │                  └▶ redis
+#                               └──▶ (the built SPA, static files)
+#
+#   prometheus ──▶ api, node-exporter, postgres-exporter   (internal only)
+#   grafana    ──▶ prometheus                                (127.0.0.1 only)
+#
+# Postgres and Redis sit on an *internal* network — they have no route to the
+# internet and no published port. Prometheus, Grafana and Alertmanager are
+# bound to 127.0.0.1, so they are only reachable through an SSH tunnel:
+#
+#   ssh -L 3001:127.0.0.1:3001 -L 9090:127.0.0.1:9090 user@server
+#
+# The file is production-shaped on purpose; `docker-compose.local.yml` opens
+# the extra ports for the laptop demo.
+
+name: assetflow
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ------------------------------------------------------------------ the API
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.api
+      target: runtime
+    image: ghcr.io/bhaveshsab/assetflow-api:latest
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      # Same-origin requests — the SPA is served by the same Nginx.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost:8443}
+      # The shared rate-limit store (Redis).
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis:6379
+      # Prometheus scrapes this endpoint.
+      METRICS_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [edge, backend]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    logging: *default-logging
+
+  # ------------------------------------------------------------- the database
+  postgres:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-assetflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-assetflow}
+      # The data directory lives on the volume, not in the image.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-assetflow} -d ${POSTGRES_DB:-assetflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging: *default-logging
+
+  # --------------------------------------------- the shared rate-limit store
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # A password, and no way to reach it from outside the Docker network.
+    command: >
+      sh -c "redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru"
+    volumes:
+      - redisdata:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
+
+  # ------------------------------------------------------- the schema updates
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.api
+      target: migrate
+    image: ghcr.io/bhaveshsab/assetflow-api:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+
+  # --------------------------------------------------------- the public edge
+  nginx:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.nginx
+      args:
+        VITE_API_BASE_URL: /api
+    image: ghcr.io/bhaveshsab/assetflow-web:latest
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+    logging: *default-logging
+
+  # ------------------------------------------------------------- monitoring
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [edge, backend]
+    ports:
+      - "127.0.0.1:9090:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    user: "65534:65534"
+    # The template is rendered with envsubst so the Telegram credentials come
+    # from the environment instead of the repository.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "envsubst < /etc/alertmanager/alertmanager.template.yml > /etc/alertmanager/alertmanager.yml && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./alertmanager/alertmanager.template.yml:/etc/alertmanager/alertmanager.template.yml:ro
+      - alertmanager-data:/alertmanager
+    networks: [edge]
+    ports:
+      - "127.0.0.1:9093:9093"
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    user: "472:472"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in infra/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks: [edge]
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    logging: *default-logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /:/host:ro,rslave
+      - node-textfile:/textfile:ro
+    networks: [edge, backend]
+    pid: host
+    logging: *default-logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}?sslmode=disable"
+    networks: [backend]
+    logging: *default-logging
+
+networks:
+  edge:
+    driver: bridge
+  backend:
+    # `internal: true` — the database and the cache have no route to the
+    # internet and cannot be reached from the host's public network.
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  grafana-data:
+  prometheus-data:
+  alertmanager-data:
+  letsencrypt:
+  certbot-www:
+  node-textfile:

@@ -1,0 +1,14 @@
+# Where Grafana looks for the dashboard JSON files.
+apiVersion: 1
+
+providers:
+  - name: assetflow
+    orgId: 1
+    folder: AssetFlow
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

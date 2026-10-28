@@ -1,0 +1,76 @@
+# syntax=docker/dockerfile:1
+#
+# The AssetFlow API — a multi-stage build that ends in a small, non-root
+# runtime image.
+#
+# Build context: the repository root (the API sources live in ./backend).
+#   docker build -f infra/docker/Dockerfile.api .
+#
+# Why multi-stage: the build stage needs the TypeScript compiler and the
+# Prisma CLI, the runtime stage needs neither. The final image therefore
+# contains the compiled JavaScript, the production dependencies and the
+# generated Prisma client — nothing else.
+
+# ---------------------------------------------------------------- build stage
+FROM node:22-bookworm-slim AS builder
+
+# bcrypt falls back to compiling from source when no prebuilt binary matches
+# the platform, so the toolchain has to be present.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# The lock file first: the dependency layer is only rebuilt when it changes.
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci
+
+# The schema is needed to generate the (Rust-free) Prisma client.
+COPY backend/prisma ./prisma
+RUN npx prisma generate
+
+COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json ./
+COPY backend/src ./src
+# The small operational scripts (the migration entry point) travel with the
+# image — the runtime stage copies them from here.
+COPY backend/scripts ./scripts
+RUN npm run build && npm prune --omit=dev
+
+# -------------------------------------------------------------- runtime stage
+FROM node:22-bookworm-slim AS runtime
+
+ENV NODE_ENV=production \
+    PORT=4000
+
+# A dedicated unprivileged user — the container never runs as root.
+RUN groupadd --system --gid 10001 assetflow \
+    && useradd --system --uid 10001 --gid assetflow --home /app assetflow
+
+WORKDIR /app
+
+COPY --from=builder --chown=assetflow:assetflow /app/node_modules ./node_modules
+COPY --from=builder --chown=assetflow:assetflow /app/dist ./dist
+COPY --from=builder --chown=assetflow:assetflow /app/prisma ./prisma
+COPY --from=builder --chown=assetflow:assetflow /app/scripts ./scripts
+COPY --from=builder --chown=assetflow:assetflow /app/package.json ./package.json
+
+USER assetflow
+
+EXPOSE 4000
+
+# The readiness probe — the same endpoint the load balancer and the
+# deployment script use.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "dist/main.js"]
+
+# ------------------------------------------------------- migration job stage
+# The Prisma CLI is a development dependency and is pruned from the runtime
+# image — so the migrations run from the builder stage, which still has it.
+# The job is one-shot: `docker compose up migrate` applies the schema and
+# exits.
+FROM builder AS migrate
+ENV NODE_ENV=production
+CMD ["npx", "prisma", "migrate", "deploy"]

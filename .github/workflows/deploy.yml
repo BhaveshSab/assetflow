@@ -1,0 +1,102 @@
+# Deploys the API to the self-hosted server.
+#
+#   build the image  ->  push it to GHCR  ->  copy it to the server over SSH
+#                    ->  run the migrations  ->  start it  ->  health check
+#                    ->  roll back when the health check fails
+#
+# The secrets (GitHub → Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST        the server address
+#   DEPLOY_USER        the SSH user (key authentication only)
+#   DEPLOY_SSH_KEY    the private key of the deploy user
+#   DEPLOY_PATH        the checkout on the server (default /opt/assetflow)
+#   GHCR_TOKEN         the token to push the image (a classic PAT with
+#                      `write:packages` — or the built-in GITHUB_TOKEN)
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    # Without a server there is nothing to deploy to — the job waits instead
+    # of failing (the secrets are added in Settings → Secrets and variables).
+    if: ${{ github.event_name == 'workflow_dispatch' || secrets.DEPLOY_HOST != '' }}
+    permissions:
+      contents: read
+      packages: write
+      # The build cache of the images is kept in the GitHub Actions cache.
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the API image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          target: runtime
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/assetflow-api:latest
+            ghcr.io/${{ github.repository_owner }}/assetflow-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up the SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          ssh-user: ${{ secrets.DEPLOY_USER }}
+          ssh-hostname: ${{ secrets.DEPLOY_HOST }}
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/assetflow' }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/assetflow-api:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s <<REMOTE
+          set -euo pipefail
+          cd "${DEPLOY_PATH}"
+          # The scripts and the compose files are always the current ones.
+          git pull --ff-only origin main
+          chmod +x infra/scripts/*.sh
+          # The deployment script pulls the image, migrates, starts the new
+          # version, checks the health endpoint and rolls back on failure.
+          IMAGE="${IMAGE}" infra/scripts/deploy.sh
+          REMOTE
+
+      - name: Verify the deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 5 "http://${DEPLOY_HOST}/api/health/ready"; then
+              echo "the API is healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "the API did not become healthy" >&2
+          exit 1

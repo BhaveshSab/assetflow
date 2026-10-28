@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+#
+# Nginx in front of the API **and** the built SPA — one public entry point.
+#
+# Build context: the repository root.
+#   docker build -f infra/docker/Dockerfile.nginx .
+#
+# The SPA is built with a relative API base (`/api`), so the browser talks to
+# the same origin that serves the page. No CORS, no hardcoded hostnames, and
+# the whole stack works on any domain or IP.
+
+# --------------------------------------------------------------- build stage
+FROM node:22-alpine AS spa
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+# Same-origin API calls: the SPA is served by the same Nginx that proxies
+# /api to the API container.
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+RUN npm run build
+
+# -------------------------------------------------------------- runtime stage
+FROM nginx:1.27-alpine AS runtime
+
+RUN apk add --no-cache curl tzdata \
+    && cp /usr/share/zoneinfo/UTC /etc/localtime \
+    && echo "UTC" > /etc/timezone
+
+COPY infra/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY infra/nginx/conf.d/ /etc/nginx/conf.d/
+COPY --from=spa /app/dist /usr/share/nginx/html
+
+EXPOSE 80 443
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -fsS http://127.0.0.1/healthz || exit 1

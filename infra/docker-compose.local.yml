@@ -1,0 +1,50 @@
+# The laptop demo — an override of docker-compose.yml.
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.local.yml up -d --build
+#
+# It opens the API port (the SPA talks to it through Nginx, but a direct
+# call is handy) and it removes the resource limits (a laptop is not a
+# server).
+#
+# The ports of Nginx and of the monitoring come from infra/.env
+# (HTTP_PORT / HTTPS_PORT) — on a laptop use 8080 / 8443 when 80 / 443 are
+# already taken. They are *not* repeated here: compose appends a list, so a
+# second entry for the same container port would be a port conflict.
+
+services:
+  api:
+    ports:
+      - "4000:4000"
+    deploy:
+      resources:
+        limits: {}
+
+  nginx:
+    deploy:
+      resources:
+        limits: {}
+
+  prometheus:
+    deploy:
+      resources:
+        limits: {}
+
+  alertmanager:
+    deploy:
+      resources:
+        limits: {}
+
+  grafana:
+    deploy:
+      resources:
+        limits: {}
+
+  postgres:
+    deploy:
+      resources:
+        limits: {}
+
+  redis:
+    deploy:
+      resources:
+        limits: {}

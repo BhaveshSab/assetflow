@@ -1,0 +1,18 @@
+[Unit]
+# Proves that the newest backup can be restored — once a week.
+Description=Verify that the AssetFlow backup can be restored
+Documentation=file:///opt/assetflow/docs/DR_DRILL.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=assetflow
+Group=assetflow
+WorkingDirectory=/opt/assetflow
+EnvironmentFile=/opt/assetflow/infra/.env
+ExecStart=/opt/assetflow/infra/scripts/restore-verify.sh
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
