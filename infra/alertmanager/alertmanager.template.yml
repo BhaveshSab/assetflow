@@ -27,7 +27,8 @@ receivers:
 
   # The catch-all: alerts that arrive before the Telegram credentials are
   # configured end up here instead of failing the whole configuration.
-  - name: null
+  # Quoted: unquoted `null` is YAML null, not the receiver name "null".
+  - name: "null"
 
 inhibit_rules:
   # A critical alert silences the warnings of the same service.
