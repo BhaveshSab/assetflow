@@ -12,6 +12,10 @@
 #   * timestamped log lines, a log file per run
 #   * meaningful exit codes (0 = ok, 1 = error, 2 = usage error)
 
+# The variables and the helpers of this library are read by the scripts that
+# source it, so ShellCheck must not report them as unused.
+# shellcheck disable=SC2034
+
 set -euo pipefail
 
 # --------------------------------------------------------------- logging ----
@@ -28,8 +32,6 @@ usage() {
 
 # Starts the log file (one per run) and the common flags.
 init_script() {
-    # Read by the scripts that source this library.
-    # shellcheck disable=SC2034
     DRY_RUN=false
     while [ $# -gt 0 ]; do
         case "$1" in
