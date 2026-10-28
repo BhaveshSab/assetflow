@@ -43,6 +43,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: "4000"
+      # The API needs this explicitly: `.env` holds the pieces, not the URL.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}
       # Same-origin requests — the SPA is served by the same Nginx.
       CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost:8443}
       # The shared rate-limit store (Redis).
@@ -214,16 +216,15 @@ services:
     image: prom/alertmanager:v0.27.0
     restart: unless-stopped
     user: "65534:65534"
-    # The template is rendered with envsubst so the Telegram credentials come
-    # from the environment instead of the repository.
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - "envsubst < /etc/alertmanager/alertmanager.template.yml > /etc/alertmanager/alertmanager.yml && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager"
+    # The upstream image has no envsubst; render.sh uses sed instead. The
+    # Telegram credentials still come from the environment, never the image.
+    entrypoint: ["/bin/sh", "/render.sh"]
     env_file:
       - path: .env
         required: false
     volumes:
       - ./alertmanager/alertmanager.template.yml:/etc/alertmanager/alertmanager.template.yml:ro
+      - ./alertmanager/render.sh:/render.sh:ro
       - alertmanager-data:/alertmanager
     networks: [edge]
     ports:
