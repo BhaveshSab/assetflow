@@ -47,7 +47,11 @@ say "destination: ${S3_BUCKET:-<unset>}/${S3_PREFIX}"
 if [ "$DRY_RUN" = true ]; then
     say "[dry-run] mkdir -p ${BACKUP_DIR}"
 else
-    mkdir -p "$BACKUP_DIR"
+    # The default (/var/backups) needs root. A non-root run — the cron entry
+    # on a host where the checkout lives in $HOME — must say so instead of
+    # dying on a bare permissions error.
+    mkdir -p "$BACKUP_DIR" 2>/dev/null ||
+        die "cannot write to ${BACKUP_DIR} — set BACKUP_DIR to a writable directory"
 fi
 
 # 1. The dump ---------------------------------------------------------------
