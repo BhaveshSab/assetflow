@@ -4,13 +4,20 @@
 #                    ->  run the migrations  ->  start it  ->  health check
 #                    ->  roll back when the health check fails
 #
-# The secrets (GitHub → Settings → Secrets and variables → Actions):
+# The variables (GitHub → Settings → Secrets and variables → Actions →
+# Variables — they are not secret):
 #   DEPLOY_HOST        the server address
 #   DEPLOY_USER        the SSH user (key authentication only)
-#   DEPLOY_SSH_KEY    the private key of the deploy user
 #   DEPLOY_PATH        the checkout on the server (default /opt/assetflow)
+#
+# The secrets (the same page → Secrets):
+#   DEPLOY_SSH_KEY    the private key of the deploy user
 #   GHCR_TOKEN         the token to push the image (a classic PAT with
 #                      `write:packages` — or the built-in GITHUB_TOKEN)
+#
+# The deployment waits until DEPLOY_HOST is set as a variable — a hostname
+# is not a secret, and the `vars` context is the one a job condition may
+# read.
 name: Deploy
 
 on:
@@ -27,8 +34,8 @@ jobs:
     name: Build, push and deploy
     runs-on: ubuntu-latest
     # Without a server there is nothing to deploy to — the job waits instead
-    # of failing (the secrets are added in Settings → Secrets and variables).
-    if: ${{ github.event_name == 'workflow_dispatch' || secrets.DEPLOY_HOST != '' }}
+    # of failing (the variables are added in Settings → Secrets and variables).
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.DEPLOY_HOST != '' }}
     permissions:
       contents: read
       packages: write
@@ -64,14 +71,14 @@ jobs:
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-          ssh-user: ${{ secrets.DEPLOY_USER }}
-          ssh-hostname: ${{ secrets.DEPLOY_HOST }}
+          ssh-user: ${{ vars.DEPLOY_USER }}
+          ssh-hostname: ${{ vars.DEPLOY_HOST }}
 
       - name: Deploy
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/assetflow' }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/assetflow' }}
           IMAGE: ghcr.io/${{ github.repository_owner }}/assetflow-api:${{ github.sha }}
         run: |
           set -euo pipefail
@@ -88,7 +95,7 @@ jobs:
 
       - name: Verify the deployment
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
         run: |
           set -euo pipefail
           for attempt in $(seq 1 10); do
