@@ -68,21 +68,36 @@ the data transfer. Everything else is fixed.
 
 | Measurement | Value | How |
 |-------------|-------|-----|
-| The p95 latency under load | **35.4 ms** | [`results/k6-20261028T143025Z.log`](./results/k6-20261028T143025Z.log) |
-| The requests per second the instance sustains | **24.23 req/s** at 25 VUs | the same file |
-| The failed requests | **0.00 %** (0 of 4 392) | the same file |
-| The CPU during the load test | **max 43.9 %, avg 21.5 %** | Prometheus `node_cpu_seconds_total`, 14:30–14:34 Z |
+| The p95 latency at 25 concurrent users | **35.4 ms** | [`results/k6-20261028T143025Z.log`](./results/k6-20261028T143025Z.log) |
+| The failed requests in that run | **0.00 %** (0 of 4 392) | the same file |
+| The requests per second it produced | **24.23** — the *script's* ceiling (25 VUs x one request a second), not the server's | the same file |
+| The CPU during that run | **max 43.9 %, avg 21.5 %** of the host | Prometheus `node_cpu_seconds_total`, 14:30-14:34 Z |
 | The memory in use | 67.3 % of 1 GB | Prometheus `node_memory_MemAvailable_bytes` |
 | The size of the database after the seed | **8.4 MB** (`pg_database_size`) | `psql` in the Postgres container |
 | The size of one backup | **43 KiB** | `ls -lh ~/backups/*.dump` |
 | The duration of one backup | **0.93 s** | a timed `infra/scripts/backup.sh` run |
 | The restore (RTO) | **8 s** local, **14 s** from S3 | [results/restore-from-s3-20261028T181200Z.txt](./results/restore-from-s3-20261028T181200Z.txt) |
-| The recommended instance size | **t3.micro** — 56 % CPU headroom left at 25 concurrent users | derived from the p95 and the CPU above |
+| The requests per second the instance sustains | **TBD** | `infra/scripts/load-test.sh` — the staged ramp |
+| The breaking point (stage, p95, errors) | **TBD** | the same report |
+| The bottleneck behind it, with evidence | **TBD** | the per-second samples in the same report |
+| The outage after losing the host (RTO) | **TBD** | `docs/results/rebuild-drill-<stamp>.md` |
+| The recommended instance size | **t3.micro, provisionally** | it answered in 35 ms at 25 users and never left second gear, but the ramp that would justify a size has not been run |
 
-> **What the load test does and does not say.** `k6-load.js` logs in once per
-> virtual user and then requests the asset list once per second. At 25 VUs
-> that is ~25 req/s by construction — the number measures **latency under 25
-> concurrent users** (p95 35.4 ms, zero errors), not the throughput ceiling of
-> the box. A capacity number needs an open-model test (constant arrival rate,
-> ramping VUs until p95 crosses the objective); that is the next load test,
-> and the note belongs next to the number so nobody quotes it as a ceiling.
+> **What the first run does and does not say.** `k6-load.js` logs in once per
+> virtual user and then requests the asset list once a second, so at 25 VUs the
+> script can produce at most 25 req/s. 24.23 means the *script* was saturated,
+> not the server: the run measured **latency under 25 concurrent users**
+> (p95 35.4 ms, zero errors), which is a real number and a useful one — it is
+> just not a capacity number.
+>
+> **And it predates the rate limiter.** The stack now answers `429` after 300
+> requests a minute per client (measured on the host: 299 x 200, then 21 x 429),
+> and the earlier run made 4 392 requests in three minutes with zero errors — it
+> was taken on a build where the limiter was not yet enforced. So it cannot be
+> compared with today's stack, and it must not be quoted as throughput.
+>
+> The staged ramp in `infra/scripts/load-test.sh` replaces it: it walks
+> 5 -> 200 VUs, samples the host once a second, stops at the first stage that
+> breaks the thresholds, and writes the table. **Until that report exists the
+> capacity cells stay `TBD`** — a guessed req/s on a cost model is how a
+> "sized by measurement" claim becomes a lie in an interview.

@@ -33,7 +33,7 @@ see **Do not claim** at the bottom.
 5. **Sized the instance from evidence, and shipped it through CI** — a k6 run
    (25 VUs, 3 min) held **24.2 req/s at p95 35.4 ms, 0.00 % errors** over 4,392
    requests with peak CPU 43.9 %, which is how the t3.micro was chosen; GitHub
-   Actions runs lint, shellcheck, **202 tests** and both image builds, and the
+   Actions runs lint, shellcheck, **212 tests** and both image builds, and the
    deploy job goes build → GHCR → SSH → migrate → health check with an
    **automatic rollback (48 s, measured on a forced failure)**.
 
@@ -47,16 +47,16 @@ arrives, a restore that actually restores.
 ## One correction to the existing bullets
 
 The auth bullet says "174 automated checks: 45 unit, 105 e2e, 24 frontend".
-The suite grew during the infrastructure work. Measured on 2026-10-28:
+The suite grew during the infrastructure work. Measured on 2026-10-29:
 
 ```
-backend  unit   62 passed, 10 suites
+backend  unit   72 passed, 11 suites
 backend  e2e   114 passed, 13 suites
 frontend       26 passed,  3 files
-               202 total
+               212 total
 ```
 
-Use **202 automated checks: 62 unit, 114 e2e on embedded PostgreSQL (PGlite),
+Use **212 automated checks: 72 unit, 114 e2e on embedded PostgreSQL (PGlite),
 26 frontend.** The commands are `npm run test:unit`, `npm run test:e2e` and
 `npx vitest run` — an interviewer can reproduce all three in about a minute.
 
