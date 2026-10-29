@@ -167,7 +167,7 @@ measurements.
 
 An asset and resource management system: register, allocate, book, maintain
 and audit the physical assets of an organisation. NestJS + Prisma +
-PostgreSQL behind a React SPA, 174 automated tests, and it is deployed
+PostgreSQL behind a React SPA, 212 automated tests, and it is deployed
 serverless on Vercel.
 
 ### 17. Why did you build the infrastructure yourself?

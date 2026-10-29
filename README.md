@@ -384,7 +384,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **202 automated checks** that run against a **real
+The project ships with **212 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -611,8 +611,10 @@ output is in [`docs/results/`](docs/results).
 
 | What | Measured | Where |
 |------|----------|-------|
-| Load test (25 VUs, 3 min) | **24.23 req/s, p95 35.4 ms, 0.00 % errors**, 4,392 requests | [k6 log](docs/results/k6-20261028T143025Z.log) |
-| CPU during the load test | max **43.9 %**, avg 21.5 % — a t3.micro is enough | Prometheus |
+| Latency under load (25 VUs, 3 min) | **p95 35.4 ms, 0.00 % errors**, 4,392 requests — the 24.23 req/s on that line is the script's ceiling (25 VUs x 1 request/s), not the server's | [k6 log](docs/results/k6-20261028T143025Z.log) |
+| CPU during that run | max **43.9 %**, avg 21.5 % — the box was never the limit | Prometheus |
+| Capacity and breaking point (staged ramp, 5 → 200 VUs) | **`TBD`** — `infra/scripts/load-test.sh` walks the stages, samples CPU/memory/Postgres every second and writes the report; the first run stopped at the 300 req/min rate limit, which is a ceiling, not a capacity | [the driver](infra/scripts/load-test.sh) |
+| Rebuild after losing the host | **`TBD`** — `infra/scripts/rebuild-drill.sh` (two phases, S3 backup gate, Elastic IP kept) | [the drill](docs/DR_DRILL.md#scenario-3--the-whole-host-is-gone-the-ec2-rebuild-drill) |
 | Backup → verified restore | 43 KiB dump, **RTO 8 s** locally and **14 s** re-fetched from S3; every table compared row by row | [restore log](docs/results/restore-from-s3-20261028T181200Z.txt) |
 | Backup in S3 | uploaded, **versioned**, SSE-AES256, public access blocked, TLS-only policy, lifecycle 30 d → Glacier IR / 365 d expire | [S3 evidence](docs/results/s3-backup-20261028T180510Z.txt) |
 | Alerting | `trigger-alerts.sh all` → **3 Telegram notifications, 0 failures** | [alert evidence](docs/results/telegram-alert-20261028T181000Z.txt) |
@@ -638,7 +640,7 @@ host, and every claim with its evidence is in
 | Networking | one public entry point, TLS, the security headers, the database without a route to the internet |
 | Observability | `GET /api/metrics`, one JSON log line per request with a request id, a provisioned Grafana dashboard, 7 alert rules |
 | Reliability | a nightly `pg_dump` → S3, a **restore verification every week**, an automatic rollback on a failed deployment |
-| Cost | a budget alarm first, a lifecycle rule for the archive, an instance size derived from a measured load test |
+| Cost | a budget alarm first, a lifecycle rule for the archive, an instance size derived from a measured ramp |
 | Data lifecycle | the old rows of a table are exported to compressed NDJSON in S3 with a manifest — deleted only after the manifest was verified |
 
 **The documentation** — the part an interviewer reads:

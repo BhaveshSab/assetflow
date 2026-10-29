@@ -79,6 +79,93 @@ aws s3 cp "s3://$S3_BUCKET/$S3_PREFIX/" ~/backups/ --recursive
 BACKUP_DIR=$HOME/backups infra/scripts/restore-verify.sh
 ```
 
+## Scenario 3 — the whole host is gone (the EC2 rebuild drill)
+
+Scenarios 1 and 2 restore a **database**. This one restores a **server**: the
+instance is terminated, a new one is launched from the configuration that was
+recorded first, the Elastic IP is re-attached (so the hostname never changes),
+and the data comes back from S3.
+
+It runs in **two phases**, because a script cannot survive the machine it is
+running on.
+
+### Phase 1 — teardown (on the old server)
+
+```bash
+sudo infra/scripts/rebuild-drill.sh --phase teardown --allow-instance-id i-0123456789abcdef0
+```
+
+1. **The safety gate.** It reads the newest `.dump` and `.sha256` from
+   `s3://$S3_BUCKET/assetflow/backups/`, refuses a dump older than 26 hours,
+   **downloads it and verifies the SHA-256**, and aborts without changing
+   anything if any of that fails. There is no flag to skip it: an instance
+   whose data is not verifiably in S3 is not a drill, it is an outage.
+2. **The recording.** `instance.json` — image id, instance type, subnet,
+   security groups, key pair, IAM profile, availability zone, the root volume,
+   the user data (decoded) and the Elastic IP allocation id — plus a copy of
+   `infra/.env`, both uploaded to `s3://$S3_BUCKET/assetflow/drill/<stamp>/`.
+   The configuration never comes from a wiki page; it comes from the machine
+   that is about to disappear.
+3. **The clock starts** at the `terminate-instances` call and the instance is
+   waited on until it is `terminated`.
+
+> The `infra/.env` is the trap of every rebuild: it is git-ignored, so a new
+> instance comes back without the database password, the JWT secret or the bot
+> token. That is why it is copied to the private bucket *before* the teardown.
+
+### Phase 2 — rebuild (on your laptop, **not** on the instance)
+
+```bash
+infra/scripts/rebuild-drill.sh --phase rebuild --run <stamp> --ssh-key ~/.ssh/assetflow-key.pem
+```
+
+1. `run-instances` with the recorded configuration and recorded user data;
+2. **immediately** `associate-address` — an unassociated Elastic IP is billed,
+   and a portfolio link pointing at a dead address is worse than the cost;
+3. wait for `running`, then for the public IP to be **the same address**;
+4. wait for SSH (a fresh instance needs ~30 s for cloud-init);
+5. `provision-host.sh` over SSH — Docker, the repository, `infra/.env` from S3
+   (mode 0600), hardening, the certificate, the stack, the migrations, the
+   health check, the systemd timers;
+6. download the dump from S3, check the SHA-256, restore into a throwaway
+   container first, then the live restore, then restart the API;
+7. wait for `GET /api/health/ready` — **that is when the clock stops**.
+
+### Phase 3 — the report
+
+```bash
+infra/scripts/rebuild-drill.sh --phase report --run <stamp>
+```
+
+It writes `docs/results/rebuild-drill-<stamp>.md`: the timeline, the RTO, the
+RPO, the address, and the duration of each provisioning step.
+
+### The rules (they protect real data and real money)
+
+| Rule | Why |
+|---|---|
+| The S3 gate is not optional | a termination is irreversible; the backup is the only copy |
+| One instance at a time | the Elastic IP attaches to one; a second t3.micro would be pointless |
+| Re-associate the address first | it is billed while unassociated, and the site is down either way |
+| Never delete the bucket, the policy, the role or the group | the drill replaces an *instance*, nothing else |
+| The drill is destructive | do not run it on a box whose data is not verifiably in S3 |
+
+### The results
+
+| Measurement | Value | How it was measured |
+|---|---|---|
+| The outage (RTO) | **TBD** | `t_healthy − t_terminate` in `timeline.txt` |
+| The RPO | **TBD** | the age of the newest dump at the terminate call |
+| The instance was running again | **TBD** | `t_running − t_terminate` |
+| SSH answered | **TBD** | `t_ssh − t_running` |
+| The host was provisioned | **TBD** | `t_provisioned − t_ssh` (see `provision.log`) |
+| The data was restored | **TBD** | `t_restored − t_provisioned` |
+| The API was ready with the restored data | **TBD** | `t_healthy − t_restored` |
+| The address | `3.107.83.86` before and after | the two `describe-instances` calls |
+
+> Every cell stays `TBD` until the drill has actually run. Filling one in
+> from an estimate would defeat the point of doing the drill.
+
 ## The results (measured 2026-10-28, `t3.micro`, ap-southeast-2)
 
 | Measurement | Value | How it was measured |
@@ -89,7 +176,7 @@ BACKUP_DIR=$HOME/backups infra/scripts/restore-verify.sh
 | The duration of the restore (RTO) | **8 s** locally, **14 s** when the dump is re-downloaded from S3 first | [`results/restore-from-s3-20261028T181200Z.txt`](./results/restore-from-s3-20261028T181200Z.txt) |
 | The age of the newest backup (RPO) | **52 s** during the drill; **≤ 24 h** in production (the 02:30 timer) | the dump timestamp vs. the restore timestamp |
 | The rows restored | **5 users, 3 departments, 5 assets**, 0 allocations/notifications/activity rows — every table equal to production | the output of `restore-verify.sh`, which compares every table with the live database |
-| The time a full host rebuild takes | **not measured yet** — the drill destroys the instance, so it needs an IAM policy the current key does not have; see [REBUILD_DRILL](./REBUILD_DRILL.md) | the steps there, timed end to end |
+| The time a full host rebuild takes | **TBD** — the drill is scripted and the Elastic IP is in place, but it has not been run yet; see scenario 3 above | `infra/scripts/rebuild-drill.sh` writes the timeline and the RTO |
 
 > The drill restored a **43 KiB dump in 8 seconds** — 14 seconds when the dump
 > had to come back from S3 first — and compared every table against production
