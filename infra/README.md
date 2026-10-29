@@ -25,9 +25,40 @@ alertmanager ─▶ telegram
 | `prometheus/` | the scrape configuration and the alert rules |
 | `grafana/` | the provisioned dashboard |
 | `alertmanager/` | the Telegram receiver (a template — the credentials come from the environment) |
-| `scripts/` | backup, restore verification, archiving, hardening, deployment, alerts, certificate |
+| `scripts/` | backup, restore verification, archiving, hardening, deployment, alerts, certificate, host provisioning, the saturation test and the rebuild drill |
 | `systemd/` | the timers that run the backup and the restore verification |
 | `certs/` · `certbot-www/` | **generated** TLS material and ACME challenges — bind-mounted into Nginx, never committed (`.gitignore`) |
+
+## The two drills
+
+Two scripts answer the two questions an interviewer actually asks.
+
+```bash
+# 1. How far does it go, and what breaks first?
+#    Walks 5 → 200 VUs, samples CPU/memory/Postgres once a second, stops at the
+#    first stage that breaks the thresholds, writes docs/results/load-test-<ts>.md.
+BASE_URL=https://3.107.83.86.sslip.io infra/scripts/load-test.sh
+
+# 2. What happens when the server is gone?
+#    Two phases, because a script cannot survive the machine it is running on.
+sudo infra/scripts/rebuild-drill.sh --phase teardown --allow-instance-id i-0123...   # on the old host
+infra/scripts/rebuild-drill.sh --phase rebuild --run <stamp>                          # on your laptop
+infra/scripts/rebuild-drill.sh --phase report  --run <stamp>
+```
+
+`rebuild-drill.sh` refuses to terminate anything unless the newest dump is in
+S3, younger than 26 hours and its SHA-256 checks out — then it re-associates
+the Elastic IP as its first action, so the address (and every link to it)
+survives. `provision-host.sh` is the step it calls: it turns a bare Ubuntu box
+into this host, idempotently, and records how long each step took.
+
+The load test needs several identities to get past the API's own limit (300
+requests a minute per client), so it seeds a throwaway fixture:
+
+```bash
+npm run seed:loadtest -- --users 30 --assets 5000   # in the backend directory
+npm run seed:loadtest -- --delete
+```
 
 ## The first run (laptop)
 
