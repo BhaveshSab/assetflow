@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { ActivityModule } from './activity/activity.module';
@@ -19,6 +19,7 @@ import { StartupGuard } from './common/guards/startup.guard';
 import { RequestContextMiddleware } from './common/http/request-context.middleware';
 import { RedisModule } from './common/redis/redis.module';
 import { RedisThrottlerStorage } from './common/rate-limit/redis-throttler.storage';
+import { UserThrottlerGuard } from './common/rate-limit/user-throttler.guard';
 import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
 import { safeValidateEnv } from './config/env.validation';
@@ -78,7 +79,12 @@ import { ReportsModule } from './reports/reports.module';
     AppService,
     // Registered as a global guard so *every* route is rate limited — the
     // per-route JWT/RBAC guards still run afterwards.
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    //
+    // `UserThrottlerGuard` counts per authenticated user and falls back to the
+    // client IP for anonymous requests: behind one NAT (or with a load test)
+    // an IP-only bucket is shared by everybody, which is neither fair to users
+    // nor measurable.
+    { provide: APP_GUARD, useClass: UserThrottlerGuard },
     // …and a second global guard that turns an invalid environment into a
     // readable 503 instead of an unreadable crash.
     { provide: APP_GUARD, useClass: StartupGuard },
