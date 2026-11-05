@@ -383,7 +383,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **212 automated checks** that run against a **real
+The project ships with **241 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -405,9 +405,10 @@ npm test
 
 | Suite | Command | What it covers |
 |-------|---------|----------------|
-| Backend unit | `cd backend && npm run test:unit` | **62 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
-| Backend e2e | `cd backend && npm run test:e2e` | **114 checks** — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health, observability |
+| Backend unit | `cd backend && npm run test:unit` | **72 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
+| Backend e2e | `cd backend && npm run test:e2e` | **117 checks** (1 skipped at the default wide-open limit) — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, rate limiting, health, observability |
 | Frontend | `npm test` | **52 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials |
+| Rate limit (evidence) | `cd backend && THROTTLE_LIMIT=300 npm run test:e2e -- rate-limit` | the 429 boundary at the production ceiling: 300 x `200`, then request #301 is `429` with `Retry-After: 60`, while a second user behind the same IP is unaffected — transcript in [`docs/results/`](docs/results/) |
 | Lint (backend) | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
 | Lint (frontend) | `npm run lint` | ESLint 9 + the React hooks rules over `src/` — 0 errors (16 advisory warnings, listed in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)) |
 

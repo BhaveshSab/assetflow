@@ -91,10 +91,17 @@ the data transfer. Everything else is fixed.
 > just not a capacity number.
 >
 > **And it predates the rate limiter.** The stack now answers `429` after 300
-> requests a minute per client (measured on the host: 299 x 200, then 21 x 429),
-> and the earlier run made 4 392 requests in three minutes with zero errors — it
-> was taken on a build where the limiter was not yet enforced. So it cannot be
-> compared with today's stack, and it must not be quoted as throughput.
+> requests a minute per authenticated user — measured, not assumed:
+> `THROTTLE_LIMIT=300 npm run test:e2e -- rate-limit` issues 300 requests and
+> gets 300 x `200`, then request **#301** is `429` with `Retry-After: 60`
+> ([transcript](./results/rate-limit-20261105T083630Z.txt)). An earlier
+> hand-written note claimed "299 x 200, then 21 x 429"; it was off by one and is
+> superseded by that run. The earlier load test made 4 392 requests in three
+> minutes with zero errors, so it was taken on a build where the limiter did not
+> block at all (the throttler was configured with `blockDuration: 0`, which
+> counts without ever refusing — fixed 2026-11-05, see `DECISIONS.md` row 33).
+> It cannot be compared with today's stack, and it must not be quoted as
+> throughput.
 >
 > The staged ramp in `infra/scripts/load-test.sh` replaces it: it walks
 > 5 -> 200 VUs, samples the host once a second, stops at the first stage that

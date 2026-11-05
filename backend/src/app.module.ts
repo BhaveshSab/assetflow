@@ -47,18 +47,26 @@ import { ReportsModule } from './reports/reports.module';
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService, RedisThrottlerStorage],
-      useFactory: (config: ConfigService, storage: RedisThrottlerStorage) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_TTL') ?? 60_000,
-            limit: config.get<number>('THROTTLE_LIMIT') ?? 300,
-          },
-        ],
-        // The counters are shared through Redis when `REDIS_URL` is set;
-        // the storage falls back to the in-process counters when it is not.
-        storage,
-      }),
+      useFactory: (config: ConfigService, storage: RedisThrottlerStorage) => {
+        const ttl = config.get<number>('THROTTLE_TTL') ?? 60_000;
+        return {
+          throttlers: [
+            {
+              name: 'default',
+              ttl,
+              limit: config.get<number>('THROTTLE_LIMIT') ?? 300,
+              // `blockDuration` is what actually produces the 429: with `0`
+              // the memory store only counts and the Redis script never
+              // writes a block key, so the limit is never enforced.
+              blockDuration:
+                config.get<number>('THROTTLE_BLOCK_MS') ?? ttl ?? 60_000,
+            },
+          ],
+          // The counters are shared through Redis when `REDIS_URL` is set;
+          // the storage falls back to the in-process counters when it is not.
+          storage,
+        };
+      },
     }),
     // Cross-cutting, @Global — available to every feature module.
     ActivityModule,

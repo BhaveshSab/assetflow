@@ -1,0 +1,351 @@
+AssetFlow — rate limiter measurement
+Captured: 2026-11-05T08:36:30Z (UTC)
+Host: Linux 6.1.158+, Node v22.22.3
+
+WHY THIS FILE EXISTS
+  The resume line about the API rate limit had no artifact behind it, and a
+  check of the code showed the limiter only counted: the throttler was
+  configured without a block duration, which is what produces a 429.
+  The fix (THROTTLE_BLOCK_MS, default 60 s) plus its regression test landed
+  before this run. This is the measurement, produced by the suite itself.
+
+COMMAND
+  cd backend && THROTTLE_LIMIT=300 npm run test:e2e -- rate-limit
+
+WHAT IT DOES
+  Boots the real AppModule (global UserThrottlerGuard, in-process store) with
+  the production default of 300 requests per 60 s, signs in three users from
+  the SAME client address, spends 3 requests as the first user, then issues
+  300 authenticated requests with a fresh token before the 301st.
+
+RESULT
+  - requests   1..300 -> 200 OK
+  - request      301  -> 429 Too Many Requests, Retry-After: 60
+  - a colleague behind the same IP, after the block -> 200 OK
+    (the bucket is keyed on the verified user, not the address)
+
+RAW OUTPUT (pino request logs trimmed by the PASS/FAIL summary)
+--------------------------------------------------------------
+> backend@0.0.1 test:e2e
+> jest --config ./test/jest-e2e.json rate-limit
+🧪 Test database ready on 127.0.0.1:42661 (3 migration(s) applied)
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+  console.log
+PASS test/rate-limit.e2e-spec.ts
+  rate limiting (e2e)
+    ✓ counts per user, not per client address (64 ms)
+    ✓ is configured to block, not just to count (1 ms)
+    ✓ the shared store blocks the offender and leaves the colleague alone (1 ms)
+    ✓ blocks request #LIMIT+1 with a Retry-After (2514 ms)
+Test Suites: 1 passed, 1 total
+Tests:       4 passed, 4 total
+Snapshots:   0 total
+Time:        3.955 s
+Ran all test suites matching rate-limit.
+Force exiting Jest: Have you considered using `--detectOpenHandles` to detect async operations that kept running after all tests finished?

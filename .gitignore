@@ -18,6 +18,10 @@ dist-ssr
 # Logs
 logs
 *.log
+# …except the measurement transcripts: a number in a document is a claim, and
+# the file that produced it is the evidence. (docs/results/README.md links to
+# these directly; without this line every cited .log was silently untracked.)
+!docs/results/*.log
 
 # Freebuff local tooling
 .freebuff/
