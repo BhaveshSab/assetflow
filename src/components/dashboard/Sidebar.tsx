@@ -20,6 +20,8 @@ import {
   Building2,
 } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/ui/dialog";
+
 // ─────────────────────────────────────────────────────────────
 // TYPES
 // ─────────────────────────────────────────────────────────────
@@ -336,41 +338,18 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
       </motion.aside>
 
       {/* ── SIGN OUT CONFIRM ── */}
-      <AnimatePresence>
-        {showSignout && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4"
-            onClick={() => setShowSignout(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center"
-            >
-              <div className="w-12 h-12 rounded-full bg-red-500/15 flex items-center justify-center mx-auto mb-4">
-                <LogOut size={22} className="text-red-400" />
-              </div>
-              <h3 className="text-white font-bold text-base mb-1">Sign out of AssetFlow?</h3>
-              <p className="text-gray-400 text-sm mb-6">You'll need to log back in to access your workspace.</p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowSignout(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => { setShowSignout(false); onSignOut(); }}
-                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-all"
-                >
-                  Sign Out
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        open={showSignout}
+        title="Sign out of AssetFlow?"
+        message="You'll need to log back in to access your workspace."
+        confirmLabel="Sign Out"
+        destructive
+        onCancel={() => setShowSignout(false)}
+        onConfirm={() => {
+          setShowSignout(false);
+          onSignOut();
+        }}
+      />
     </>
   );
 };
