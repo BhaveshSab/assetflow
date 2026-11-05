@@ -1,14 +1,12 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
-  Search,
   Package,
   User,
   Calendar,
   CheckCircle2,
   AlertTriangle,
-  ChevronDown,
   Loader2,
   Tag,
   Building2,
@@ -26,6 +24,7 @@ import {
 // SERVICE LAYER (real backend)
 // ─────────────────────────────────────────────────────────────
 import { Dialog } from "@/components/ui/dialog";
+import { SearchDropdown } from "@/components/ui/search-dropdown";
 import { apiGet, apiSend, unwrapList } from "@/lib/api";
 
 const allocationService = {
@@ -155,132 +154,6 @@ const getAvatarColor = (name: string) =>
 // ─────────────────────────────────────────────────────────────
 // SEARCHABLE DROPDOWN COMPONENT
 // ─────────────────────────────────────────────────────────────
-function SearchDropdown<T>({
-  label,
-  placeholder,
-  icon: Icon,
-  items,
-  selected,
-  onSelect,
-  renderItem,
-  renderSelected,
-  filterFn,
-  error,
-  required,
-}: {
-  label: string;
-  placeholder: string;
-  icon: React.ElementType;
-  items: T[];
-  selected: T | null;
-  onSelect: (item: T) => void;
-  renderItem: (item: T) => React.ReactNode;
-  renderSelected: (item: T) => React.ReactNode;
-  filterFn: (item: T, query: string) => boolean;
-  error?: string;
-  required?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
-
-  const filtered = useMemo(
-    () => query ? items.filter((i) => filterFn(i, query)) : items,
-    [items, query, filterFn]
-  );
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-        {label} {required && <span className="text-red-400">*</span>}
-      </label>
-
-      {/* Trigger */}
-      <button
-        type="button"
-        onClick={() => { setOpen((o) => !o); setQuery(""); }}
-        className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-left transition-all
-          ${error
-            ? "border-red-500/60 bg-red-950/20"
-            : open
-            ? "border-blue-500/60 bg-[#0f111a]"
-            : "border-zinc-700 bg-[#0f111a] hover:border-zinc-600"}`}
-      >
-        <Icon size={15} className="text-zinc-500 flex-shrink-0" />
-        <div className="flex-1 min-w-0 text-sm">
-          {selected ? renderSelected(selected) : (
-            <span className="text-zinc-600">{placeholder}</span>
-          )}
-        </div>
-        <ChevronDown
-          size={14}
-          className={`text-zinc-500 flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-
-      {/* Dropdown */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ duration: 0.15 }}
-            className="absolute z-50 top-full mt-1.5 w-full bg-[#1a1d2e] border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
-          >
-            <div className="p-2 border-b border-zinc-800">
-              <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={`Search ${label.toLowerCase()}…`}
-                  className="w-full bg-[#0f111a] border border-zinc-700 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/50"
-                />
-              </div>
-            </div>
-
-            <div className="max-h-52 overflow-y-auto divide-y divide-zinc-800/50">
-              {filtered.length === 0 ? (
-                <div className="py-6 text-center text-xs text-zinc-500">No results found</div>
-              ) : (
-                filtered.map((item, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => { onSelect(item); setOpen(false); setQuery(""); }}
-                    className="w-full text-left px-3.5 py-2.5 hover:bg-zinc-700/40 transition-colors text-sm"
-                  >
-                    {renderItem(item)}
-                  </button>
-                ))
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {error && (
-        <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1">
-          <AlertTriangle size={10} /> {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────
 // ASSET SUMMARY CARD
 // ─────────────────────────────────────────────────────────────
