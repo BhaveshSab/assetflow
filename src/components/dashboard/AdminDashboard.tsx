@@ -214,7 +214,7 @@ const NotificationPanel = ({ activity, onClose }: { activity: ActivityItem[]; on
   >
     <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2d3e]">
       <span className="text-sm font-semibold text-white">Notifications</span>
-      <button onClick={onClose}><X size={14} className="text-gray-400 hover:text-white" /></button>
+      <button aria-label="Close" onClick={onClose}><X size={14} className="text-gray-400 hover:text-white" /></button>
     </div>
     <div className="max-h-72 overflow-y-auto divide-y divide-[#2a2d3e]">
       {activity.slice(0, 6).map((a) => (
@@ -354,7 +354,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
             Updated {lastUpdated.toLocaleTimeString()}
           </span>
 
-          <button onClick={fetchAll} disabled={refreshing} className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors">
+          <button aria-label="Refresh" onClick={fetchAll} disabled={refreshing} className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors">
             <RefreshCw size={14} className={`text-gray-400 ${refreshing ? "animate-spin" : ""}`} />
           </button>
 
@@ -390,6 +390,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
           <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
           <p className="text-sm text-red-300 flex-1">{dataError}</p>
           <button
+            aria-label="Refresh"
             onClick={fetchAll}
             className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
           >

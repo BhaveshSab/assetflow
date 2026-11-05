@@ -277,7 +277,7 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
                   <p className="text-[11px] text-gray-500">{isEdit ? "Update employee details" : "Signup creates Employee only"}</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors"><X size={16} className="text-gray-400" /></button>
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors"><X size={16} className="text-gray-400" /></button>
             </div>
             <div className="p-6 flex flex-col gap-4">
               <div>
@@ -345,7 +345,7 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
               </div>
             </div>
             <div className="px-6 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
               <button onClick={handleSubmit} disabled={saving}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60">
                 {saving ? (<><Loader2 size={14} className="animate-spin" /> Saving...</>) : (<><Check size={14} /> {isEdit ? "Update Employee" : "Add Employee"}</>)}
@@ -373,7 +373,7 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
             onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
               <div><h2 className="text-sm font-bold text-white">Change Role</h2><p className="text-[11px] text-gray-500">{employee.name}</p></div>
-              <button onClick={onClose}><X size={15} className="text-gray-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-gray-400 hover:text-white" /></button>
             </div>
             <div className="p-5 flex flex-col gap-2">
               {ROLES.map((r) => {
@@ -390,7 +390,7 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
               })}
             </div>
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 transition-all">Cancel</button>
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 transition-all">Cancel</button>
               <button onClick={() => onPromote(employee.id, selectedRole)} disabled={saving || selectedRole === employee.role}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
@@ -526,7 +526,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
 
       {/* Load error banner */}
       {loadError && (
-        <div className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+        <div role="alert" className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
           <AlertCircle size={15} className="flex-shrink-0" /> {loadError} — check that the backend is running.
         </div>
       )}
@@ -924,7 +924,8 @@ export default function OrganizationSetup() {
                           <td className="py-4 px-6 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button onClick={() => handleOpenModal(dept)} className="text-gray-500 hover:text-blue-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" title="Edit"><Edit2 size={16} /></button>
-                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"><MoreVertical size={18} /></button>
+                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="More actions" disabled>
+                              <MoreVertical size={18} /></button>
                             </div>
                           </td>
                         </motion.tr>

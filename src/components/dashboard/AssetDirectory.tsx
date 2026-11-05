@@ -178,7 +178,7 @@ export default function AssetDirectory() {
 
       {/* --- Error State --- */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
           <button
@@ -324,7 +324,7 @@ export default function AssetDirectory() {
                                 Allocate
                               </button>
                             )}
-                            <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors">
+                            <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="More actions" disabled>
                               <MoreVertical size={18} />
                             </button>
                           </div>

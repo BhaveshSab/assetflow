@@ -192,7 +192,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
         </div>
 
         {/* ── NAV SECTIONS ── */}
-        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 space-y-5">
+        <nav aria-label="Main navigation" className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 space-y-5">
           {Object.entries(sections).map(([section, items]) => (
             <div key={section}>
               <AnimatePresence>

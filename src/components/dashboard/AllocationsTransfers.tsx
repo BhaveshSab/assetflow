@@ -204,7 +204,7 @@ const ReturnAssetModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -247,6 +247,7 @@ const ReturnAssetModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -366,7 +367,7 @@ const TransferAssetModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -445,6 +446,7 @@ const TransferAssetModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -739,7 +741,7 @@ export default function AllocationsTransfers({
 
       {/* --- Error State --- */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 flex items-center gap-4 text-red-400">
           <AlertCircle size={24} />
           <p>{error}</p>
           <button

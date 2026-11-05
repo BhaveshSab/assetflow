@@ -261,7 +261,7 @@ const NotifPanel = ({ activity, overdueCount, pendingCount, onClose }: {
   <motion.div initial={{ opacity: 0, y: -10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.95 }}
     className="absolute top-14 right-0 w-80 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl shadow-2xl z-50 overflow-hidden"
   >
-    <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2d3e]"><span className="text-sm font-semibold text-white">Notifications</span><button onClick={onClose}><X size={14} className="text-gray-400 hover:text-white" /></button></div>
+    <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2d3e]"><span className="text-sm font-semibold text-white">Notifications</span><button aria-label="Close" onClick={onClose}><X size={14} className="text-gray-400 hover:text-white" /></button></div>
     {(overdueCount > 0 || pendingCount > 0) && (
       <div className="px-4 py-2 bg-[#0f111a] border-b border-[#2a2d3e] flex flex-col gap-1">
         {overdueCount > 0 && <div className="flex items-center gap-2 text-xs text-red-400"><AlertTriangle size={11} />{overdueCount} assets overdue for return</div>}
@@ -408,6 +408,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
           <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
           <p className="text-sm text-red-300 flex-1">{dataError}</p>
           <button
+            aria-label="Refresh"
             onClick={fetchAll}
             className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
           >
@@ -424,7 +425,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
         </div>
         <div className="flex items-center gap-3">
           <span className="hidden sm:block text-[11px] text-gray-600">Updated {lastUpdated.toLocaleTimeString()}</span>
-          <button onClick={fetchAll} disabled={refreshing} className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors"><RefreshCw size={14} className={`text-gray-400 ${refreshing ? "animate-spin" : ""}`} /></button>
+          <button aria-label="Refresh" onClick={fetchAll} disabled={refreshing} className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors"><RefreshCw size={14} className={`text-gray-400 ${refreshing ? "animate-spin" : ""}`} /></button>
           <div className="relative">
             <button onClick={() => setShowNotif((v) => !v)} className="relative p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors">
               <Bell size={16} className="text-gray-400" />

@@ -110,7 +110,7 @@ const TransferModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -183,6 +183,7 @@ const TransferModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -477,7 +478,7 @@ export default function MyAssets({ onNavigate }: Props) {
 
       {/* ── ERROR ── */}
       {error && (
-        <div className="bg-red-950/30 border border-red-500/30 rounded-xl px-4 py-3 flex items-center gap-3 text-red-400 text-sm">
+        <div role="alert" className="bg-red-950/30 border border-red-500/30 rounded-xl px-4 py-3 flex items-center gap-3 text-red-400 text-sm">
           <AlertCircle size={16} /> {error}
           <button onClick={load} className="ml-auto underline hover:text-red-300">Retry</button>
         </div>

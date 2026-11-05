@@ -480,7 +480,7 @@ const AllocateAssetModal = ({
                 <p className="text-[11px] text-zinc-500">Assign an available asset to an employee</p>
               </div>
             </div>
-            <button onClick={handleClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={handleClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={16} className="text-zinc-400" />
             </button>
           </div>
@@ -488,7 +488,7 @@ const AllocateAssetModal = ({
           {/* Body */}
           <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
             {loadError && (
-              <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+              <div role="alert" className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
                 <AlertTriangle size={14} /> {loadError}
               </div>
             )}

@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Package, Tag, Building2, Calendar, DollarSign,
-  Check, Loader2, AlertTriangle, AlertCircle,
+  Check, Loader2, AlertCircle,
   CheckCircle2, Hash, MapPin, Camera, BookOpen,
   ChevronDown, Sparkles,
 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
 import { apiGet, apiSend, unwrapList } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
@@ -73,24 +74,6 @@ const registerService = {
 // ─────────────────────────────────────────────────────────────
 // INPUT FIELD WRAPPER
 // ─────────────────────────────────────────────────────────────
-const Field = ({
-  label, required, error, children,
-}: {
-  label: string; required?: boolean; error?: string; children: React.ReactNode;
-}) => (
-  <div>
-    <label className="block text-xs font-semibold text-zinc-400 mb-1.5 uppercase tracking-wide">
-      {label} {required && <span className="text-red-400 normal-case">*</span>}
-    </label>
-    {children}
-    {error && (
-      <p className="text-red-400 text-[11px] mt-1.5 flex items-center gap-1">
-        <AlertTriangle size={10} /> {error}
-      </p>
-    )}
-  </div>
-);
-
 const inputCls = (hasError?: boolean) =>
   `w-full bg-[#0f111a] border rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none transition-all
   ${hasError ? "border-red-500/60 focus:border-red-500" : "border-zinc-700/80 focus:border-blue-500/60 focus:bg-[#0a0c14]"}`;
@@ -288,7 +271,7 @@ export default function RegisterAssetModal({
                 <p className="text-[11px] text-zinc-500">Add a new physical asset to the inventory</p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={16} className="text-zinc-400" />
             </button>
           </div>
@@ -298,7 +281,7 @@ export default function RegisterAssetModal({
 
             {/* Global error */}
             {globalError && (
-              <div className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+              <div role="alert" className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
                 <AlertCircle size={15} className="flex-shrink-0" /> {globalError}
               </div>
             )}
@@ -509,6 +492,7 @@ export default function RegisterAssetModal({
           {/* Footer */}
           <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >

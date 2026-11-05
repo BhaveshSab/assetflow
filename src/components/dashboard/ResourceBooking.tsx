@@ -241,7 +241,7 @@ export default function ResourceBooking() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>

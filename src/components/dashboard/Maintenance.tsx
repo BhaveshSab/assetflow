@@ -347,7 +347,7 @@ const RaiseRequestModal = ({
                   <p className="text-[11px] text-zinc-500">Report a broken or faulty asset for repair</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
                 <X size={16} className="text-zinc-400" />
               </button>
             </div>
@@ -492,7 +492,7 @@ const RaiseRequestModal = ({
             </div>
 
             <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
-              <button onClick={onClose}
+              <button aria-label="Close" onClick={onClose}
                 className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all">
                 Cancel
               </button>
@@ -567,7 +567,7 @@ const AssignTechnicianModal = ({
                   <p className="text-[11px] text-zinc-500">{request.assetName}</p>
                 </div>
               </div>
-              <button onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
             </div>
 
             <div className="p-5">
@@ -605,7 +605,7 @@ const AssignTechnicianModal = ({
             </div>
 
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
                 Cancel
               </button>
               <button onClick={handleAssign} disabled={!selected || submitting}
@@ -662,7 +662,7 @@ const ResolveModal = ({
                   <p className="text-[11px] text-zinc-500">{request.assetName}</p>
                 </div>
               </div>
-              <button onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
             </div>
 
             <div className="p-5">
@@ -677,7 +677,7 @@ const ResolveModal = ({
             </div>
 
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
                 Cancel
               </button>
               <button onClick={handleResolve} disabled={submitting}
