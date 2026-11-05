@@ -19,6 +19,7 @@ import { apiGet, apiSend } from "@/lib/api";
 import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { errorMessage } from "@/lib/utils";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -516,49 +517,61 @@ export default function AllocationsTransfers({
       // Managers see ALL allocations + pending transfers; employees only see
       // their own (holder or allocator) via the dedicated /allocations/my endpoint.
       const [allocData, transferData] = await Promise.all([
-        apiGet<{ items: Array<Record<string, any>> }>(
-          isManager ? "/allocations" : "/allocations/my",
-        ),
+        apiGet<{ items: ApiRecord[] }>(isManager ? "/allocations" : "/allocations/my"),
         isManager
-          ? apiGet<{ items: Array<Record<string, any>> }>(
-              "/transfers?status=REQUESTED",
-            )
-          : Promise.resolve({ items: [] }),
+          ? apiGet<{ items: ApiRecord[] }>("/transfers?status=REQUESTED")
+          : Promise.resolve({ items: [] as ApiRecord[] }),
       ]);
       const now = Date.now();
 
       const allocCards: Allocation[] = (allocData.items ?? []).map((a) => {
-        const expected = a.expectedReturnDate
-          ? new Date(a.expectedReturnDate).getTime()
-          : null;
+        const expectedIso = fieldStr(a, "", "expectedReturnDate");
+        const expected = expectedIso ? new Date(expectedIso).getTime() : null;
+        const status = fieldStr(a, "", "status");
         const isOverdue =
-          a.status === "ACTIVE" && expected !== null && expected < now;
-        const holder = a.holderUser?.name ?? a.department?.name ?? "—";
+          status === "ACTIVE" && expected !== null && expected < now;
+        const holder =
+          fieldStr(a, "", "holderUser", "name") ||
+          fieldStr(a, "", "department", "name") ||
+          "—";
         return {
-          id: a.id,
-          _assetId: a.assetId,
-          holderId: a.holderUserId ?? undefined,
-          assetName: a.asset?.name ?? "Asset",
-          assetTag: a.asset?.assetTag ?? "",
+          id: fieldStr(a, "", "id"),
+          _assetId: fieldStr(a, "", "assetId"),
+          holderId: fieldStr(a, "", "holderUserId") || undefined,
+          assetName: fieldStr(a, "Asset", "asset", "name"),
+          assetTag: fieldStr(a, "", "asset", "assetTag"),
           assignee: holder,
-          role: a.holderUser?.role ?? (a.departmentId ? "Department" : "—"),
-          returnDate: a.expectedReturnDate ? a.expectedReturnDate.slice(0, 10) : "—",
-          status: a.status === "RETURNED" ? "Returned" : isOverdue ? "Overdue" : "Allocated",
+          role:
+            fieldStr(a, "", "holderUser", "role") ||
+            (fieldStr(a, "", "departmentId") ? "Department" : "—"),
+          returnDate: expectedIso ? expectedIso.slice(0, 10) : "—",
+          status:
+            status === "RETURNED"
+              ? "Returned"
+              : isOverdue
+                ? "Overdue"
+                : "Allocated",
           avatar: initials(holder),
         };
       });
 
-      const transferCards: Allocation[] = (transferData.items ?? []).map((t) => ({
-        id: t.id,
-        assetName: t.asset?.name ?? "Asset",
-        assetTag: t.asset?.assetTag ?? "",
-        assignee: t.toUser?.name ?? t.toDepartment?.name ?? "—",
-        role: "Pending",
-        returnDate: t.createdAt ? t.createdAt.slice(0, 10) : "—",
-        status: "Transfer Pending",
-        requester: t.requestedBy?.name,
-        avatar: "↔",
-      }));
+      const transferCards: Allocation[] = (transferData.items ?? []).map((t) => {
+        const createdIso = fieldStr(t, "", "createdAt");
+        return {
+          id: fieldStr(t, "", "id"),
+          assetName: fieldStr(t, "Asset", "asset", "name"),
+          assetTag: fieldStr(t, "", "asset", "assetTag"),
+          assignee:
+            fieldStr(t, "", "toUser", "name") ||
+            fieldStr(t, "", "toDepartment", "name") ||
+            "—",
+          role: "Pending",
+          returnDate: createdIso ? createdIso.slice(0, 10) : "—",
+          status: "Transfer Pending",
+          requester: fieldStr(t, "", "requestedBy", "name"),
+          avatar: "↔",
+        };
+      });
 
       setAllocations([...allocCards, ...transferCards]);
     } catch (err) {
@@ -568,7 +581,7 @@ export default function AllocationsTransfers({
     }
   }, [isManager]);
 
-  useEffect(() => { loadAllocations(); }, [loadAllocations]);
+  useEffect(() => { void loadAllocations(); }, [loadAllocations]);
 
   // ── Action Handlers ──
   // ── Open the return/transfer modals ──
@@ -625,7 +638,7 @@ export default function AllocationsTransfers({
     if (res.success) {
       showToast("Transfer approved — asset re-assigned");
       // Reload so the new holder's allocation card replaces the request card.
-      loadAllocations();
+      void loadAllocations();
     } else {
       showToast(res.error ?? "Approval failed.", "error");
     }
@@ -992,7 +1005,7 @@ export default function AllocationsTransfers({
         onSuccess={(allocationId) => {
           setShowAllocate(false);
           showToast(`Asset allocated! ID: ${allocationId}`);
-          loadAllocations();
+          void loadAllocations();
         }}
       />
 

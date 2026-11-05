@@ -96,7 +96,7 @@ export default function AssetDirectory() {
       }
     };
 
-    fetchAssets();
+    void fetchAssets();
   }, []);
 
   // ==========================================

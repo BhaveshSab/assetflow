@@ -214,7 +214,7 @@ export default function ResourceBooking() {
       }
     };
 
-    fetchBookingData();
+    void fetchBookingData();
   }, [selectedDate, selectedResource]);
 
   // Calendar grid for the current month (real number of days).
@@ -337,7 +337,7 @@ export default function ResourceBooking() {
               </span>
             </div>
 
-            <div className="grid grid-cols-7 gap-2">
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
               {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
                 <div
                   key={`dow-${i}`}

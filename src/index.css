@@ -58,3 +58,42 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+/*
+ * A small screen rule that is easy to miss.
+ *
+ * iOS Safari zooms the whole page in as soon as an input with a font
+ * smaller than 16px is focused, and it does not zoom back out — the user
+ * is left staring at a magnified form. On a phone the fields are therefore
+ * 16px; from the `sm` breakpoint (640px) up the denser desktop sizes come
+ * back.
+ */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/*
+ * The focus ring must never be removed — a keyboard user has to see where
+ * they are. Tailwind removes it on some elements by default.
+ */
+:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+/* The screen-reader-only helper used by the skip link and the labels. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

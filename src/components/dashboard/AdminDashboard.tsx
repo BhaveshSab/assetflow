@@ -553,7 +553,7 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
         onSuccess={(asset) => {
           setShowRegister(false);
           showToast(`"${asset.name}" registered with tag ${asset.assetTag}`);
-          fetchAll();
+          void fetchAll();
         }}
       />
 

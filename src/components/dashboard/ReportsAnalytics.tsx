@@ -77,6 +77,37 @@ interface AnalyticsData {
   bookingHeatmap: HeatmapCell[][];
 }
 
+/**
+ * The chart tooltip.
+ *
+ * It used to be declared *inside* the component, so a new function was
+ * created on every render — Recharts then treated it as a new component and
+ * remounted the tooltip each time the page re-rendered. At module scope it
+ * is created once.
+ */
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  suffix = "",
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+  suffix?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div className="bg-[#161925] border border-zinc-800 p-3 rounded-lg shadow-xl">
+      <p className="text-gray-400 text-xs mb-1 font-semibold">{label}</p>
+      <p className="text-white font-bold text-sm">
+        {payload[0].value}
+        {suffix}
+      </p>
+    </div>
+  );
+}
+
 export default function ReportsAnalytics() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
     null
@@ -107,7 +138,7 @@ export default function ReportsAnalytics() {
       }
     };
 
-    fetchAnalytics();
+    void fetchAnalytics();
   }, [timeRange]);
 
   // ── Export: download the real asset CSV from the backend ──
@@ -129,32 +160,6 @@ export default function ReportsAnalytics() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export failed. Is the backend running?");
     }
-  };
-
-  // Custom Tooltip for Recharts (Dark Mode Native)
-  const CustomTooltip = ({
-    active,
-    payload,
-    label,
-    suffix = "",
-  }: {
-    active?: boolean;
-    payload?: Array<{ value: number }>;
-    label?: string;
-    suffix?: string;
-  }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-[#161925] border border-zinc-800 p-3 rounded-lg shadow-xl">
-          <p className="text-gray-400 text-xs mb-1 font-semibold">{label}</p>
-          <p className="text-white font-bold text-sm">
-            {payload[0].value}
-            {suffix}
-          </p>
-        </div>
-      );
-    }
-    return null;
   };
 
   return (
@@ -355,7 +360,7 @@ export default function ReportsAnalytics() {
                       tickLine={false}
                       tick={{ fill: "#9ca3af", fontSize: 12 }}
                     />
-                    <Tooltip content={<CustomTooltip suffix="%" />} />
+                    <Tooltip content={<ChartTooltip suffix="%" />} />
                     <Area
                       type="monotone"
                       dataKey="rate"
@@ -400,7 +405,7 @@ export default function ReportsAnalytics() {
                         />
                       ))}
                     </Pie>
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip content={<ChartTooltip />} />
                   </RechartsPie>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-2">
@@ -470,7 +475,7 @@ export default function ReportsAnalytics() {
                       tick={{ fill: "#d1d5db", fontSize: 12 }}
                     />
                     <Tooltip
-                      content={<CustomTooltip />}
+                      content={<ChartTooltip />}
                       cursor={{ fill: "#27272a" }}
                     />
                     <Bar

@@ -205,7 +205,7 @@ export default function ActivityLogs() {
         setLoading(false);
       }
     };
-    load();
+    void load();
   }, []);
 
   const filtered = items.filter((item) => {

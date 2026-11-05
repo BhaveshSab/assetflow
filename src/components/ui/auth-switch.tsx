@@ -202,7 +202,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
         if (!agree) return setLocalError("Please accept the Terms to continue.");
       }
 
-      onSubmit?.({
+      void onSubmit?.({
         mode,
         email,
         password,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
@@ -96,6 +96,25 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showSignout, setShowSignout] = useState(false);
 
+  // The drawer on a small screen covers the page: Escape closes it and the
+  // page behind it must not scroll (WCAG 2.1.2 — no keyboard trap).
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
+
   const allowedItems = ALL_NAV_ITEMS.filter((item) => item.allowedRoles.includes(user.role));
 
   const sections = allowedItems.reduce<Record<string, NavItem[]>>((acc, item) => {
@@ -136,6 +155,10 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
 
       {/* ── MOBILE HAMBURGER ── */}
       <button
+        type="button"
+        aria-label="Open the navigation menu"
+        aria-expanded={mobileOpen}
+        aria-controls="app-sidebar"
         onClick={() => setMobileOpen(true)}
         className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-[#1a1d2e] border border-zinc-700 rounded-xl text-gray-400 hover:text-white transition-colors"
       >
@@ -148,6 +171,8 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
 
       {/* ── SIDEBAR ── */}
       <motion.aside
+        id="app-sidebar"
+        aria-label="Navigation"
         animate={{ width: collapsed ? 68 : 220 }}
         transition={{ type: "spring" as const, stiffness: 300, damping: 30 }}
         className={`
@@ -185,6 +210,8 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
 
           <button
             onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? "Expand the navigation" : "Collapse the navigation"}
+            aria-expanded={!collapsed}
             className="hidden lg:flex p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-zinc-800 transition-all flex-shrink-0"
           >
             {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
@@ -219,6 +246,8 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                       whileTap={{ scale: 0.97 }}
                       onClick={() => handleNav(item.id)}
                       title={collapsed ? item.label : undefined}
+                      aria-label={collapsed ? item.label : undefined}
+                      aria-current={isActive ? "page" : undefined}
                       className={`
                         w-full flex items-center gap-3 px-2.5 py-2 rounded-xl transition-all duration-150 text-left relative group
                         ${isActive

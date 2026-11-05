@@ -16,6 +16,7 @@ import { apiGet, apiSend } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { errorMessage } from "@/lib/utils";
 import { type LucideIcon } from "lucide-react";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -74,25 +75,30 @@ const deptIdByName = async (name: string): Promise<string | undefined> => {
   return data.items.find((d) => d.name.toLowerCase() === name.toLowerCase())?.id;
 };
 
-const toEmployee = (e: Record<string, any>): Employee => ({
-  id: e.id,
-  name: e.name,
-  email: e.email,
-  department: e.department?.name ?? "—",
-  role: ENUM_TO_ROLE[e.role] ?? e.role,
-  status: e.status === "INACTIVE" ? "Inactive" : "Active",
-  joinedOn: e.createdAt ? e.createdAt.slice(0, 10) : "",
-  avatar: initialsOf(e.name ?? "??"),
-});
+const toEmployee = (e: ApiRecord): Employee => {
+  const name = fieldStr(e, "Unnamed employee", "name");
+  const roleEnum = fieldStr(e, "EMPLOYEE", "role");
+  const createdIso = fieldStr(e, "", "createdAt");
+  return {
+    id: fieldStr(e, "", "id"),
+    name,
+    email: fieldStr(e, "", "email"),
+    department: fieldStr(e, "—", "department", "name"),
+    role: ENUM_TO_ROLE[roleEnum] ?? roleEnum,
+    status: fieldStr(e, "ACTIVE", "status") === "INACTIVE" ? "Inactive" : "Active",
+    joinedOn: createdIso ? createdIso.slice(0, 10) : "",
+    avatar: initialsOf(name),
+  };
+};
 
 const employeeService = {
   getAll: async (): Promise<Employee[]> => {
-    const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/employees");
+    const data = await apiGet<{ items: ApiRecord[] }>("/org/employees");
     return (data.items ?? []).map(toEmployee);
   },
   create: async (data: EmployeeFormData & { avatar: string }): Promise<Employee> => {
     const departmentId = await deptIdByName(data.department);
-    const created = await apiSend<Record<string, any>>("/org/employees", "POST", {
+    const created = await apiSend<ApiRecord>("/org/employees", "POST", {
       name: data.name,
       email: data.email,
       departmentId: departmentId ?? undefined,
@@ -101,7 +107,7 @@ const employeeService = {
     return toEmployee(created);
   },
   update: async (id: string, data: Partial<Employee>): Promise<Employee> => {
-    const payload: Record<string, any> = {
+    const payload: Record<string, unknown> = {
       ...(data.name ? { name: data.name } : {}),
       ...(data.status ? { status: data.status === "Active" ? "ACTIVE" : "INACTIVE" } : {}),
     };
@@ -109,14 +115,18 @@ const employeeService = {
       const departmentId = await deptIdByName(data.department);
       if (departmentId) payload.departmentId = departmentId;
     }
-    const updated = await apiSend<Record<string, any>>(`/org/employees/${id}`, "PATCH", payload);
+    const updated = await apiSend<ApiRecord>(`/org/employees/${id}`, "PATCH", payload);
     // Role changes go through the dedicated role endpoint.
-    if (data.role && ENUM_TO_ROLE[updated.role] !== data.role) {
+    const currentRole = fieldStr(updated, "EMPLOYEE", "role");
+    if (data.role && ENUM_TO_ROLE[currentRole] !== data.role) {
       await apiSend(`/org/employees/${id}/role`, "PATCH", {
         role: ROLE_TO_ENUM[data.role] ?? "EMPLOYEE",
       });
     }
-    return toEmployee({ ...updated, role: data.role ? ROLE_TO_ENUM[data.role] : updated.role });
+    return toEmployee({
+      ...updated,
+      role: data.role ? ROLE_TO_ENUM[data.role] : currentRole,
+    });
   },
   delete: async (id: string): Promise<{ success: boolean }> => {
     // No hard delete — deactivate the account instead.
@@ -143,7 +153,6 @@ const employeeService = {
 
 const ROLES = ["Employee", "Department Head", "Asset Manager", "Admin"] as const;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const roleConfig: Record<string, { label: string; color: string; dot: string; icon: LucideIcon; description: string }> = {
   Admin:             { label: "Admin",         color: "bg-purple-500/20 text-purple-300 border-purple-500/30", dot: "bg-purple-400", icon: Crown,       description: "Full system access" },
   "Asset Manager":   { label: "Asset Manager", color: "bg-blue-500/20 text-blue-300 border-blue-500/30",       dot: "bg-blue-400",   icon: ShieldCheck, description: "Manages assets & approvals" },
@@ -207,20 +216,29 @@ const EmployeeToast = ({ toast }: { toast: { msg: string; type: string } | null 
 
 interface ConfirmState { title: string; message: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void }
 
+/** The form an employee starts from — a module constant, so the effect above
+ *  does not depend on a new object on every render. */
+const EMPTY_EMPLOYEE_FORM: EmployeeFormData = {
+  name: "",
+  email: "",
+  department: "",
+  role: "Employee",
+  status: "Active",
+};
+
 const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, saving }: {
   open: boolean; onClose: () => void; onSave: (data: EmployeeFormData) => void;
   editingEmployee: Employee | null; departments: string[]; saving: boolean;
 }) => {
   const isEdit = !!editingEmployee;
-  const emptyForm: EmployeeFormData = { name: "", email: "", department: "", role: "Employee", status: "Active" };
-  const [form, setForm] = useState<EmployeeFormData>(emptyForm);
+  const [form, setForm] = useState<EmployeeFormData>(EMPTY_EMPLOYEE_FORM);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
 
   useEffect(() => {
     if (open) {
       setForm(editingEmployee
         ? { name: editingEmployee.name, email: editingEmployee.email, department: editingEmployee.department, role: editingEmployee.role, status: editingEmployee.status }
-        : emptyForm);
+        : EMPTY_EMPLOYEE_FORM);
       setErrors({});
     }
   }, [open, editingEmployee]);
@@ -712,7 +730,7 @@ export default function OrganizationSetup() {
         setIsLoading(false);
       }
     };
-    load();
+    void load();
   }, [activeTab]);
 
   useEffect(() => {
@@ -729,7 +747,7 @@ export default function OrganizationSetup() {
         setIsLoadingCategories(false);
       }
     };
-    load();
+    void load();
   }, [activeTab]);
 
   // ==========================================

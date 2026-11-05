@@ -146,7 +146,7 @@ const fetchAudits = useCallback(async () => {
   }, []);
 
   useEffect(() => {
-    fetchAudits();
+    void fetchAudits();
   }, [fetchAudits]);
 
   // ── Create audit cycle — real POST /audits, real error handling ──
@@ -170,7 +170,7 @@ const fetchAudits = useCallback(async () => {
       setShowCreate(false);
       setCreateForm({ name: "", scopeLocation: "", startDate: "", endDate: "" });
       setCreateErrors({});
-      fetchAudits();
+      void fetchAudits();
     } catch (err) {
       setCreateErrors({ submit: errorMessage(err, "Failed to create audit cycle.") });
     } finally {

@@ -7,6 +7,12 @@
  *   GET/PATCH /org/employees
  */
 import { apiGet, apiSend } from "@/lib/api";
+import {
+  customFieldKeys,
+  fieldNum,
+  fieldStr,
+  type ApiRecord,
+} from "@/types/api";
 
 // =============================================
 // TYPES
@@ -75,15 +81,15 @@ const friendlyStatus = (s: string) => (s === "INACTIVE" ? "Inactive" : "Active")
 
 /** GET /org/departments */
 export async function fetchDepartments(): Promise<Department[]> {
-  const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/departments");
+  const data = await apiGet<{ items: ApiRecord[] }>("/org/departments");
   return (data.items ?? []).map((d) => ({
-    id: d.id,
-    name: d.name,
-    head: d.head?.name ?? "Unassigned",
-    headEmail: d.head?.email ?? "",
-    parent: d.parentDepartment?.name ?? null,
-    status: friendlyStatus(d.status),
-    employeeCount: d._count?.members ?? 0,
+    id: fieldStr(d, "", "id"),
+    name: fieldStr(d, "Unnamed department", "name"),
+    head: fieldStr(d, "Unassigned", "head", "name"),
+    headEmail: fieldStr(d, "", "head", "email"),
+    parent: fieldStr(d, "", "parentDepartment", "name") || null,
+    status: friendlyStatus(fieldStr(d, "ACTIVE", "status")),
+    employeeCount: fieldNum(d, 0, "_count", "members"),
   }));
 }
 
@@ -91,20 +97,20 @@ export async function fetchDepartments(): Promise<Department[]> {
 export async function createDepartment(data: DeptFormData): Promise<Department> {
   const headId = await userIdByName(data.head);
   const parentDepartmentId = await departmentIdByName(data.parent);
-  const created = await apiSend<Record<string, any>>("/org/departments", "POST", {
+  const created = await apiSend<ApiRecord>("/org/departments", "POST", {
     name: data.name,
     headId: headId ?? undefined,
     parentDepartmentId: parentDepartmentId ?? undefined,
     status: data.status === "Inactive" ? "INACTIVE" : undefined,
   });
   return {
-    id: created.id,
-    name: created.name,
-    head: created.head?.name ?? (data.head || "Unassigned"),
-    headEmail: created.head?.email ?? "",
-    parent: created.parentDepartment?.name ?? null,
-    status: friendlyStatus(created.status),
-    employeeCount: created._count?.members ?? 0,
+    id: fieldStr(created, "", "id"),
+    name: fieldStr(created, data.name, "name"),
+    head: fieldStr(created, data.head || "Unassigned", "head", "name"),
+    headEmail: fieldStr(created, "", "head", "email"),
+    parent: fieldStr(created, "", "parentDepartment", "name") || null,
+    status: friendlyStatus(fieldStr(created, "ACTIVE", "status")),
+    employeeCount: fieldNum(created, 0, "_count", "members"),
   };
 }
 
@@ -115,20 +121,20 @@ export async function updateDepartment(
 ): Promise<Department> {
   const headId = data.head ? await userIdByName(data.head) : undefined;
   const parentDepartmentId = data.parent ? await departmentIdByName(data.parent) : undefined;
-  const updated = await apiSend<Record<string, any>>(`/org/departments/${id}`, "PATCH", {
+  const updated = await apiSend<ApiRecord>(`/org/departments/${id}`, "PATCH", {
     ...(data.name ? { name: data.name } : {}),
     ...(headId ? { headId } : data.head === "" ? { headId: null } : {}),
     ...(parentDepartmentId ? { parentDepartmentId } : data.parent === "" ? { parentDepartmentId: null } : {}),
     ...(data.status ? { status: data.status === "Inactive" ? "INACTIVE" : "ACTIVE" } : {}),
   });
   return {
-    id: updated.id,
-    name: updated.name,
-    head: updated.head?.name ?? "Unassigned",
-    headEmail: updated.head?.email ?? "",
-    parent: updated.parentDepartment?.name ?? null,
-    status: friendlyStatus(updated.status),
-    employeeCount: updated._count?.members ?? 0,
+    id: fieldStr(updated, id, "id"),
+    name: fieldStr(updated, data.name ?? "", "name"),
+    head: fieldStr(updated, "Unassigned", "head", "name"),
+    headEmail: fieldStr(updated, "", "head", "email"),
+    parent: fieldStr(updated, "", "parentDepartment", "name") || null,
+    status: friendlyStatus(fieldStr(updated, "ACTIVE", "status")),
+    employeeCount: fieldNum(updated, 0, "_count", "members"),
   };
 }
 
@@ -150,22 +156,20 @@ export async function toggleDepartmentStatus(
 
 /** GET /org/categories */
 export async function fetchCategories(): Promise<AssetCategory[]> {
-  const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/categories");
+  const data = await apiGet<{ items: ApiRecord[] }>("/org/categories");
   return (data.items ?? []).map((c) => ({
-    id: c.id,
-    name: c.name,
+    id: fieldStr(c, "", "id"),
+    name: fieldStr(c, "Unnamed category", "name"),
     description: "",
-    customFields: Array.isArray(c.customFields)
-      ? c.customFields.map((f) => f?.key ?? String(f))
-      : [],
-    assetCount: c._count?.assets ?? 0,
-    status: friendlyStatus(c.status),
+    customFields: customFieldKeys(c.customFields),
+    assetCount: fieldNum(c, 0, "_count", "assets"),
+    status: friendlyStatus(fieldStr(c, "ACTIVE", "status")),
   }));
 }
 
 /** POST /org/categories  { name, customFields?, status? } */
 export async function createCategory(data: CategoryFormData): Promise<AssetCategory> {
-  const created = await apiSend<Record<string, any>>("/org/categories", "POST", {
+  const created = await apiSend<ApiRecord>("/org/categories", "POST", {
     name: data.name,
     customFields: data.customFields
       ? data.customFields
@@ -177,14 +181,12 @@ export async function createCategory(data: CategoryFormData): Promise<AssetCateg
     status: data.status === "Inactive" ? "INACTIVE" : undefined,
   });
   return {
-    id: created.id,
-    name: created.name,
+    id: fieldStr(created, "", "id"),
+    name: fieldStr(created, data.name, "name"),
     description: "",
-    customFields: Array.isArray(created.customFields)
-      ? created.customFields.map((f) => f?.key ?? String(f))
-      : [],
-    assetCount: created._count?.assets ?? 0,
-    status: friendlyStatus(created.status),
+    customFields: customFieldKeys(created.customFields),
+    assetCount: fieldNum(created, 0, "_count", "assets"),
+    status: friendlyStatus(fieldStr(created, "ACTIVE", "status")),
   };
 }
 
@@ -193,7 +195,7 @@ export async function updateCategory(
   id: string,
   data: Partial<CategoryFormData>,
 ): Promise<AssetCategory> {
-  const updated = await apiSend<Record<string, any>>(`/org/categories/${id}`, "PATCH", {
+  const updated = await apiSend<ApiRecord>(`/org/categories/${id}`, "PATCH", {
     ...(data.name ? { name: data.name } : {}),
     ...(data.customFields !== undefined
       ? {
@@ -207,14 +209,12 @@ export async function updateCategory(
     ...(data.status ? { status: data.status === "Inactive" ? "INACTIVE" : "ACTIVE" } : {}),
   });
   return {
-    id: updated.id,
-    name: updated.name,
+    id: fieldStr(updated, id, "id"),
+    name: fieldStr(updated, data.name ?? "", "name"),
     description: "",
-    customFields: Array.isArray(updated.customFields)
-      ? updated.customFields.map((f) => f?.key ?? String(f))
-      : [],
-    assetCount: updated._count?.assets ?? 0,
-    status: friendlyStatus(updated.status),
+    customFields: customFieldKeys(updated.customFields),
+    assetCount: fieldNum(updated, 0, "_count", "assets"),
+    status: friendlyStatus(fieldStr(updated, "ACTIVE", "status")),
   };
 }
 

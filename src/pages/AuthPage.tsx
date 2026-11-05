@@ -61,7 +61,7 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
       saveSession(session);
       navigate(nextPath);
     },
-    [navigate]
+    [navigate, nextPath]
   );
 
   const handleGoogleError = useCallback((message: string) => {

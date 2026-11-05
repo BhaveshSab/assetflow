@@ -280,7 +280,7 @@ const RaiseRequestModal = ({
   useEffect(() => {
     if (!open) return;
     setFetching(true);
-    maintenanceService.getAssets().then(setAssets).finally(() => setFetching(false));
+    void maintenanceService.getAssets().then(setAssets).finally(() => setFetching(false));
     setForm({ asset: null, issue: "", priority: "MEDIUM", photo: "" });
     setErrors({});
     setSubmitError("");
@@ -926,7 +926,10 @@ const Maintenance = ({
     }
   };
 
-  useEffect(() => { loadRequests(); }, []);
+  // The first load depends only on the role, which never changes while the
+  // view is open — so it runs once, on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void loadRequests(); }, []);
 
   const filtered = useMemo(() => {
     return requests.filter(r => {

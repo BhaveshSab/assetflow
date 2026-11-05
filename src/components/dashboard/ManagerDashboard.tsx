@@ -574,7 +574,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
         onSuccess={(asset) => {
           setShowRegister(false);
           showToast(`"${asset.name}" registered with tag ${asset.assetTag}`);
-          fetchAll();
+          void fetchAll();
         }}
       />
 

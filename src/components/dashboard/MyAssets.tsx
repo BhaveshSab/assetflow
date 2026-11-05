@@ -9,6 +9,7 @@ import {
 import { apiGet, apiSend } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 // ── Condition options for the return flow ──
 const RETURN_CONDITIONS = [
@@ -298,20 +299,23 @@ export default function MyAssets({ onNavigate }: Props) {
     try {
       // /allocations/my is JWT-scoped to this user — GET /allocations is
       // manager-only (403 for employees).
-      const data = await apiGet<{ items: Array<Record<string, any>> }>("/allocations/my");
+      const data = await apiGet<{ items: ApiRecord[] }>("/allocations/my");
       const items: MyAsset[] = (data.items ?? []).map((a) => ({
-        id: a.id,
+        id: fieldStr(a, "", "id"),
         asset: {
-          id: a.asset?.id ?? "",
-          assetTag: a.asset?.assetTag ?? "",
-          name: a.asset?.name ?? "Asset",
-          condition: a.asset?.condition ?? "GOOD",
-          location: a.asset?.location ?? null,
-          category: a.asset?.category ?? null,
+          id: fieldStr(a, "", "asset", "id"),
+          assetTag: fieldStr(a, "", "asset", "assetTag"),
+          name: fieldStr(a, "Asset", "asset", "name"),
+          condition: fieldStr(a, "GOOD", "asset", "condition"),
+          location: fieldStr(a, "", "asset", "location") || null,
+          category:
+            (typeof a.asset === "object" && a.asset !== null
+              ? (a.asset as ApiRecord).category
+              : null) as MyAsset["asset"]["category"],
         },
-        expectedReturnDate: a.expectedReturnDate ?? null,
-        status: a.status ?? "ACTIVE",
-        createdAt: a.createdAt ?? new Date().toISOString(),
+        expectedReturnDate: fieldStr(a, "", "expectedReturnDate") || null,
+        status: fieldStr(a, "ACTIVE", "status"),
+        createdAt: fieldStr(a, "", "createdAt") || new Date().toISOString(),
       }));
 
       const enriched = items.map((a) => ({
@@ -334,7 +338,7 @@ export default function MyAssets({ onNavigate }: Props) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   // ── Initiate Return — holder may return their own allocation ──
   const confirmReturn = async () => {
@@ -441,7 +445,7 @@ export default function MyAssets({ onNavigate }: Props) {
       </AnimatePresence>
 
       {/* ── STATS STRIP ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
           { label: "Active", value: activeCount, color: "text-blue-400" },
           { label: "Overdue", value: overdueCount, color: "text-red-400" },
