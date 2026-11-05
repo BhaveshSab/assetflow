@@ -1,4 +1,5 @@
 import { BASE_URL } from "@/lib/api";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 /**
  * Asset Services API — live backend calls.
@@ -37,12 +38,12 @@ export async function getAssets(): Promise<Asset[]> {
   if (!res.ok) throw new Error(`Failed to fetch assets (${res.status})`);
   const data = await res.json();
   const items = Array.isArray(data) ? data : (data.items ?? []);
-  return items.map((a: Record<string, any>) => ({
-    id: a.id,
-    name: a.name,
-    assetTag: a.assetTag,
-    category: a.category?.name ?? "—",
-    location: a.location ?? "—",
-    status: STATUS_LABEL[a.status] ?? a.status,
+  return items.map((a: ApiRecord) => ({
+    id: fieldStr(a, "", "id"),
+    name: fieldStr(a, "Unnamed asset", "name"),
+    assetTag: fieldStr(a, "—", "assetTag"),
+    category: fieldStr(a, "—", "category", "name"),
+    location: fieldStr(a, "—", "location"),
+    status: STATUS_LABEL[fieldStr(a)] ?? fieldStr(a),
   }));
 }

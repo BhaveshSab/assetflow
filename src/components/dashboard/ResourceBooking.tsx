@@ -30,6 +30,13 @@ const itemVariants = {
   },
 };
 
+interface RawBookableAsset {
+  id: string;
+  name?: string;
+  category?: { name?: string } | null;
+  location?: string;
+}
+
 interface Resource {
   id: string;
   name: string;
@@ -146,12 +153,14 @@ export default function ResourceBooking() {
 
       try {
         // 1) Bookable assets = isBookable=true and in service.
-        const assets = await apiGet<{ items: Array<Record<string, any>> }>("/assets?isBookable=true");
-        const resourceList: Resource[] = (assets.items ?? []).map((a: any) => {
+        const assets = await apiGet<{ items: RawBookableAsset[] }>(
+          "/assets?isBookable=true",
+        );
+        const resourceList: Resource[] = (assets.items ?? []).map((a) => {
           const cat = (a.category?.name ?? "").toLowerCase();
           return {
             id: a.id,
-            name: a.name,
+            name: a.name ?? "Unnamed resource",
             type: cat.includes("vehicle") || cat.includes("van")
               ? "vehicle"
               : cat.includes("furniture") || cat.includes("meeting") || cat.includes("room")
@@ -205,7 +214,7 @@ export default function ResourceBooking() {
       }
     };
 
-    fetchBookingData();
+    void fetchBookingData();
   }, [selectedDate, selectedResource]);
 
   // Calendar grid for the current month (real number of days).
@@ -241,7 +250,7 @@ export default function ResourceBooking() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>
@@ -328,7 +337,7 @@ export default function ResourceBooking() {
               </span>
             </div>
 
-            <div className="grid grid-cols-7 gap-2">
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
               {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
                 <div
                   key={`dow-${i}`}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { AuthSwitch, type AuthSwitchSubmitEvent } from "@/components/ui/auth-switch";
@@ -23,6 +23,19 @@ type AuthMode = "signin" | "signup";
  */
 export default function AuthPage({ mode }: { mode: AuthMode }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  /*
+   * The API client sends the user back here with ?next=<the page they were
+   * on> when the session expires mid-visit, so they continue where they
+   * stopped instead of landing on the dashboard. Only our own paths are
+   * accepted — anything else would be an open redirect.
+   */
+  const nextPath = (() => {
+    const raw = searchParams.get("next");
+    if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/Dashboard";
+    return raw;
+  })();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // null = Google is not configured (or the config call failed) → the button
@@ -46,9 +59,9 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
   const handleGoogleSuccess = useCallback(
     (session: AuthResponse) => {
       saveSession(session);
-      navigate("/Dashboard");
+      navigate(nextPath);
     },
-    [navigate]
+    [navigate, nextPath]
   );
 
   const handleGoogleError = useCallback((message: string) => {
@@ -72,8 +85,8 @@ export default function AuthPage({ mode }: { mode: AuthMode }) {
 
       saveSession(session);
 
-      // Redirect to the dashboard after sign in / sign up.
-      navigate("/Dashboard");
+      // Redirect to the dashboard — or back to the page the session expired on.
+      navigate(nextPath);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Something went wrong. Try again."

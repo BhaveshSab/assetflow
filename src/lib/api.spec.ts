@@ -82,6 +82,56 @@ describe("api client", () => {
 
       await expect(apiGet("/assets")).rejects.toThrow(/Could not reach/);
     });
+
+    it("drops the session and sends the user back to the sign-in page on a 401", async () => {
+      localStorage.setItem("token", "expired-token");
+      localStorage.setItem("session", JSON.stringify({ token: "expired-token" }));
+
+      const assign = vi.fn();
+      // jsdom cannot navigate, so the redirect is observed instead.
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { ...window.location, pathname: "/Dashboard", search: "", assign },
+      });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "Unauthorized" }),
+        }),
+      );
+
+      await expect(apiGet("/assets")).rejects.toThrow();
+
+      // The stale session is gone …
+      expect(localStorage.getItem("token")).toBeNull();
+      expect(localStorage.getItem("session")).toBeNull();
+      // … and the user is sent to the sign-in page, keeping the page they
+      // were on so they can continue there after signing in.
+      expect(assign).toHaveBeenCalledWith("/signin?next=%2FDashboard");
+    });
+
+    it("does not redirect in a loop when the sign-in page itself gets a 401", async () => {
+      const assign = vi.fn();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { ...window.location, pathname: "/signin", search: "", assign },
+      });
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "Unauthorized" }),
+        }),
+      );
+
+      await expect(apiGet("/assets")).rejects.toThrow();
+      expect(assign).not.toHaveBeenCalled();
+    });
   });
 
   describe("apiSend", () => {

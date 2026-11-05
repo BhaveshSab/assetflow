@@ -117,7 +117,7 @@ cold starts.
 
 | Layer | Choice |
 |-------|--------|
-| Frontend | React 18, TypeScript, Vite 5, Tailwind 3, shadcn/ui, Recharts, Framer Motion, lucide-react |
+| Frontend | React 18, TypeScript 5.6 (strict), Vite 5, Tailwind 3, Recharts, Framer Motion, lucide-react, Vitest + Testing Library, ESLint 9 |
 | Backend | NestJS 11, TypeScript, class-validator, passport-jwt, bcrypt 6, helmet, @nestjs/throttler |
 | Data | PostgreSQL 14+, Prisma 6, Neon (serverless) **or** any Postgres via `pg` |
 | Tests | Jest + Supertest (backend, real embedded Postgres), Vitest (frontend) |
@@ -407,8 +407,9 @@ npm test
 |-------|---------|----------------|
 | Backend unit | `cd backend && npm run test:unit` | **62 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
 | Backend e2e | `cd backend && npm run test:e2e` | **114 checks** — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, health, observability |
-| Frontend | `npm test` | **26 checks** — API client, session handling, Google config/exchange, avatar initials |
-| Lint | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
+| Frontend | `npm test` | **52 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials |
+| Lint (backend) | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
+| Lint (frontend) | `npm run lint` | ESLint 9 + the React hooks rules over `src/` — 0 errors (16 advisory warnings, listed in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)) |
 
 What the e2e suite proves, among other things:
 
@@ -644,6 +645,8 @@ host, and every claim with its evidence is in
 
 **The documentation** — the part an interviewer reads:
 [architecture](docs/ARCHITECTURE.md) ·
+[frontend](docs/FRONTEND.md) ·
+[accessibility (WCAG 2.1 AA)](docs/ACCESSIBILITY.md) ·
 [runbook](docs/RUNBOOK.md) ·
 [DR drill](docs/DR_DRILL.md) ·
 [decisions](docs/DECISIONS.md) ·

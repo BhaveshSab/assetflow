@@ -1,22 +1,50 @@
-import { useEffect, useState, useCallback } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback } from "react";
 import { Navigate } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 
 import DashboardLayout, { type ViewName } from "@/components/dashboard/DashboardLayout";
 import type { Role, SidebarProps } from "@/components/dashboard/Sidebar";
-import AdminDashboard from "@/components/dashboard/AdminDashboard";
-import ManagerDashboard from "@/components/dashboard/ManagerDashboard";
-import EmployeeDashboard from "@/components/dashboard/EmployeeDashboard";
-import AssetDirectory from "@/components/dashboard/AssetDirectory";
-import AllocationsTransfers from "@/components/dashboard/AllocationsTransfers";
-import ResourceBooking from "@/components/dashboard/ResourceBooking";
-import Maintenance from "@/components/dashboard/Maintenance";
-import AssetAudits from "@/components/dashboard/AssetAudits";
-import ReportsAnalytics from "@/components/dashboard/ReportsAnalytics";
-import OrganizationSetup from "@/components/dashboard/OrganizationSetup";
-import ActivityLogs from "@/components/dashboard/ActivityLogs";
-import MyAssets from "@/components/dashboard/MyAssets";
 import { apiGet } from "@/lib/api";
+
+/*
+ * The views are loaded when they are first opened.
+ *
+ * The whole application used to arrive in one file, so a user who only
+ * wanted to book a room also downloaded the charts of the analytics page.
+ * Now only the sign-in page and the shell are loaded up front; every view
+ * arrives when it is opened — and the browser keeps it in its cache for the
+ * next time.
+ */
+const AdminDashboard = lazy(() => import("@/components/dashboard/AdminDashboard"));
+const ManagerDashboard = lazy(() => import("@/components/dashboard/ManagerDashboard"));
+const EmployeeDashboard = lazy(() => import("@/components/dashboard/EmployeeDashboard"));
+const AssetDirectory = lazy(() => import("@/components/dashboard/AssetDirectory"));
+const AllocationsTransfers = lazy(
+  () => import("@/components/dashboard/AllocationsTransfers"),
+);
+const ResourceBooking = lazy(() => import("@/components/dashboard/ResourceBooking"));
+const Maintenance = lazy(() => import("@/components/dashboard/Maintenance"));
+const AssetAudits = lazy(() => import("@/components/dashboard/AssetAudits"));
+const ReportsAnalytics = lazy(() => import("@/components/dashboard/ReportsAnalytics"));
+const OrganizationSetup = lazy(() => import("@/components/dashboard/OrganizationSetup"));
+const ActivityLogs = lazy(() => import("@/components/dashboard/ActivityLogs"));
+const MyAssets = lazy(() => import("@/components/dashboard/MyAssets"));
+
+/** Shown while a view is being downloaded — it is announced, not just seen. */
+function ViewFallback() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center justify-center py-20 gap-2 text-zinc-500 text-sm"
+    >
+      <Loader2 size={18} className="animate-spin text-blue-400" aria-hidden="true" />
+      Loading…
+    </div>
+  );
+}
 import { clearSession, getMe, getSession, type AuthResponse } from "@/lib/auth";
+import { usePolling } from "@/hooks/usePolling";
 
 /* ------------------------------------------------------------------ */
 /*  Role + KPI badges come from the real backend (JWT + /reports).     */
@@ -96,11 +124,9 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    refreshBadges();
-    const t = setInterval(refreshBadges, 60_000);
-    return () => clearInterval(t);
-  }, [refreshBadges]);
+  // Refresh the badges every 60s — no overlapping requests, nothing while
+  // the tab is hidden.
+  usePolling(refreshBadges, 60_000);
 
   if (!session) return <Navigate to="/signin" replace />;
 
@@ -161,6 +187,7 @@ export default function Dashboard() {
       currentView={currentView}
       sidebarProps={sidebarProps}
     >
+      <Suspense fallback={<ViewFallback />}>
       {currentView === "Dashboard" && (
         role === "ADMIN"
           ? <AdminDashboard onNavigate={handleNavigate} onSignOut={handleSignOut} />
@@ -190,6 +217,7 @@ export default function Dashboard() {
       {currentView === "OrganizationSetup" && <OrganizationSetup />}
       {currentView === "ActivityLogs" && <ActivityLogs />}
       {currentView === "MyAssets" && <MyAssets onNavigate={handleNavigate} />}
+      </Suspense>
     </DashboardLayout>
   );
 }

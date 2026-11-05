@@ -17,6 +17,9 @@ import {
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -76,8 +79,8 @@ const allocationApi = {
         conditionOnReturn: payload?.conditionOnReturn || undefined,
       });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message ?? "Return failed" };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Return failed") };
     }
   },
   transferAsset: async (assetId: string, toUserId: string, reason?: string) => {
@@ -88,8 +91,8 @@ const allocationApi = {
         reason: reason || "Transfer requested from Allocations & Transfers",
       });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message ?? "Transfer failed" };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Transfer failed") };
     }
   },
   getEmployees: async (): Promise<Array<{
@@ -111,24 +114,24 @@ const allocationApi = {
     try {
       await apiSend(`/transfers/${id}/approve`, "POST");
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
   rejectTransfer: async (id: string) => {
     try {
       await apiSend(`/transfers/${id}/reject`, "POST");
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
   sendPing: async (allocationId: string) => {
     try {
       await apiSend("/notifications/ping", "POST", { allocationId });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
 };
@@ -204,7 +207,7 @@ const ReturnAssetModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -247,6 +250,7 @@ const ReturnAssetModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -322,9 +326,9 @@ const TransferAssetModal = ({
           ),
         ),
       )
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setEmployees([]);
-        setEmpError(err?.message ?? "Failed to load employees");
+        setEmpError(errorMessage(err, "Failed to load employees"));
       })
       .finally(() => setLoadingEmps(false));
   }, [open, asset, currentUserId]);
@@ -366,7 +370,7 @@ const TransferAssetModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -445,6 +449,7 @@ const TransferAssetModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -483,6 +488,9 @@ export default function AllocationsTransfers({
   const canAllocate = userRole === "ADMIN" || userRole === "ASSET_MANAGER";
 
   const [allocations, setAllocations] = useState<Allocation[]>([]);
+  // The transfer the manager is about to reject — the rejection is only
+  // sent after the confirmation, never on the first click.
+  const [rejectTarget, setRejectTarget] = useState<Allocation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -509,49 +517,61 @@ export default function AllocationsTransfers({
       // Managers see ALL allocations + pending transfers; employees only see
       // their own (holder or allocator) via the dedicated /allocations/my endpoint.
       const [allocData, transferData] = await Promise.all([
-        apiGet<{ items: Array<Record<string, any>> }>(
-          isManager ? "/allocations" : "/allocations/my",
-        ),
+        apiGet<{ items: ApiRecord[] }>(isManager ? "/allocations" : "/allocations/my"),
         isManager
-          ? apiGet<{ items: Array<Record<string, any>> }>(
-              "/transfers?status=REQUESTED",
-            )
-          : Promise.resolve({ items: [] }),
+          ? apiGet<{ items: ApiRecord[] }>("/transfers?status=REQUESTED")
+          : Promise.resolve({ items: [] as ApiRecord[] }),
       ]);
       const now = Date.now();
 
       const allocCards: Allocation[] = (allocData.items ?? []).map((a) => {
-        const expected = a.expectedReturnDate
-          ? new Date(a.expectedReturnDate).getTime()
-          : null;
+        const expectedIso = fieldStr(a, "", "expectedReturnDate");
+        const expected = expectedIso ? new Date(expectedIso).getTime() : null;
+        const status = fieldStr(a, "", "status");
         const isOverdue =
-          a.status === "ACTIVE" && expected !== null && expected < now;
-        const holder = a.holderUser?.name ?? a.department?.name ?? "—";
+          status === "ACTIVE" && expected !== null && expected < now;
+        const holder =
+          fieldStr(a, "", "holderUser", "name") ||
+          fieldStr(a, "", "department", "name") ||
+          "—";
         return {
-          id: a.id,
-          _assetId: a.assetId,
-          holderId: a.holderUserId ?? undefined,
-          assetName: a.asset?.name ?? "Asset",
-          assetTag: a.asset?.assetTag ?? "",
+          id: fieldStr(a, "", "id"),
+          _assetId: fieldStr(a, "", "assetId"),
+          holderId: fieldStr(a, "", "holderUserId") || undefined,
+          assetName: fieldStr(a, "Asset", "asset", "name"),
+          assetTag: fieldStr(a, "", "asset", "assetTag"),
           assignee: holder,
-          role: a.holderUser?.role ?? (a.departmentId ? "Department" : "—"),
-          returnDate: a.expectedReturnDate ? a.expectedReturnDate.slice(0, 10) : "—",
-          status: a.status === "RETURNED" ? "Returned" : isOverdue ? "Overdue" : "Allocated",
+          role:
+            fieldStr(a, "", "holderUser", "role") ||
+            (fieldStr(a, "", "departmentId") ? "Department" : "—"),
+          returnDate: expectedIso ? expectedIso.slice(0, 10) : "—",
+          status:
+            status === "RETURNED"
+              ? "Returned"
+              : isOverdue
+                ? "Overdue"
+                : "Allocated",
           avatar: initials(holder),
         };
       });
 
-      const transferCards: Allocation[] = (transferData.items ?? []).map((t) => ({
-        id: t.id,
-        assetName: t.asset?.name ?? "Asset",
-        assetTag: t.asset?.assetTag ?? "",
-        assignee: t.toUser?.name ?? t.toDepartment?.name ?? "—",
-        role: "Pending",
-        returnDate: t.createdAt ? t.createdAt.slice(0, 10) : "—",
-        status: "Transfer Pending",
-        requester: t.requestedBy?.name,
-        avatar: "↔",
-      }));
+      const transferCards: Allocation[] = (transferData.items ?? []).map((t) => {
+        const createdIso = fieldStr(t, "", "createdAt");
+        return {
+          id: fieldStr(t, "", "id"),
+          assetName: fieldStr(t, "Asset", "asset", "name"),
+          assetTag: fieldStr(t, "", "asset", "assetTag"),
+          assignee:
+            fieldStr(t, "", "toUser", "name") ||
+            fieldStr(t, "", "toDepartment", "name") ||
+            "—",
+          role: "Pending",
+          returnDate: createdIso ? createdIso.slice(0, 10) : "—",
+          status: "Transfer Pending",
+          requester: fieldStr(t, "", "requestedBy", "name"),
+          avatar: "↔",
+        };
+      });
 
       setAllocations([...allocCards, ...transferCards]);
     } catch (err) {
@@ -561,7 +581,7 @@ export default function AllocationsTransfers({
     }
   }, [isManager]);
 
-  useEffect(() => { loadAllocations(); }, [loadAllocations]);
+  useEffect(() => { void loadAllocations(); }, [loadAllocations]);
 
   // ── Action Handlers ──
   // ── Open the return/transfer modals ──
@@ -618,7 +638,7 @@ export default function AllocationsTransfers({
     if (res.success) {
       showToast("Transfer approved — asset re-assigned");
       // Reload so the new holder's allocation card replaces the request card.
-      loadAllocations();
+      void loadAllocations();
     } else {
       showToast(res.error ?? "Approval failed.", "error");
     }
@@ -739,7 +759,7 @@ export default function AllocationsTransfers({
 
       {/* --- Error State --- */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 flex items-center gap-4 text-red-400">
           <AlertCircle size={24} />
           <p>{error}</p>
           <button
@@ -901,7 +921,7 @@ export default function AllocationsTransfers({
                         </button>
                         <button
                           disabled={!!actionLoading[item.id]}
-                          onClick={() => handleReject(item.id)}
+                          onClick={() => setRejectTarget(item)}
                           className="flex-1 bg-red-500/10 text-red-400 border border-red-500/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "reject" ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={14} />}
@@ -985,7 +1005,7 @@ export default function AllocationsTransfers({
         onSuccess={(allocationId) => {
           setShowAllocate(false);
           showToast(`Asset allocated! ID: ${allocationId}`);
-          loadAllocations();
+          void loadAllocations();
         }}
       />
 
@@ -996,6 +1016,27 @@ export default function AllocationsTransfers({
         submitting={!!returnTarget && !!actionLoading[returnTarget.id]}
         onClose={() => setReturnTarget(null)}
         onConfirm={submitReturn}
+      />
+
+      {/* Rejecting a transfer — ask first */}
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this transfer?"
+        message={
+          rejectTarget
+            ? `${rejectTarget.assetName} will stay with its current holder and the request is declined.`
+            : ""
+        }
+        confirmLabel="Reject transfer"
+        destructive
+        busy={!!rejectTarget && !!actionLoading[rejectTarget.id]}
+        onCancel={() => setRejectTarget(null)}
+        onConfirm={() => {
+          if (!rejectTarget) return;
+          const id = rejectTarget.id;
+          setRejectTarget(null);
+          void handleReject(id);
+        }}
       />
 
       {/* Transfer Asset Modal — pick employee + reason */}

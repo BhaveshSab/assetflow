@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package,
@@ -39,6 +39,8 @@ import {
 } from "recharts";
 import { getSession } from "@/lib/auth";
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { usePolling } from "@/hooks/usePolling";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -419,7 +421,7 @@ const NotificationPanel = ({
   >
     <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2d3e]">
       <span className="text-sm font-semibold text-white">My Notifications</span>
-      <button onClick={onClose}>
+      <button aria-label="Close" onClick={onClose}>
         <X size={14} className="text-gray-400 hover:text-white" />
       </button>
     </div>
@@ -507,12 +509,15 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
     }
   }, []);
 
-  useEffect(() => {
-    if (!isEmployee) return;
-    fetchAll();
-    const interval = setInterval(fetchAll, 60000);
-    return () => clearInterval(interval);
-  }, [isEmployee, fetchAll]);
+  // Auto-refresh every 60s — no overlapping requests, nothing while the
+  // tab is hidden.
+  usePolling(fetchAll, 60_000, isEmployee);
+
+  // Cancelling a booking takes the slot away from everyone, so it asks first.
+  const [cancelTarget, setCancelTarget] = useState<{
+    id: number | string;
+    resource: string;
+  } | null>(null);
 
   const handleCancelBooking = async (id: number | string) => {
     setCancelLoading((p) => ({ ...p, [id]: true }));
@@ -590,6 +595,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
           <p className="text-sm text-red-300 flex-1">{dataError}</p>
           <button
+            aria-label="Refresh"
             onClick={fetchAll}
             className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
           >
@@ -613,6 +619,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           </span>
 
           <button
+            aria-label="Refresh"
             onClick={fetchAll}
             disabled={refreshing}
             className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors"
@@ -908,7 +915,12 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                     {booking.status === "Upcoming" && (
                       <button
                         disabled={cancelLoading[booking.id]}
-                        onClick={() => handleCancelBooking(booking._id ?? booking.id)}
+                        onClick={() =>
+                          setCancelTarget({
+                            id: booking._id ?? booking.id,
+                            resource: booking.resource ?? "this resource",
+                          })
+                        }
                         className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors disabled:opacity-50"
                       >
                         {cancelLoading[booking.id] ? "..." : "Cancel"}
@@ -1041,6 +1053,26 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           AssetFlow ERP &middot; Employee Portal &middot; Last updated {lastUpdated.toLocaleTimeString()}
         </div>
       </div>
+
+      {/* Cancelling a booking — ask first */}
+      <ConfirmDialog
+        open={!!cancelTarget}
+        title="Cancel this booking?"
+        message={
+          cancelTarget
+            ? `${cancelTarget.resource} will be free again for others. You can book it again later if you change your mind.`
+            : ""
+        }
+        confirmLabel="Cancel booking"
+        destructive
+        onCancel={() => setCancelTarget(null)}
+        onConfirm={() => {
+          if (!cancelTarget) return;
+          const id = cancelTarget.id;
+          setCancelTarget(null);
+          void handleCancelBooking(id);
+        }}
+      />
     </div>
   );
 };

@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { errorMessage } from "@/lib/utils";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 // ── Condition options for the return flow ──
 const RETURN_CONDITIONS = [
@@ -58,9 +60,9 @@ const TransferModal = ({
           (Array.isArray(data) ? data : []).filter((e) => e.id !== currentUserId),
         ),
       )
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setEmployees([]);
-        setEmpError(err?.message ?? "Failed to load employees");
+        setEmpError(errorMessage(err, "Failed to load employees"));
       })
       .finally(() => setLoadingEmps(false));
   }, [open, currentUserId]);
@@ -110,7 +112,7 @@ const TransferModal = ({
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
               <X size={15} className="text-zinc-400" />
             </button>
           </div>
@@ -183,6 +185,7 @@ const TransferModal = ({
 
           <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
             <button
+              aria-label="Close"
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
             >
@@ -296,20 +299,23 @@ export default function MyAssets({ onNavigate }: Props) {
     try {
       // /allocations/my is JWT-scoped to this user — GET /allocations is
       // manager-only (403 for employees).
-      const data = await apiGet<{ items: Array<Record<string, any>> }>("/allocations/my");
+      const data = await apiGet<{ items: ApiRecord[] }>("/allocations/my");
       const items: MyAsset[] = (data.items ?? []).map((a) => ({
-        id: a.id,
+        id: fieldStr(a, "", "id"),
         asset: {
-          id: a.asset?.id ?? "",
-          assetTag: a.asset?.assetTag ?? "",
-          name: a.asset?.name ?? "Asset",
-          condition: a.asset?.condition ?? "GOOD",
-          location: a.asset?.location ?? null,
-          category: a.asset?.category ?? null,
+          id: fieldStr(a, "", "asset", "id"),
+          assetTag: fieldStr(a, "", "asset", "assetTag"),
+          name: fieldStr(a, "Asset", "asset", "name"),
+          condition: fieldStr(a, "GOOD", "asset", "condition"),
+          location: fieldStr(a, "", "asset", "location") || null,
+          category:
+            (typeof a.asset === "object" && a.asset !== null
+              ? (a.asset as ApiRecord).category
+              : null) as MyAsset["asset"]["category"],
         },
-        expectedReturnDate: a.expectedReturnDate ?? null,
-        status: a.status ?? "ACTIVE",
-        createdAt: a.createdAt ?? new Date().toISOString(),
+        expectedReturnDate: fieldStr(a, "", "expectedReturnDate") || null,
+        status: fieldStr(a, "ACTIVE", "status"),
+        createdAt: fieldStr(a, "", "createdAt") || new Date().toISOString(),
       }));
 
       const enriched = items.map((a) => ({
@@ -325,14 +331,14 @@ export default function MyAssets({ onNavigate }: Props) {
       }));
 
       setAssets(enriched);
-    } catch (e: any) {
-      setError(e.message ?? "Could not load your assets. Is the backend running?");
+    } catch (e) {
+      setError(errorMessage(e, "Could not load your assets. Is the backend running?"));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   // ── Initiate Return — holder may return their own allocation ──
   const confirmReturn = async () => {
@@ -347,8 +353,8 @@ export default function MyAssets({ onNavigate }: Props) {
       setAssets((p) => p.map((a) => (a.id === allocationId ? { ...a, status: "RETURNED" } : a)));
       showToast(`${returnTarget.asset?.name ?? "Asset"} returned successfully`);
       setReturnTarget(null);
-    } catch (e: any) {
-      showToast(e?.message ?? "Return failed", "error");
+    } catch (e) {
+      showToast(errorMessage(e, "Return failed"), "error");
     } finally {
       setActionLoad((p) => ({ ...p, [allocationId]: "" }));
     }
@@ -367,8 +373,8 @@ export default function MyAssets({ onNavigate }: Props) {
       setRequestedTransferIds((p) => ({ ...p, [transferTarget.id]: true }));
       setTransferTarget(null);
       showToast("Transfer request submitted — pending approval");
-    } catch (e: any) {
-      showToast(e?.message ?? "Transfer request failed", "error");
+    } catch (e) {
+      showToast(errorMessage(e, "Transfer request failed"), "error");
     } finally {
       setTransferring(false);
     }
@@ -439,7 +445,7 @@ export default function MyAssets({ onNavigate }: Props) {
       </AnimatePresence>
 
       {/* ── STATS STRIP ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
           { label: "Active", value: activeCount, color: "text-blue-400" },
           { label: "Overdue", value: overdueCount, color: "text-red-400" },
@@ -477,7 +483,7 @@ export default function MyAssets({ onNavigate }: Props) {
 
       {/* ── ERROR ── */}
       {error && (
-        <div className="bg-red-950/30 border border-red-500/30 rounded-xl px-4 py-3 flex items-center gap-3 text-red-400 text-sm">
+        <div role="alert" className="bg-red-950/30 border border-red-500/30 rounded-xl px-4 py-3 flex items-center gap-3 text-red-400 text-sm">
           <AlertCircle size={16} /> {error}
           <button onClick={load} className="ml-auto underline hover:text-red-300">Retry</button>
         </div>

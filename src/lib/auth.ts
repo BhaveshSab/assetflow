@@ -15,27 +15,17 @@
  * every request is authorised server-side against the *current* user record
  * (role changes and deactivations take effect immediately).
  */
-import { BASE_URL, getToken } from "@/lib/api";
+import { BASE_URL } from "@/lib/api";
+import {
+  getSession,
+  getToken,
+  saveSession,
+  type AuthResponse,
+  type AuthUser,
+} from "@/lib/session";
 
-export type UserRole =
-  | "ADMIN"
-  | "ASSET_MANAGER"
-  | "DEPARTMENT_HEAD"
-  | "EMPLOYEE";
-
-export interface AuthUser {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  status: string;
-  departmentId: string | null;
-}
-
-export interface AuthResponse {
-  token: string;
-  user: AuthUser;
-}
+export type { AuthResponse, AuthUser, UserRole } from "@/lib/session";
+export { clearSession, getSession, saveSession } from "@/lib/session";
 
 export interface AuthPayload {
   email: string;
@@ -46,28 +36,6 @@ export interface AuthPayload {
 export interface AuthConfig {
   /** The public Google OAuth client id, or null when Google is not configured. */
   googleClientId: string | null;
-}
-
-const SESSION_KEY = "session";
-const TOKEN_KEY = "token";
-
-export function saveSession(session: AuthResponse) {
-  localStorage.setItem(TOKEN_KEY, session.token);
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-}
-
-export function getSession(): AuthResponse | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as AuthResponse) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function clearSession() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(SESSION_KEY);
 }
 
 async function requestAuth<T>(

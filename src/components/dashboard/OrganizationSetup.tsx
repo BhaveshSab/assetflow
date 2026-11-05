@@ -13,6 +13,10 @@ import {
   type Department, type AssetCategory, type DeptFormData, type CategoryFormData,
 } from "@/services/organizationService";
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
+import { type LucideIcon } from "lucide-react";
+import { fieldStr, type ApiRecord } from "@/types/api";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -71,25 +75,30 @@ const deptIdByName = async (name: string): Promise<string | undefined> => {
   return data.items.find((d) => d.name.toLowerCase() === name.toLowerCase())?.id;
 };
 
-const toEmployee = (e: Record<string, any>): Employee => ({
-  id: e.id,
-  name: e.name,
-  email: e.email,
-  department: e.department?.name ?? "—",
-  role: ENUM_TO_ROLE[e.role] ?? e.role,
-  status: e.status === "INACTIVE" ? "Inactive" : "Active",
-  joinedOn: e.createdAt ? e.createdAt.slice(0, 10) : "",
-  avatar: initialsOf(e.name ?? "??"),
-});
+const toEmployee = (e: ApiRecord): Employee => {
+  const name = fieldStr(e, "Unnamed employee", "name");
+  const roleEnum = fieldStr(e, "EMPLOYEE", "role");
+  const createdIso = fieldStr(e, "", "createdAt");
+  return {
+    id: fieldStr(e, "", "id"),
+    name,
+    email: fieldStr(e, "", "email"),
+    department: fieldStr(e, "—", "department", "name"),
+    role: ENUM_TO_ROLE[roleEnum] ?? roleEnum,
+    status: fieldStr(e, "ACTIVE", "status") === "INACTIVE" ? "Inactive" : "Active",
+    joinedOn: createdIso ? createdIso.slice(0, 10) : "",
+    avatar: initialsOf(name),
+  };
+};
 
 const employeeService = {
   getAll: async (): Promise<Employee[]> => {
-    const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/employees");
+    const data = await apiGet<{ items: ApiRecord[] }>("/org/employees");
     return (data.items ?? []).map(toEmployee);
   },
   create: async (data: EmployeeFormData & { avatar: string }): Promise<Employee> => {
     const departmentId = await deptIdByName(data.department);
-    const created = await apiSend<Record<string, any>>("/org/employees", "POST", {
+    const created = await apiSend<ApiRecord>("/org/employees", "POST", {
       name: data.name,
       email: data.email,
       departmentId: departmentId ?? undefined,
@@ -98,7 +107,7 @@ const employeeService = {
     return toEmployee(created);
   },
   update: async (id: string, data: Partial<Employee>): Promise<Employee> => {
-    const payload: Record<string, any> = {
+    const payload: Record<string, unknown> = {
       ...(data.name ? { name: data.name } : {}),
       ...(data.status ? { status: data.status === "Active" ? "ACTIVE" : "INACTIVE" } : {}),
     };
@@ -106,14 +115,18 @@ const employeeService = {
       const departmentId = await deptIdByName(data.department);
       if (departmentId) payload.departmentId = departmentId;
     }
-    const updated = await apiSend<Record<string, any>>(`/org/employees/${id}`, "PATCH", payload);
+    const updated = await apiSend<ApiRecord>(`/org/employees/${id}`, "PATCH", payload);
     // Role changes go through the dedicated role endpoint.
-    if (data.role && ENUM_TO_ROLE[updated.role] !== data.role) {
+    const currentRole = fieldStr(updated, "EMPLOYEE", "role");
+    if (data.role && ENUM_TO_ROLE[currentRole] !== data.role) {
       await apiSend(`/org/employees/${id}/role`, "PATCH", {
         role: ROLE_TO_ENUM[data.role] ?? "EMPLOYEE",
       });
     }
-    return toEmployee({ ...updated, role: data.role ? ROLE_TO_ENUM[data.role] : updated.role });
+    return toEmployee({
+      ...updated,
+      role: data.role ? ROLE_TO_ENUM[data.role] : currentRole,
+    });
   },
   delete: async (id: string): Promise<{ success: boolean }> => {
     // No hard delete — deactivate the account instead.
@@ -140,8 +153,7 @@ const employeeService = {
 
 const ROLES = ["Employee", "Department Head", "Asset Manager", "Admin"] as const;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const roleConfig: Record<string, { label: string; color: string; dot: string; icon: any; description: string }> = {
+const roleConfig: Record<string, { label: string; color: string; dot: string; icon: LucideIcon; description: string }> = {
   Admin:             { label: "Admin",         color: "bg-purple-500/20 text-purple-300 border-purple-500/30", dot: "bg-purple-400", icon: Crown,       description: "Full system access" },
   "Asset Manager":   { label: "Asset Manager", color: "bg-blue-500/20 text-blue-300 border-blue-500/30",       dot: "bg-blue-400",   icon: ShieldCheck, description: "Manages assets & approvals" },
   "Department Head": { label: "Dept. Head",    color: "bg-amber-500/20 text-amber-300 border-amber-500/30",   dot: "bg-amber-400",  icon: Briefcase,   description: "Manages department assets" },
@@ -204,44 +216,29 @@ const EmployeeToast = ({ toast }: { toast: { msg: string; type: string } | null 
 
 interface ConfirmState { title: string; message: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void }
 
-const EmployeeConfirmDialog = ({ open, title, message, onConfirm, onCancel, confirmLabel = "Confirm", danger = false }: {
-  open: boolean; title?: string; message?: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; danger?: boolean
-}) => (
-  <AnimatePresence>
-    {open && (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={onCancel}>
-        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-          onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${danger ? "bg-red-500/20" : "bg-amber-500/20"}`}>
-            <AlertCircle size={22} className={danger ? "text-red-400" : "text-amber-400"} />
-          </div>
-          <h3 className="text-white font-bold text-center mb-1">{title}</h3>
-          <p className="text-gray-400 text-sm text-center mb-6">{message}</p>
-          <div className="flex gap-3">
-            <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
-            <button onClick={onConfirm} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${danger ? "bg-red-600 hover:bg-red-500 text-white" : "bg-amber-600 hover:bg-amber-500 text-white"}`}>{confirmLabel}</button>
-          </div>
-        </motion.div>
-      </motion.div>
-    )}
-  </AnimatePresence>
-);
+/** The form an employee starts from — a module constant, so the effect above
+ *  does not depend on a new object on every render. */
+const EMPTY_EMPLOYEE_FORM: EmployeeFormData = {
+  name: "",
+  email: "",
+  department: "",
+  role: "Employee",
+  status: "Active",
+};
 
 const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, saving }: {
   open: boolean; onClose: () => void; onSave: (data: EmployeeFormData) => void;
   editingEmployee: Employee | null; departments: string[]; saving: boolean;
 }) => {
   const isEdit = !!editingEmployee;
-  const emptyForm: EmployeeFormData = { name: "", email: "", department: "", role: "Employee", status: "Active" };
-  const [form, setForm] = useState<EmployeeFormData>(emptyForm);
+  const [form, setForm] = useState<EmployeeFormData>(EMPTY_EMPLOYEE_FORM);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
 
   useEffect(() => {
     if (open) {
       setForm(editingEmployee
         ? { name: editingEmployee.name, email: editingEmployee.email, department: editingEmployee.department, role: editingEmployee.role, status: editingEmployee.status }
-        : emptyForm);
+        : EMPTY_EMPLOYEE_FORM);
       setErrors({});
     }
   }, [open, editingEmployee]);
@@ -277,7 +274,7 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
                   <p className="text-[11px] text-gray-500">{isEdit ? "Update employee details" : "Signup creates Employee only"}</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors"><X size={16} className="text-gray-400" /></button>
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors"><X size={16} className="text-gray-400" /></button>
             </div>
             <div className="p-6 flex flex-col gap-4">
               <div>
@@ -345,7 +342,7 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
               </div>
             </div>
             <div className="px-6 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
               <button onClick={handleSubmit} disabled={saving}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60">
                 {saving ? (<><Loader2 size={14} className="animate-spin" /> Saving...</>) : (<><Check size={14} /> {isEdit ? "Update Employee" : "Add Employee"}</>)}
@@ -373,7 +370,7 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
             onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
               <div><h2 className="text-sm font-bold text-white">Change Role</h2><p className="text-[11px] text-gray-500">{employee.name}</p></div>
-              <button onClick={onClose}><X size={15} className="text-gray-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-gray-400 hover:text-white" /></button>
             </div>
             <div className="p-5 flex flex-col gap-2">
               {ROLES.map((r) => {
@@ -390,7 +387,7 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
               })}
             </div>
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 transition-all">Cancel</button>
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 transition-all">Cancel</button>
               <button onClick={() => onPromote(employee.id, selectedRole)} disabled={saving || selectedRole === employee.role}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
@@ -433,7 +430,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
     setLoadError("");
     employeeService.getAll()
       .then(setEmployees)
-      .catch((err: any) => setLoadError(err?.message ?? "Failed to load employees"))
+      .catch((err: unknown) => setLoadError(errorMessage(err, "Failed to load employees")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -468,7 +465,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       }
       setShowModal(false);
       setEditingEmployee(null);
-    } catch (err: any) { showToast(err?.message ?? "Failed to save. Please try again.", "error"); }
+    } catch (err) { showToast(errorMessage(err, "Failed to save. Please try again."), "error"); }
     finally { setSaving(false); }
   };
 
@@ -483,8 +480,8 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
           await employeeService.delete(employee.id);
           setEmployees((prev) => prev.filter((e) => e.id !== employee.id));
           showToast(`${employee.name} removed from directory`);
-        } catch (err: any) {
-          showToast(err?.message ?? "Failed to remove employee", "error");
+        } catch (err) {
+          showToast(errorMessage(err, "Failed to remove employee"), "error");
         }
       },
     });
@@ -497,8 +494,8 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       await employeeService.toggleStatus(employee.id, newStatus);
       setEmployees((prev) => prev.map((e) => e.id === employee.id ? { ...e, status: newStatus } : e));
       showToast(`${employee.name} ${newStatus === "Active" ? "reactivated" : "suspended"}`);
-    } catch (err: any) {
-      showToast(err?.message ?? "Failed to update status", "error");
+    } catch (err) {
+      showToast(errorMessage(err, "Failed to update status"), "error");
     }
   };
 
@@ -509,7 +506,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       setEmployees((prev) => prev.map((e) => e.id === id ? { ...e, role } : e));
       showToast(`Role updated to ${role}`);
       setShowPromote(false); setPromoteTarget(null);
-    } catch (err: any) { showToast(err?.message ?? "Failed to update role.", "error"); }
+    } catch (err) { showToast(errorMessage(err, "Failed to update role."), "error"); }
     finally { setSaving(false); }
   };
 
@@ -520,13 +517,14 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
   return (
     <div className="space-y-5">
       <EmployeeToast toast={toast} />
-      <EmployeeConfirmDialog open={!!confirm} title={confirm?.title} message={confirm?.message}
-        danger={confirm?.danger} confirmLabel={confirm?.confirmLabel ?? "Confirm"}
+      <ConfirmDialog open={!!confirm} title={confirm?.title ?? "Are you sure?"}
+        message={confirm?.message ?? ""} destructive={confirm?.danger}
+        confirmLabel={confirm?.confirmLabel ?? "Confirm"}
         onConfirm={confirm?.onConfirm ?? (() => {})} onCancel={() => setConfirm(null)} />
 
       {/* Load error banner */}
       {loadError && (
-        <div className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+        <div role="alert" className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
           <AlertCircle size={15} className="flex-shrink-0" /> {loadError} — check that the backend is running.
         </div>
       )}
@@ -732,7 +730,7 @@ export default function OrganizationSetup() {
         setIsLoading(false);
       }
     };
-    load();
+    void load();
   }, [activeTab]);
 
   useEffect(() => {
@@ -749,7 +747,7 @@ export default function OrganizationSetup() {
         setIsLoadingCategories(false);
       }
     };
-    load();
+    void load();
   }, [activeTab]);
 
   // ==========================================
@@ -924,7 +922,8 @@ export default function OrganizationSetup() {
                           <td className="py-4 px-6 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button onClick={() => handleOpenModal(dept)} className="text-gray-500 hover:text-blue-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" title="Edit"><Edit2 size={16} /></button>
-                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"><MoreVertical size={18} /></button>
+                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="More actions" disabled>
+                              <MoreVertical size={18} /></button>
                             </div>
                           </td>
                         </motion.tr>

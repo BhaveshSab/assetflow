@@ -43,6 +43,7 @@ export default function TopHeader({
       <div className="flex items-center">
         <motion.button
           type="button"
+          aria-label="Toggle the navigation menu"
           onClick={onMobileMenuToggle}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.9 }}

@@ -98,7 +98,7 @@ const DetailDrawer = ({ item, onClose }: { item: LogEntry | null; onClose: () =>
                   <p className="text-[11px] text-zinc-500">Full audit record</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
                 <X size={16} className="text-zinc-400" />
               </button>
             </div>
@@ -205,7 +205,7 @@ export default function ActivityLogs() {
         setLoading(false);
       }
     };
-    load();
+    void load();
   }, []);
 
   const filtered = items.filter((item) => {
@@ -239,7 +239,7 @@ export default function ActivityLogs() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>

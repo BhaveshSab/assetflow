@@ -54,6 +54,8 @@ export interface MaintenanceProps {
 // SERVICE LAYER (real backend)
 // ─────────────────────────────────────────────────────────────
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
 
 // Backend statuses are SNAKE_CASE → the component's display statuses.
 const BACKEND_STATUS: Record<string, Status> = {
@@ -65,14 +67,27 @@ const BACKEND_STATUS: Record<string, Status> = {
   RESOLVED: "Resolved",
 };
 
-const toRequest = (r: any): MaintenanceRequest => ({
+interface RawMaintenanceRequest {
+  id: string;
+  asset?: { name?: string; assetTag?: string } | null;
+  description?: string;
+  priority?: string;
+  status?: string;
+  raisedBy?: { name?: string } | null;
+  technician?: { name?: string } | null;
+  technicianName?: string;
+  photoUrl?: string;
+  createdAt?: string;
+}
+
+const toRequest = (r: RawMaintenanceRequest): MaintenanceRequest => ({
   id: r.id,
   reqId: `REQ-${String(r.id ?? "").slice(-6).toUpperCase()}`,
   assetName: r.asset?.name ?? "Asset",
   assetTag: r.asset?.assetTag ?? "",
   issue: r.description ?? "",
-  priority: r.priority ?? "MEDIUM",
-  status: BACKEND_STATUS[r.status] ?? "Pending",
+  priority: (r.priority ?? "MEDIUM") as Priority,
+  status: BACKEND_STATUS[r.status ?? "PENDING"] ?? "Pending",
   requestedBy: r.raisedBy?.name ?? "—",
   raisedOn: r.createdAt ? r.createdAt.slice(0, 10) : "",
   technician: r.technicianName ?? undefined,
@@ -82,12 +97,12 @@ const toRequest = (r: any): MaintenanceRequest => ({
 const maintenanceService = {
   getAll: async (mine = false): Promise<MaintenanceRequest[]> => {
     const path = mine ? "/maintenance?mine=true" : "/maintenance";
-    const data = await apiGet<{ items: Array<Record<string, any>> }>(path);
+    const data = await apiGet<{ items: RawMaintenanceRequest[] }>(path);
     return (data.items ?? []).map(toRequest);
   },
 
   raiseRequest: async (payload: RaiseRequestPayload) => {
-    const created = await apiSend<Record<string, any>>("/maintenance", "POST", {
+    const created = await apiSend<RawMaintenanceRequest>("/maintenance", "POST", {
       assetId: payload.assetId,
       description: payload.issue,
       priority: payload.priority,
@@ -265,7 +280,7 @@ const RaiseRequestModal = ({
   useEffect(() => {
     if (!open) return;
     setFetching(true);
-    maintenanceService.getAssets().then(setAssets).finally(() => setFetching(false));
+    void maintenanceService.getAssets().then(setAssets).finally(() => setFetching(false));
     setForm({ asset: null, issue: "", priority: "MEDIUM", photo: "" });
     setErrors({});
     setSubmitError("");
@@ -308,8 +323,8 @@ const RaiseRequestModal = ({
       };
       const result = await maintenanceService.raiseRequest(payload);
       onSuccess(result as MaintenanceRequest);
-    } catch (err: any) {
-      setSubmitError(err?.message ?? "Failed to raise request. Please try again.");
+    } catch (err) {
+      setSubmitError(errorMessage(err, "Failed to raise request. Please try again."));
     } finally {
       setSubmitting(false);
     }
@@ -347,7 +362,7 @@ const RaiseRequestModal = ({
                   <p className="text-[11px] text-zinc-500">Report a broken or faulty asset for repair</p>
                 </div>
               </div>
-              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
                 <X size={16} className="text-zinc-400" />
               </button>
             </div>
@@ -492,7 +507,7 @@ const RaiseRequestModal = ({
             </div>
 
             <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
-              <button onClick={onClose}
+              <button aria-label="Close" onClick={onClose}
                 className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all">
                 Cancel
               </button>
@@ -567,7 +582,7 @@ const AssignTechnicianModal = ({
                   <p className="text-[11px] text-zinc-500">{request.assetName}</p>
                 </div>
               </div>
-              <button onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
             </div>
 
             <div className="p-5">
@@ -605,7 +620,7 @@ const AssignTechnicianModal = ({
             </div>
 
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
                 Cancel
               </button>
               <button onClick={handleAssign} disabled={!selected || submitting}
@@ -662,7 +677,7 @@ const ResolveModal = ({
                   <p className="text-[11px] text-zinc-500">{request.assetName}</p>
                 </div>
               </div>
-              <button onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-zinc-400 hover:text-white" /></button>
             </div>
 
             <div className="p-5">
@@ -677,7 +692,7 @@ const ResolveModal = ({
             </div>
 
             <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 transition-all">
                 Cancel
               </button>
               <button onClick={handleResolve} disabled={submitting}
@@ -911,7 +926,10 @@ const Maintenance = ({
     }
   };
 
-  useEffect(() => { loadRequests(); }, []);
+  // The first load depends only on the role, which never changes while the
+  // view is open — so it runs once, on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void loadRequests(); }, []);
 
   const filtered = useMemo(() => {
     return requests.filter(r => {
@@ -938,6 +956,9 @@ const Maintenance = ({
     setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "Approved" } : r));
     showToast(`${req.assetName} approved for maintenance`);
   };
+
+  // Rejecting a request is not undoable, so it asks first.
+  const [rejectTarget, setRejectTarget] = useState<MaintenanceRequest | null>(null);
 
   const handleReject = async (req: MaintenanceRequest) => {
     await maintenanceService.reject(req.id);
@@ -1103,7 +1124,7 @@ const Maintenance = ({
                 userRole={userRole}
                 delay={i * 0.05}
                 onApprove={() => handleApprove(req)}
-                onReject={() => handleReject(req)}
+                onReject={() => setRejectTarget(req)}
                 onAssign={() => { setActiveRequest(req); setShowAssign(true); }}
                 onResolve={() => { setActiveRequest(req); setShowResolve(true); }}
                 onExportSingle={() => maintenanceService.exportPdf([req])}
@@ -1118,6 +1139,26 @@ const Maintenance = ({
           Showing {filtered.length} of {requests.length} requests
         </p>
       )}
+
+      {/* Rejecting a maintenance request — ask first */}
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this request?"
+        message={
+          rejectTarget
+            ? `The request for ${rejectTarget.assetName} (${rejectTarget.reqId}) will be declined and the employee will be told.`
+            : ""
+        }
+        confirmLabel="Reject request"
+        destructive
+        onCancel={() => setRejectTarget(null)}
+        onConfirm={() => {
+          if (!rejectTarget) return;
+          const req = rejectTarget;
+          setRejectTarget(null);
+          void handleReject(req);
+        }}
+      />
     </div>
   );
 };

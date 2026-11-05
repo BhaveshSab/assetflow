@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { errorMessage } from "@/lib/utils";
 
 // Animation variants
 const containerVariants = {
@@ -92,15 +93,31 @@ export default function AssetAudits() {
   // ==========================================
   // BACKEND INTEGRATION: Fetch Audit Cycles
   // ==========================================
-  const fetchAudits = useCallback(async () => {
+  interface RawAuditCycle {
+  id: string;
+  name?: string;
+  scopeLocation?: string;
+  scopeDepartment?: { name?: string } | null;
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  counts?: {
+    total?: number;
+    verified?: number;
+    missing?: number;
+    damaged?: number;
+  };
+}
+
+const fetchAudits = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const data = await apiGet<{ items: Array<Record<string, any>> }>("/audits");
-      const mapped: AuditCycle[] = (data.items ?? []).map((c: any) => ({
+      const data = await apiGet<{ items: RawAuditCycle[] }>("/audits");
+      const mapped: AuditCycle[] = (data.items ?? []).map((c) => ({
         id: c.id,
-        title: c.name,
+        title: c.name ?? "Audit cycle",
         scope:
           c.scopeLocation ??
           c.scopeDepartment?.name ??
@@ -129,7 +146,7 @@ export default function AssetAudits() {
   }, []);
 
   useEffect(() => {
-    fetchAudits();
+    void fetchAudits();
   }, [fetchAudits]);
 
   // ── Create audit cycle — real POST /audits, real error handling ──
@@ -153,9 +170,9 @@ export default function AssetAudits() {
       setShowCreate(false);
       setCreateForm({ name: "", scopeLocation: "", startDate: "", endDate: "" });
       setCreateErrors({});
-      fetchAudits();
-    } catch (err: any) {
-      setCreateErrors({ submit: err?.message ?? "Failed to create audit cycle." });
+      void fetchAudits();
+    } catch (err) {
+      setCreateErrors({ submit: errorMessage(err, "Failed to create audit cycle.") });
     } finally {
       setCreating(false);
     }
@@ -240,7 +257,7 @@ export default function AssetAudits() {
 
       {/* --- Error State --- */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
           <button

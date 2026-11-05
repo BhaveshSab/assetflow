@@ -6,6 +6,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES — matches the real backend Notification model:
@@ -78,11 +79,8 @@ export default function NotificationBell() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchNotifs();
-    const t = setInterval(fetchNotifs, 30_000); // poll every 30s
-    return () => clearInterval(t);
-  }, [fetchNotifs]);
+  // Poll every 30s — no overlapping requests, nothing while the tab is hidden.
+  usePolling(fetchNotifs, 30_000);
 
   // ── Close on outside click ───────────────────────────────────
   useEffect(() => {
@@ -147,7 +145,7 @@ export default function NotificationBell() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.96 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-12 w-80 bg-[#1a1d2e] border border-zinc-700 rounded-2xl shadow-2xl z-50 overflow-hidden"
+            className="absolute right-0 top-12 w-[min(20rem,calc(100vw-2rem))] bg-[#1a1d2e] border border-zinc-700 rounded-2xl shadow-2xl z-50 overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
@@ -180,7 +178,7 @@ export default function NotificationBell() {
 
             {/* Error */}
             {error && (
-              <div className="px-4 py-2 text-xs text-red-400 bg-red-950/30 border-b border-red-500/20">
+              <div role="alert" className="px-4 py-2 text-xs text-red-400 bg-red-950/30 border-b border-red-500/20">
                 {error}
               </div>
             )}
