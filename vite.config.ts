@@ -4,6 +4,13 @@ import { defineConfig } from "vite"
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    // The dev server is reachable from the browser sandbox that hosts the
+    // preview, so that host has to be allowed explicitly (Vite refuses an
+    // unknown Host header — a DNS-rebinding guard).
+    host: true,
+    allowedHosts: [".e2b.app", ".vercel.app", "localhost"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -1,10 +1,10 @@
-# Resume bullets — the DevOps half
+# Resume bullets — the DevOps half, and the frontend half
 
-Every number below was measured on the live host, and the raw output is in
-[`results/`](./results). If a claim is not in this file, it is not measured yet —
-see **Do not claim** at the bottom.
+Every number below was measured on the live host or in the repository, and the
+raw output is in [`results/`](./results). If a claim is not in this file, it is
+not measured yet — see **Do not claim** at the bottom.
 
-## The five bullets
+## The five DevOps bullets
 
 1. **Deployed the full stack on AWS EC2 (t3.micro) behind Nginx with Let's
    Encrypt TLS** — 9 Docker Compose services, multi-stage non-root images,
@@ -37,6 +37,80 @@ see **Do not claim** at the bottom.
    deploy job goes build → GHCR → SSH → migrate → health check with an
    **automatic rollback (48 s, measured on a forced failure)**.
 
+## The frontend half (the VISA software-engineering intern posting)
+
+That posting asks for **HTML, CSS, JavaScript, responsive design,
+accessibility (Section 508 / WCAG 2.0), user-centred design, usability and
+object-oriented design** — so the frontend bullets are written against those
+words, and every number in them is from this repository.
+
+```
+Frontend (AssetFlow) — React 18, TypeScript, Vite, Tailwind, React Router,
+Recharts, Framer Motion, Vitest, ESLint
+```
+
+1. **Rebuilt every overlay as one accessible dialog component** — `role`,
+   accessible name, focus trap, Escape, focus restored to the opener, the page
+   behind frozen — so a keyboard user can no longer Tab out of a modal and a
+   screen reader announces what opened; the behaviour is proven by **8 tests**
+   and the form fields, error messages and 20 icon-only buttons were made to
+   announce themselves in the same pass (WCAG 2.1 AA: 4.1.2, 2.4.3, 2.1.2,
+   1.3.1, 3.3.1, 4.1.3).
+
+2. **Made the searchable pickers usable without a mouse** — the WAI-ARIA 1.2
+   combobox pattern (listbox of options, arrow keys, Home/End, Enter, Escape,
+   a live count of the results): **7 tests** drive it with the keyboard only.
+
+3. **Cut the first load by 60 % without removing a feature** — the app was one
+   1,089 kB file (294 kB gzipped) that carried all eleven screens plus Recharts
+   and Framer Motion; it is now **376 kB (120 kB gzipped)** for the first
+   screen, one 8–48 kB file per screen loaded on demand, and the 412 kB of
+   Recharts only fetched when a chart is drawn.
+
+4. **Stopped the dashboard from lying to itself** — a slow request used to
+   overlap the next poll, so the older answer could win and the table jumped
+   back; a hidden tab kept polling forever. One `usePolling` hook now guards
+   the in-flight request, pauses while the tab is hidden and refreshes on
+   return — **6 tests** with a fake clock.
+
+5. **Removed every escape hatch the type system allowed** — 39 `any`s replaced
+   by typed API records read through helpers that always return the right
+   type, so a renamed field is a compile error instead of a blank column; and
+   the frontend finally has a lint gate (ESLint 9 + the React hooks rules) in
+   CI, which found 57 problems on the first run — 41 fixed, 16 documented.
+
+6. **Made failure a designed state, not a blank page** — an error boundary with
+   a retry, a 401 that clears the session and returns the user to the page
+   they were on (with an open-redirect check), four destructive actions that
+   ask first, and named messages for timeouts, an unreachable API and a
+   validation array.
+
+### If there is room for only two
+
+Take **#1** (the accessible dialog — it is the one a design-systems interviewer
+will probe) and **#3** (the measured 60 % first-load cut).
+
+### Say it like this, in a minute
+
+> The app has eleven screens and three roles. The two things I am proudest of
+> are not features: the overlays were plain divs, so I rebuilt them as one
+> dialog component with a focus trap, Escape and a focus restore, and put
+> eight tests on it; and the bundle was one 1.1 MB file, so I split the views
+> and the two heavy libraries and got the first screen down to 120 kB gzipped.
+> What I have not done is an axe scan or a screen-reader session — that is in
+> the known-gaps table in `docs/ACCESSIBILITY.md`, with the order I would fix
+> it in.
+
+### Frontend claims to avoid
+
+| Tempting claim | Why not |
+|---|---|
+| "WCAG 2.1 AA certified / compliant" | no axe scan and no recorded screen-reader session yet; say "implemented the behaviours, with the gaps written down" |
+| "tested with Playwright end to end" | the 52 tests are Vitest + Testing Library in jsdom; the views' rendering is not covered |
+| "fully responsive" | the layouts reflow and the tables scroll; no device-matrix test exists — say what was fixed (drawer, KPI row, month grid, 16 px inputs) |
+| "the frontend is 100 % type-safe" | `any` is gone from `src/`, but the API's runtime shape is still trusted (typed, not validated at the boundary) |
+| "code-split to 120 kB" without the rest | 120 kB is the **first screen**; a dashboard with charts also fetches Recharts (118 kB gzipped) |
+
 ## If there is no room for five
 
 Drop #1 (the platform) or #5 (the sizing) first — #2, #3 and #4 carry the
@@ -52,12 +126,12 @@ The suite grew during the infrastructure work. Measured on 2026-10-29:
 ```
 backend  unit   72 passed, 11 suites
 backend  e2e   114 passed, 13 suites
-frontend       26 passed,  3 files
-               212 total
+frontend       52 passed,  7 files
+               238 total
 ```
 
-Use **212 automated checks: 72 unit, 114 e2e on embedded PostgreSQL (PGlite),
-26 frontend.** The commands are `npm run test:unit`, `npm run test:e2e` and
+Use **238 automated checks: 72 unit, 114 e2e on embedded PostgreSQL (PGlite),
+52 frontend.** The commands are `npm run test:unit`, `npm run test:e2e` and
 `npx vitest run` — an interviewer can reproduce all three in about a minute.
 
 ## Do not claim (not measured)
