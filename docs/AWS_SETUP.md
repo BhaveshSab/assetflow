@@ -186,6 +186,9 @@ $EDITOR infra/.env                            # secrets, S3 bucket, Telegram, GO
 sudo infra/scripts/issue-cert.sh --self-signed
 docker compose -f infra/docker-compose.yml up -d --build
 sudo infra/scripts/issue-cert.sh --domain <your-domain> --email <you@example.com>
+# No domain? A Let's Encrypt IP certificate covers https://<ip>/ directly
+# (shortlived profile, 160 h; certbot >= 5.4 — set CERTBOT if it is not on PATH):
+#   sudo CERTBOT=~/.local/bin/certbot infra/scripts/issue-cert.sh --ip-address <ip> --email <you@example.com>
 docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
 ```
 

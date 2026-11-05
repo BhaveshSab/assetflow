@@ -173,7 +173,7 @@ curl -fsS https://<host>/api/auth/config
 * The button is disabled → set `GOOGLE_CLIENT_ID` in `infra/.env`, then
   `docker compose up -d api`. On this host it is set and `/api/auth/config`
   returns it; the origins registered on the OAuth client are
-  `https://3.107.83.86.sslip.io`, `http://localhost:5173`,
+  `https://13.55.90.25`, `http://localhost:5173`,
   `https://localhost:8443` and the Vercel frontend.
 * The Google button renders but the popup closes with nothing → the browser
   console shows the reason; `origin_mismatch` means the exact origin (scheme +
@@ -190,7 +190,7 @@ curl -fsS https://<host>/api/auth/config
 
 ```bash
 cd /opt/assetflow
-sudo certbot renew --config-dir infra/certs --webroot -w infra/certbot-www
+infra/scripts/renew-cert.sh        # renew + reload; cron runs it daily
 docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
 openssl x509 -enddate -noout -in infra/certs/live/assetflow/fullchain.pem
 ```
