@@ -32,6 +32,15 @@ export type AppEnv = {
   BCRYPT_ROUNDS: number;
   THROTTLE_TTL: number;
   THROTTLE_LIMIT: number;
+  /**
+   * How long a client stays blocked once it exceeds `THROTTLE_LIMIT`.
+   *
+   * This must be greater than zero: the throttler treats `0` as "count, but
+   * never block", and the Redis script only writes a block key when it is
+   * positive — so a zero here silently turns the limiter into a meter that
+   * never returns 429.
+   */
+  THROTTLE_BLOCK_MS: number;
   AUTH_THROTTLE_TTL: number;
   AUTH_THROTTLE_LIMIT: number;
   /** Optional Redis connection string — enables the shared rate-limit store. */
@@ -48,6 +57,7 @@ const DEFAULTS = {
   BCRYPT_ROUNDS: 12,
   THROTTLE_TTL: 60_000,
   THROTTLE_LIMIT: 300,
+  THROTTLE_BLOCK_MS: 60_000,
   AUTH_THROTTLE_TTL: 15 * 60_000,
   AUTH_THROTTLE_LIMIT: 10,
   METRICS_ENABLED: false,
@@ -182,6 +192,13 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
       'THROTTLE_LIMIT',
       1,
       1_000_000,
+    ),
+    THROTTLE_BLOCK_MS: asInt(
+      raw.THROTTLE_BLOCK_MS,
+      DEFAULTS.THROTTLE_BLOCK_MS,
+      'THROTTLE_BLOCK_MS',
+      1_000,
+      24 * 60 * 60 * 1_000,
     ),
     AUTH_THROTTLE_TTL: asInt(
       raw.AUTH_THROTTLE_TTL,

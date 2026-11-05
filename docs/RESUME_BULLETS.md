@@ -4,10 +4,19 @@ Every number below was measured on the live host or in the repository, and the
 raw output is in [`results/`](./results). If a claim is not in this file, it is
 not measured yet — see **Do not claim** at the bottom.
 
+> **Two caveats on the numbers below.** The k6 transcript and the rollback
+> transcript were excluded by a `.gitignore` rule and are **not in the
+> repository** (fixed 2026-11-05, so future runs are committed) — re-run
+> `infra/scripts/k6-test.sh` and the forced-failure deploy before quoting the
+> 24.2 req/s and 48 s figures. And the deployment host is now
+> **`3.107.83.86`** (Elastic IP, `https://3.107.83.86.sslip.io`); anything
+> still showing `13.55.90.25` is stale.
+
 ## The five DevOps bullets
 
 1. **Deployed the full stack on AWS EC2 (t3.micro) behind Nginx with Let's
-   Encrypt TLS** — 9 Docker Compose services, multi-stage non-root images,
+   Encrypt TLS** — 10 Docker Compose services (9 long-running, plus a one-shot
+   migration job that exits), multi-stage non-root images,
    PostgreSQL and Redis on an internal network with no published ports and
    monitoring bound to loopback only; modelled the run cost at **$12.04/month**
    instead of guessing it.
@@ -16,7 +25,11 @@ not measured yet — see **Do not claim** at the bottom.
    Redis**, so the limits survive a restart and are shared across instances —
    the in-process counters reset on every deploy, which made the throttle
    bypassable; both paths fail open to a local counter and expose the
-   degradation through `/health` and a Prometheus gauge.
+   degradation through `/health` and a Prometheus gauge. The ceiling is
+   measured, not assumed: **300 requests a minute per user, request #301 is
+   `429` with `Retry-After`** ([transcript](./results/rate-limit-20261105T083630Z.txt))
+   — the first version of this limiter only counted, which the measurement
+   caught (`DECISIONS.md` row 33).
 
 3. **Built the observability path end to end** — Prometheus scraping 3 targets
    with **11 alert rules** → Alertmanager → Telegram, a Grafana dashboard
@@ -33,7 +46,7 @@ not measured yet — see **Do not claim** at the bottom.
 5. **Sized the instance from evidence, and shipped it through CI** — a k6 run
    (25 VUs, 3 min) held **24.2 req/s at p95 35.4 ms, 0.00 % errors** over 4,392
    requests with peak CPU 43.9 %, which is how the t3.micro was chosen; GitHub
-   Actions runs lint, shellcheck, **212 tests** and both image builds, and the
+   Actions runs lint, shellcheck, **241 tests** and both image builds, and the
    deploy job goes build → GHCR → SSH → migrate → health check with an
    **automatic rollback (48 s, measured on a forced failure)**.
 

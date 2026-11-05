@@ -68,10 +68,12 @@ export default async function globalSetup() {
   // Keep the hashing cheap and the throttles wide open — the suites would
   // otherwise spend most of their time hashing and waiting for 429s.
   process.env.BCRYPT_ROUNDS = '4';
-  process.env.THROTTLE_LIMIT = '1000000';
-  process.env.THROTTLE_TTL = '60000';
-  process.env.AUTH_THROTTLE_LIMIT = '1000';
-  process.env.AUTH_THROTTLE_TTL = '60000';
+  // A dedicated suite may narrow them (THROTTLE_LIMIT=300 npm run test:e2e --
+  // rate-limit) to observe a real 429; by default they are wide open.
+  process.env.THROTTLE_LIMIT = process.env.THROTTLE_LIMIT ?? '1000000';
+  process.env.THROTTLE_TTL = process.env.THROTTLE_TTL ?? '60000';
+  process.env.AUTH_THROTTLE_LIMIT = process.env.AUTH_THROTTLE_LIMIT ?? '1000';
+  process.env.AUTH_THROTTLE_TTL = process.env.AUTH_THROTTLE_TTL ?? '60000';
   // Google sign-in is optional and needs a real client id; the suite covers
   // the "not configured" path. The configured path is unit-tested with a
   // mocked token verifier.
