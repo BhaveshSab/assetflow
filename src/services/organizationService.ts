@@ -156,7 +156,7 @@ export async function fetchCategories(): Promise<AssetCategory[]> {
     name: c.name,
     description: "",
     customFields: Array.isArray(c.customFields)
-      ? c.customFields.map((f: any) => f?.key ?? String(f))
+      ? c.customFields.map((f) => f?.key ?? String(f))
       : [],
     assetCount: c._count?.assets ?? 0,
     status: friendlyStatus(c.status),
@@ -181,7 +181,7 @@ export async function createCategory(data: CategoryFormData): Promise<AssetCateg
     name: created.name,
     description: "",
     customFields: Array.isArray(created.customFields)
-      ? created.customFields.map((f: any) => f?.key ?? String(f))
+      ? created.customFields.map((f) => f?.key ?? String(f))
       : [],
     assetCount: created._count?.assets ?? 0,
     status: friendlyStatus(created.status),
@@ -211,7 +211,7 @@ export async function updateCategory(
     name: updated.name,
     description: "",
     customFields: Array.isArray(updated.customFields)
-      ? updated.customFields.map((f: any) => f?.key ?? String(f))
+      ? updated.customFields.map((f) => f?.key ?? String(f))
       : [],
     assetCount: updated._count?.assets ?? 0,
     status: friendlyStatus(updated.status),

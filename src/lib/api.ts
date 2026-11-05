@@ -96,7 +96,9 @@ async function request<T>(
           : `Request failed (${res.status})`),
     );
   }
-  return res.json() as Promise<T>;
+  // Await first, then narrow — `as Promise<T>` only silenced the compiler
+  // without ever checking the shape of the answer.
+  return (await res.json()) as T;
 }
 
 /** Convenience GET that throws on non-2xx. */

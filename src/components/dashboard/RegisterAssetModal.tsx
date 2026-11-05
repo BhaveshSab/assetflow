@@ -9,6 +9,7 @@ import {
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { apiGet, apiSend, unwrapList } from "@/lib/api";
+import { errorMessage } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -117,7 +118,7 @@ export default function RegisterAssetModal({
     setLoadError("");
     registerService.getCategories()
       .then(setCategories)
-      .catch((err: any) => setLoadError(err?.message ?? "Failed to load categories"))
+      .catch((err: unknown) => setLoadError(errorMessage(err, "Failed to load categories")))
       .finally(() => setFetching(false));
 
     // Reset on open
@@ -174,8 +175,8 @@ export default function RegisterAssetModal({
       const created = await registerService.registerAsset(payload);
       setNewAsset(created);
       setStep("success");
-    } catch (err: any) {
-      setGlobalError(err?.message ?? "Registration failed. Please try again.");
+    } catch (err) {
+      setGlobalError(errorMessage(err, "Registration failed. Please try again."));
     } finally {
       setSubmitting(false);
     }

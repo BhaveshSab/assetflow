@@ -18,6 +18,7 @@ import {
 import { apiGet, apiSend } from "@/lib/api";
 import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -77,8 +78,8 @@ const allocationApi = {
         conditionOnReturn: payload?.conditionOnReturn || undefined,
       });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message ?? "Return failed" };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Return failed") };
     }
   },
   transferAsset: async (assetId: string, toUserId: string, reason?: string) => {
@@ -89,8 +90,8 @@ const allocationApi = {
         reason: reason || "Transfer requested from Allocations & Transfers",
       });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message ?? "Transfer failed" };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Transfer failed") };
     }
   },
   getEmployees: async (): Promise<Array<{
@@ -112,24 +113,24 @@ const allocationApi = {
     try {
       await apiSend(`/transfers/${id}/approve`, "POST");
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
   rejectTransfer: async (id: string) => {
     try {
       await apiSend(`/transfers/${id}/reject`, "POST");
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
   sendPing: async (allocationId: string) => {
     try {
       await apiSend("/notifications/ping", "POST", { allocationId });
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "The request could not be sent.") };
     }
   },
 };
@@ -324,9 +325,9 @@ const TransferAssetModal = ({
           ),
         ),
       )
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setEmployees([]);
-        setEmpError(err?.message ?? "Failed to load employees");
+        setEmpError(errorMessage(err, "Failed to load employees"));
       })
       .finally(() => setLoadingEmps(false));
   }, [open, asset, currentUserId]);

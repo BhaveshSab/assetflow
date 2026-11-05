@@ -14,6 +14,8 @@ import {
 } from "@/services/organizationService";
 import { apiGet, apiSend } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
+import { type LucideIcon } from "lucide-react";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -142,7 +144,7 @@ const employeeService = {
 const ROLES = ["Employee", "Department Head", "Asset Manager", "Admin"] as const;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const roleConfig: Record<string, { label: string; color: string; dot: string; icon: any; description: string }> = {
+const roleConfig: Record<string, { label: string; color: string; dot: string; icon: LucideIcon; description: string }> = {
   Admin:             { label: "Admin",         color: "bg-purple-500/20 text-purple-300 border-purple-500/30", dot: "bg-purple-400", icon: Crown,       description: "Full system access" },
   "Asset Manager":   { label: "Asset Manager", color: "bg-blue-500/20 text-blue-300 border-blue-500/30",       dot: "bg-blue-400",   icon: ShieldCheck, description: "Manages assets & approvals" },
   "Department Head": { label: "Dept. Head",    color: "bg-amber-500/20 text-amber-300 border-amber-500/30",   dot: "bg-amber-400",  icon: Briefcase,   description: "Manages department assets" },
@@ -410,7 +412,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
     setLoadError("");
     employeeService.getAll()
       .then(setEmployees)
-      .catch((err: any) => setLoadError(err?.message ?? "Failed to load employees"))
+      .catch((err: unknown) => setLoadError(errorMessage(err, "Failed to load employees")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -445,7 +447,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       }
       setShowModal(false);
       setEditingEmployee(null);
-    } catch (err: any) { showToast(err?.message ?? "Failed to save. Please try again.", "error"); }
+    } catch (err) { showToast(errorMessage(err, "Failed to save. Please try again."), "error"); }
     finally { setSaving(false); }
   };
 
@@ -460,8 +462,8 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
           await employeeService.delete(employee.id);
           setEmployees((prev) => prev.filter((e) => e.id !== employee.id));
           showToast(`${employee.name} removed from directory`);
-        } catch (err: any) {
-          showToast(err?.message ?? "Failed to remove employee", "error");
+        } catch (err) {
+          showToast(errorMessage(err, "Failed to remove employee"), "error");
         }
       },
     });
@@ -474,8 +476,8 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       await employeeService.toggleStatus(employee.id, newStatus);
       setEmployees((prev) => prev.map((e) => e.id === employee.id ? { ...e, status: newStatus } : e));
       showToast(`${employee.name} ${newStatus === "Active" ? "reactivated" : "suspended"}`);
-    } catch (err: any) {
-      showToast(err?.message ?? "Failed to update status", "error");
+    } catch (err) {
+      showToast(errorMessage(err, "Failed to update status"), "error");
     }
   };
 
@@ -486,7 +488,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       setEmployees((prev) => prev.map((e) => e.id === id ? { ...e, role } : e));
       showToast(`Role updated to ${role}`);
       setShowPromote(false); setPromoteTarget(null);
-    } catch (err: any) { showToast(err?.message ?? "Failed to update role.", "error"); }
+    } catch (err) { showToast(errorMessage(err, "Failed to update role."), "error"); }
     finally { setSaving(false); }
   };
 

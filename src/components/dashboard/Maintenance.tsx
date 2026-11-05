@@ -55,6 +55,7 @@ export interface MaintenanceProps {
 // ─────────────────────────────────────────────────────────────
 import { apiGet, apiSend } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { errorMessage } from "@/lib/utils";
 
 // Backend statuses are SNAKE_CASE → the component's display statuses.
 const BACKEND_STATUS: Record<string, Status> = {
@@ -66,14 +67,27 @@ const BACKEND_STATUS: Record<string, Status> = {
   RESOLVED: "Resolved",
 };
 
-const toRequest = (r: any): MaintenanceRequest => ({
+interface RawMaintenanceRequest {
+  id: string;
+  asset?: { name?: string; assetTag?: string } | null;
+  description?: string;
+  priority?: string;
+  status?: string;
+  raisedBy?: { name?: string } | null;
+  technician?: { name?: string } | null;
+  technicianName?: string;
+  photoUrl?: string;
+  createdAt?: string;
+}
+
+const toRequest = (r: RawMaintenanceRequest): MaintenanceRequest => ({
   id: r.id,
   reqId: `REQ-${String(r.id ?? "").slice(-6).toUpperCase()}`,
   assetName: r.asset?.name ?? "Asset",
   assetTag: r.asset?.assetTag ?? "",
   issue: r.description ?? "",
-  priority: r.priority ?? "MEDIUM",
-  status: BACKEND_STATUS[r.status] ?? "Pending",
+  priority: (r.priority ?? "MEDIUM") as Priority,
+  status: BACKEND_STATUS[r.status ?? "PENDING"] ?? "Pending",
   requestedBy: r.raisedBy?.name ?? "—",
   raisedOn: r.createdAt ? r.createdAt.slice(0, 10) : "",
   technician: r.technicianName ?? undefined,
@@ -83,12 +97,12 @@ const toRequest = (r: any): MaintenanceRequest => ({
 const maintenanceService = {
   getAll: async (mine = false): Promise<MaintenanceRequest[]> => {
     const path = mine ? "/maintenance?mine=true" : "/maintenance";
-    const data = await apiGet<{ items: Array<Record<string, any>> }>(path);
+    const data = await apiGet<{ items: RawMaintenanceRequest[] }>(path);
     return (data.items ?? []).map(toRequest);
   },
 
   raiseRequest: async (payload: RaiseRequestPayload) => {
-    const created = await apiSend<Record<string, any>>("/maintenance", "POST", {
+    const created = await apiSend<RawMaintenanceRequest>("/maintenance", "POST", {
       assetId: payload.assetId,
       description: payload.issue,
       priority: payload.priority,
@@ -309,8 +323,8 @@ const RaiseRequestModal = ({
       };
       const result = await maintenanceService.raiseRequest(payload);
       onSuccess(result as MaintenanceRequest);
-    } catch (err: any) {
-      setSubmitError(err?.message ?? "Failed to raise request. Please try again.");
+    } catch (err) {
+      setSubmitError(errorMessage(err, "Failed to raise request. Please try again."));
     } finally {
       setSubmitting(false);
     }

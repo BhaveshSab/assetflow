@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { getSession } from "@/lib/auth";
+import { errorMessage } from "@/lib/utils";
 
 // ── Condition options for the return flow ──
 const RETURN_CONDITIONS = [
@@ -58,9 +59,9 @@ const TransferModal = ({
           (Array.isArray(data) ? data : []).filter((e) => e.id !== currentUserId),
         ),
       )
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setEmployees([]);
-        setEmpError(err?.message ?? "Failed to load employees");
+        setEmpError(errorMessage(err, "Failed to load employees"));
       })
       .finally(() => setLoadingEmps(false));
   }, [open, currentUserId]);
@@ -326,8 +327,8 @@ export default function MyAssets({ onNavigate }: Props) {
       }));
 
       setAssets(enriched);
-    } catch (e: any) {
-      setError(e.message ?? "Could not load your assets. Is the backend running?");
+    } catch (e) {
+      setError(errorMessage(e, "Could not load your assets. Is the backend running?"));
     } finally {
       setLoading(false);
     }
@@ -348,8 +349,8 @@ export default function MyAssets({ onNavigate }: Props) {
       setAssets((p) => p.map((a) => (a.id === allocationId ? { ...a, status: "RETURNED" } : a)));
       showToast(`${returnTarget.asset?.name ?? "Asset"} returned successfully`);
       setReturnTarget(null);
-    } catch (e: any) {
-      showToast(e?.message ?? "Return failed", "error");
+    } catch (e) {
+      showToast(errorMessage(e, "Return failed"), "error");
     } finally {
       setActionLoad((p) => ({ ...p, [allocationId]: "" }));
     }
@@ -368,8 +369,8 @@ export default function MyAssets({ onNavigate }: Props) {
       setRequestedTransferIds((p) => ({ ...p, [transferTarget.id]: true }));
       setTransferTarget(null);
       showToast("Transfer request submitted — pending approval");
-    } catch (e: any) {
-      showToast(e?.message ?? "Transfer request failed", "error");
+    } catch (e) {
+      showToast(errorMessage(e, "Transfer request failed"), "error");
     } finally {
       setTransferring(false);
     }

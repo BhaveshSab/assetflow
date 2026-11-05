@@ -6,6 +6,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES — matches the real backend Notification model:
@@ -78,11 +79,8 @@ export default function NotificationBell() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchNotifs();
-    const t = setInterval(fetchNotifs, 30_000); // poll every 30s
-    return () => clearInterval(t);
-  }, [fetchNotifs]);
+  // Poll every 30s — no overlapping requests, nothing while the tab is hidden.
+  usePolling(fetchNotifs, 30_000);
 
   // ── Close on outside click ───────────────────────────────────
   useEffect(() => {

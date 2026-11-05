@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package, CalendarCheck, Wrench, AlertTriangle, Clock, CheckCircle2,
@@ -11,6 +11,9 @@ import {
 import { getSession, type AuthResponse } from "@/lib/auth";
 import { apiGet } from "@/lib/api";
 import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
+import { usePolling } from "@/hooks/usePolling";
+import { type LucideIcon } from "lucide-react";
+import { type ChartTooltipProps } from "@/types/chart";
 
 // =============================================
 // TYPES
@@ -140,12 +143,12 @@ const statusDot: Record<string, string> = {
   warning: "bg-amber-400", info: "bg-blue-400",
 };
 
-const ChartTooltip = ({ active, payload, label }: any) => {
+const ChartTooltip = ({ active, payload, label }: ChartTooltipProps) => {
   if (active && payload?.length) {
     return (
       <div className="bg-[#1e2235] border border-[#333] rounded-xl p-3 shadow-xl text-xs">
         <p className="text-gray-400 mb-1">{label}</p>
-        {payload.map((entry: any, i: number) => (
+        {payload.map((entry, i) => (
           <p key={i} style={{ color: entry.color }} className="font-semibold">{entry.name}: {entry.value}</p>
         ))}
       </div>
@@ -158,7 +161,7 @@ const ChartTooltip = ({ active, payload, label }: any) => {
 // SUB-COMPONENTS
 // =============================================
 const KPICard = ({ title, value, trend, icon: Icon, color, iconBg, isOverdue = false, delay = 0 }: {
-  title: string; value: number | undefined; trend: string; icon: any; color: string; iconBg: string; isOverdue?: boolean; delay?: number;
+  title: string; value: number | undefined; trend: string; icon: LucideIcon; color: string; iconBg: string; isOverdue?: boolean; delay?: number;
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
@@ -188,7 +191,7 @@ const KPICard = ({ title, value, trend, icon: Icon, color, iconBg, isOverdue = f
 );
 
 const QuickAction = ({ icon: Icon, label, desc, color, bg, onClick, delay }: {
-  icon: any; label: string; desc: string; color: string; bg: string; onClick: () => void; delay: number;
+  icon: LucideIcon; label: string; desc: string; color: string; bg: string; onClick: () => void; delay: number;
 }) => (
   <motion.button
     initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
@@ -286,12 +289,9 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
     }
   }, []);
 
-  useEffect(() => {
-    if (!isAdmin) return;
-    fetchAll();
-    const interval = setInterval(fetchAll, 60000); // Auto-refresh every 60s
-    return () => clearInterval(interval);
-  }, [isAdmin, fetchAll]);
+  // Auto-refresh every 60s — no overlapping requests, nothing while the
+  // tab is hidden.
+  usePolling(fetchAll, 60_000, isAdmin);
 
   // ── Non-admin guard ──
   if (!isAdmin) {

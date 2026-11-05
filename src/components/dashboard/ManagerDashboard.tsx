@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package, ArrowLeftRight, CalendarCheck, Wrench, Clock, AlertTriangle,
@@ -12,6 +12,9 @@ import {
 import { getSession, type AuthResponse } from "@/lib/auth";
 import { apiGet, apiSend, unwrapList } from "@/lib/api";
 import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
+import { usePolling } from "@/hooks/usePolling";
+import { type LucideIcon } from "lucide-react";
+import { type ChartTooltipProps } from "@/types/chart";
 
 // =============================================
 // TYPES
@@ -110,7 +113,7 @@ const apiService = {
       toDepartment?: { name: string } | null;
       createdAt: string;
     }> }>("/transfers?status=REQUESTED");
-    return unwrapList(data as never).map((t: any, i: number) => ({
+    return unwrapList(data).map((t, i) => ({
       id: i + 1,
       assetTag: t.asset?.assetTag ?? "",
       assetName: t.asset?.name ?? "Asset",
@@ -127,7 +130,7 @@ const apiService = {
       asset?: { assetTag: string; name: string };
       raisedBy?: { name: string };
     }> }>("/maintenance?status=PENDING,TECHNICIAN_ASSIGNED,IN_PROGRESS");
-    return unwrapList(data as never).map((r: any, i: number) => ({
+    return unwrapList(data).map((r, i) => ({
       id: i + 1,
       assetTag: r.asset?.assetTag ?? "",
       assetName: r.asset?.name ?? "Asset",
@@ -196,11 +199,11 @@ const priorityStyle: Record<string, string> = {
   Low: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30",
 };
 
-const ChartTooltip = ({ active, payload, label }: any) => {
+const ChartTooltip = ({ active, payload, label }: ChartTooltipProps) => {
   if (active && payload?.length) return (
     <div className="bg-[#1e2235] border border-[#333] rounded-xl p-3 shadow-xl text-xs">
       <p className="text-gray-400 mb-1">{label}</p>
-      {payload.map((e: any, i: number) => <p key={i} style={{ color: e.color }} className="font-semibold">{e.name}: {e.value}</p>)}
+      {payload.map((e, i) => <p key={i} style={{ color: e.color }} className="font-semibold">{e.name}: {e.value}</p>)}
     </div>
   );
   return null;
@@ -221,7 +224,7 @@ const PieLegend = ({ data }: { data: PieSlice[] }) => (
 // SUB-COMPONENTS
 // =============================================
 const KPICard = ({ title, value, trend, icon: Icon, color, iconBg, isOverdue, isPending, delay = 0 }: {
-  title: string; value: number | undefined; trend: string; icon: any; color: string; iconBg: string; isOverdue?: boolean; isPending?: boolean; delay?: number;
+  title: string; value: number | undefined; trend: string; icon: LucideIcon; color: string; iconBg: string; isOverdue?: boolean; isPending?: boolean; delay?: number;
 }) => (
   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.4 }}
     className={`relative rounded-2xl p-5 border flex flex-col gap-3 overflow-hidden ${isOverdue ? "bg-red-950/40 border-red-500/40 shadow-[0_0_24px_rgba(239,68,68,0.15)]" : isPending ? "bg-amber-950/30 border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.1)]" : "bg-[#1a1d2e] border-[#2a2d3e]"}`}
@@ -238,7 +241,7 @@ const KPICard = ({ title, value, trend, icon: Icon, color, iconBg, isOverdue, is
 );
 
 const QuickAction = ({ icon: Icon, label, desc, color, badge, onClick, delay }: {
-  icon: any; label: string; desc: string; color: string; badge: number; onClick: () => void; delay: number;
+  icon: LucideIcon; label: string; desc: string; color: string; badge: number; onClick: () => void; delay: number;
 }) => (
   <motion.button initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay, duration: 0.3 }}
     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={onClick}
@@ -325,12 +328,9 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
     } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
-  useEffect(() => {
-    if (!isManager) return;
-    fetchAll();
-    const interval = setInterval(fetchAll, 60000);
-    return () => clearInterval(interval);
-  }, [isManager, fetchAll]);
+  // Auto-refresh every 60s — no overlapping requests, nothing while the
+  // tab is hidden.
+  usePolling(fetchAll, 60_000, isManager);
 
   // Inline transfer approve/reject
   const handleTransferAction = async (id: string | number, action: string) => {

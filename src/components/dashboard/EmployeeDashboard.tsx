@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package,
@@ -40,6 +40,7 @@ import {
 import { getSession } from "@/lib/auth";
 import { apiGet, apiSend } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { usePolling } from "@/hooks/usePolling";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -508,12 +509,9 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
     }
   }, []);
 
-  useEffect(() => {
-    if (!isEmployee) return;
-    fetchAll();
-    const interval = setInterval(fetchAll, 60000);
-    return () => clearInterval(interval);
-  }, [isEmployee, fetchAll]);
+  // Auto-refresh every 60s — no overlapping requests, nothing while the
+  // tab is hidden.
+  usePolling(fetchAll, 60_000, isEmployee);
 
   // Cancelling a booking takes the slot away from everyone, so it asks first.
   const [cancelTarget, setCancelTarget] = useState<{

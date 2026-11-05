@@ -30,6 +30,13 @@ const itemVariants = {
   },
 };
 
+interface RawBookableAsset {
+  id: string;
+  name?: string;
+  category?: { name?: string } | null;
+  location?: string;
+}
+
 interface Resource {
   id: string;
   name: string;
@@ -146,12 +153,14 @@ export default function ResourceBooking() {
 
       try {
         // 1) Bookable assets = isBookable=true and in service.
-        const assets = await apiGet<{ items: Array<Record<string, any>> }>("/assets?isBookable=true");
-        const resourceList: Resource[] = (assets.items ?? []).map((a: any) => {
+        const assets = await apiGet<{ items: RawBookableAsset[] }>(
+          "/assets?isBookable=true",
+        );
+        const resourceList: Resource[] = (assets.items ?? []).map((a) => {
           const cat = (a.category?.name ?? "").toLowerCase();
           return {
             id: a.id,
-            name: a.name,
+            name: a.name ?? "Unnamed resource",
             type: cat.includes("vehicle") || cat.includes("van")
               ? "vehicle"
               : cat.includes("furniture") || cat.includes("meeting") || cat.includes("room")

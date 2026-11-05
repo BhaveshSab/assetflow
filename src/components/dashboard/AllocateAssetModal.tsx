@@ -26,30 +26,54 @@ import {
 import { Dialog } from "@/components/ui/dialog";
 import { SearchDropdown } from "@/components/ui/search-dropdown";
 import { apiGet, apiSend, unwrapList } from "@/lib/api";
+import { errorMessage } from "@/lib/utils";
+
+/**
+ * The raw answers of the API, before they are shaped for the screen.
+ * Writing them down means a change in the API is a compile error, not a
+ * blank field.
+ */
+interface RawAsset {
+  id: string;
+  assetTag?: string;
+  name?: string;
+  category?: { name?: string } | null;
+  condition?: string;
+  location?: string;
+  serialNumber?: string;
+}
+
+interface RawEmployee {
+  id: string;
+  name?: string;
+  email?: string;
+  department?: { name?: string } | null;
+  role?: string;
+}
 
 const allocationService = {
   // GET /api/assets?status=AVAILABLE
   getAvailableAssets: async (): Promise<Asset[]> => {
-    const data = await apiGet<{ items: Array<Record<string, any>> }>("/assets?status=AVAILABLE");
-    return unwrapList(data as never).map((a: any) => ({
+    const data = await apiGet<{ items: RawAsset[] }>("/assets?status=AVAILABLE");
+    return unwrapList<RawAsset>(data).map((a) => ({
       id: a.id,
-      assetTag: a.assetTag,
-      name: a.name,
+      assetTag: a.assetTag ?? "—",
+      name: a.name ?? "Unnamed asset",
       category: a.category?.name ?? "—",
       status: "Available",
       condition: normalizeCondition(a.condition),
       location: a.location ?? "—",
-      serialNumber: a.serialNumber,
+      serialNumber: a.serialNumber ?? "—",
     }));
   },
 
   // GET /api/org/employees?status=ACTIVE
   getEmployees: async (): Promise<Employee[]> => {
-    const data = await apiGet<{ items: Array<Record<string, any>> }>("/org/employees?status=ACTIVE");
-    return unwrapList(data as never).map((e: any) => ({
+    const data = await apiGet<{ items: RawEmployee[] }>("/org/employees?status=ACTIVE");
+    return unwrapList<RawEmployee>(data).map((e) => ({
       id: e.id,
-      name: e.name,
-      email: e.email,
+      name: e.name ?? "Unnamed employee",
+      email: e.email ?? "—",
       department: e.department?.name ?? "—",
       role: e.role ?? "Employee",
       avatar: (e.name ?? "??")
@@ -70,8 +94,8 @@ const allocationService = {
         expectedReturnDate: payload.expectedReturnDate ?? undefined,
       });
       return { success: true, allocationId: res.id };
-    } catch (err: any) {
-      return { success: false, allocationId: undefined, error: err?.message };
+    } catch (err) {
+      return { success: false, allocationId: undefined, error: errorMessage(err, "The allocation could not be created.") };
     }
   },
 };

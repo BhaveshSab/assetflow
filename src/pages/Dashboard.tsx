@@ -17,6 +17,7 @@ import ActivityLogs from "@/components/dashboard/ActivityLogs";
 import MyAssets from "@/components/dashboard/MyAssets";
 import { apiGet } from "@/lib/api";
 import { clearSession, getMe, getSession, type AuthResponse } from "@/lib/auth";
+import { usePolling } from "@/hooks/usePolling";
 
 /* ------------------------------------------------------------------ */
 /*  Role + KPI badges come from the real backend (JWT + /reports).     */
@@ -96,11 +97,9 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    refreshBadges();
-    const t = setInterval(refreshBadges, 60_000);
-    return () => clearInterval(t);
-  }, [refreshBadges]);
+  // Refresh the badges every 60s — no overlapping requests, nothing while
+  // the tab is hidden.
+  usePolling(refreshBadges, 60_000);
 
   if (!session) return <Navigate to="/signin" replace />;
 
