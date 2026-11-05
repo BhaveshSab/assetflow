@@ -8,6 +8,8 @@
  * Import BASE_URL from here instead of hardcoding a URL in each component.
  */
 
+import { clearSession, getToken } from "@/lib/session";
+
 export const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 
@@ -15,13 +17,7 @@ export const BASE_URL =
 const REQUEST_TIMEOUT_MS = 20_000;
 
 /** The stored JWT — `null` when nobody is signed in. */
-export function getToken(): string | null {
-  try {
-    return localStorage.getItem("token");
-  } catch {
-    return null;
-  }
-}
+export { getToken } from "@/lib/session";
 
 /**
  * JSON headers with the JWT attached.
@@ -35,6 +31,30 @@ export const authHeaders = (): Record<string, string> => {
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 };
+
+/**
+ * What happens when the API answers "Unauthorized".
+ *
+ * Without this the app kept showing the last data it had and every request
+ * failed with a bare "Unauthorized" — the user had no idea that they had to
+ * sign in again. The page they were on is remembered so they land back on it
+ * after signing in.
+ */
+export function handleUnauthorized(): void {
+  clearSession();
+
+  if (typeof window === "undefined") return;
+  const { pathname, search } = window.location;
+  if (pathname === "/signin" || pathname === "/signup") return; // no loop
+
+  const next = encodeURIComponent(`${pathname}${search}`);
+  const target = `/signin?next=${next}`;
+  try {
+    window.location.assign(target);
+  } catch {
+    window.location.href = target;
+  }
+}
 
 /** fetch + timeout + JSON error normalisation, shared by GET and POST/PATCH. */
 async function request<T>(
@@ -59,11 +79,22 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    // 401 = the token expired, was revoked, or the account was deactivated
+    // while the tab was open. Everything the app shows after that is stale,
+    // so the session is dropped and the user is sent back to the sign-in page
+    // with the page they were on kept in the URL.
+    if (res.status === 401) handleUnauthorized();
+
     const body = await res.json().catch(() => ({}));
     const message = Array.isArray(body?.message)
       ? body.message[0]
       : body?.message;
-    throw new Error(message ?? `Request failed (${res.status})`);
+    throw new Error(
+      message ??
+        (res.status === 401
+          ? "Your session has expired. Please sign in again."
+          : `Request failed (${res.status})`),
+    );
   }
   return res.json() as Promise<T>;
 }

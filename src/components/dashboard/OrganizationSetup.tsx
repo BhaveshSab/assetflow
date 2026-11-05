@@ -13,6 +13,7 @@ import {
   type Department, type AssetCategory, type DeptFormData, type CategoryFormData,
 } from "@/services/organizationService";
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
 
 const itemVariants = {
   hidden: { opacity: 0, y: 10 },
@@ -203,30 +204,6 @@ const EmployeeToast = ({ toast }: { toast: { msg: string; type: string } | null 
 );
 
 interface ConfirmState { title: string; message: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void }
-
-const EmployeeConfirmDialog = ({ open, title, message, onConfirm, onCancel, confirmLabel = "Confirm", danger = false }: {
-  open: boolean; title?: string; message?: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; danger?: boolean
-}) => (
-  <AnimatePresence>
-    {open && (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-center justify-center p-4" onClick={onCancel}>
-        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-          onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${danger ? "bg-red-500/20" : "bg-amber-500/20"}`}>
-            <AlertCircle size={22} className={danger ? "text-red-400" : "text-amber-400"} />
-          </div>
-          <h3 className="text-white font-bold text-center mb-1">{title}</h3>
-          <p className="text-gray-400 text-sm text-center mb-6">{message}</p>
-          <div className="flex gap-3">
-            <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
-            <button onClick={onConfirm} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${danger ? "bg-red-600 hover:bg-red-500 text-white" : "bg-amber-600 hover:bg-amber-500 text-white"}`}>{confirmLabel}</button>
-          </div>
-        </motion.div>
-      </motion.div>
-    )}
-  </AnimatePresence>
-);
 
 const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, saving }: {
   open: boolean; onClose: () => void; onSave: (data: EmployeeFormData) => void;
@@ -520,8 +497,9 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
   return (
     <div className="space-y-5">
       <EmployeeToast toast={toast} />
-      <EmployeeConfirmDialog open={!!confirm} title={confirm?.title} message={confirm?.message}
-        danger={confirm?.danger} confirmLabel={confirm?.confirmLabel ?? "Confirm"}
+      <ConfirmDialog open={!!confirm} title={confirm?.title ?? "Are you sure?"}
+        message={confirm?.message ?? ""} destructive={confirm?.danger}
+        confirmLabel={confirm?.confirmLabel ?? "Confirm"}
         onConfirm={confirm?.onConfirm ?? (() => {})} onCancel={() => setConfirm(null)} />
 
       {/* Load error banner */}

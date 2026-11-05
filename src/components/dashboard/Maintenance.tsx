@@ -54,6 +54,7 @@ export interface MaintenanceProps {
 // SERVICE LAYER (real backend)
 // ─────────────────────────────────────────────────────────────
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
 
 // Backend statuses are SNAKE_CASE → the component's display statuses.
 const BACKEND_STATUS: Record<string, Status> = {
@@ -939,6 +940,9 @@ const Maintenance = ({
     showToast(`${req.assetName} approved for maintenance`);
   };
 
+  // Rejecting a request is not undoable, so it asks first.
+  const [rejectTarget, setRejectTarget] = useState<MaintenanceRequest | null>(null);
+
   const handleReject = async (req: MaintenanceRequest) => {
     await maintenanceService.reject(req.id);
     setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "Rejected" } : r));
@@ -1103,7 +1107,7 @@ const Maintenance = ({
                 userRole={userRole}
                 delay={i * 0.05}
                 onApprove={() => handleApprove(req)}
-                onReject={() => handleReject(req)}
+                onReject={() => setRejectTarget(req)}
                 onAssign={() => { setActiveRequest(req); setShowAssign(true); }}
                 onResolve={() => { setActiveRequest(req); setShowResolve(true); }}
                 onExportSingle={() => maintenanceService.exportPdf([req])}
@@ -1118,6 +1122,26 @@ const Maintenance = ({
           Showing {filtered.length} of {requests.length} requests
         </p>
       )}
+
+      {/* Rejecting a maintenance request — ask first */}
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this request?"
+        message={
+          rejectTarget
+            ? `The request for ${rejectTarget.assetName} (${rejectTarget.reqId}) will be declined and the employee will be told.`
+            : ""
+        }
+        confirmLabel="Reject request"
+        destructive
+        onCancel={() => setRejectTarget(null)}
+        onConfirm={() => {
+          if (!rejectTarget) return;
+          const req = rejectTarget;
+          setRejectTarget(null);
+          void handleReject(req);
+        }}
+      />
     </div>
   );
 };

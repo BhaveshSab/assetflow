@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import AllocateAssetModal from "@/components/dashboard/AllocateAssetModal";
+import { ConfirmDialog } from "@/components/ui/dialog";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -485,6 +486,9 @@ export default function AllocationsTransfers({
   const canAllocate = userRole === "ADMIN" || userRole === "ASSET_MANAGER";
 
   const [allocations, setAllocations] = useState<Allocation[]>([]);
+  // The transfer the manager is about to reject — the rejection is only
+  // sent after the confirmation, never on the first click.
+  const [rejectTarget, setRejectTarget] = useState<Allocation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -903,7 +907,7 @@ export default function AllocationsTransfers({
                         </button>
                         <button
                           disabled={!!actionLoading[item.id]}
-                          onClick={() => handleReject(item.id)}
+                          onClick={() => setRejectTarget(item)}
                           className="flex-1 bg-red-500/10 text-red-400 border border-red-500/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "reject" ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={14} />}
@@ -998,6 +1002,27 @@ export default function AllocationsTransfers({
         submitting={!!returnTarget && !!actionLoading[returnTarget.id]}
         onClose={() => setReturnTarget(null)}
         onConfirm={submitReturn}
+      />
+
+      {/* Rejecting a transfer — ask first */}
+      <ConfirmDialog
+        open={!!rejectTarget}
+        title="Reject this transfer?"
+        message={
+          rejectTarget
+            ? `${rejectTarget.assetName} will stay with its current holder and the request is declined.`
+            : ""
+        }
+        confirmLabel="Reject transfer"
+        destructive
+        busy={!!rejectTarget && !!actionLoading[rejectTarget.id]}
+        onCancel={() => setRejectTarget(null)}
+        onConfirm={() => {
+          if (!rejectTarget) return;
+          const id = rejectTarget.id;
+          setRejectTarget(null);
+          void handleReject(id);
+        }}
       />
 
       {/* Transfer Asset Modal — pick employee + reason */}

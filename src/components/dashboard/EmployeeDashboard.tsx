@@ -39,6 +39,7 @@ import {
 } from "recharts";
 import { getSession } from "@/lib/auth";
 import { apiGet, apiSend } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/dialog";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -514,6 +515,12 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
     return () => clearInterval(interval);
   }, [isEmployee, fetchAll]);
 
+  // Cancelling a booking takes the slot away from everyone, so it asks first.
+  const [cancelTarget, setCancelTarget] = useState<{
+    id: number | string;
+    resource: string;
+  } | null>(null);
+
   const handleCancelBooking = async (id: number | string) => {
     setCancelLoading((p) => ({ ...p, [id]: true }));
     const ok = await apiService.cancelBooking(id);
@@ -910,7 +917,12 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                     {booking.status === "Upcoming" && (
                       <button
                         disabled={cancelLoading[booking.id]}
-                        onClick={() => handleCancelBooking(booking._id ?? booking.id)}
+                        onClick={() =>
+                          setCancelTarget({
+                            id: booking._id ?? booking.id,
+                            resource: booking.resource ?? "this resource",
+                          })
+                        }
                         className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors disabled:opacity-50"
                       >
                         {cancelLoading[booking.id] ? "..." : "Cancel"}
@@ -1043,6 +1055,26 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           AssetFlow ERP &middot; Employee Portal &middot; Last updated {lastUpdated.toLocaleTimeString()}
         </div>
       </div>
+
+      {/* Cancelling a booking — ask first */}
+      <ConfirmDialog
+        open={!!cancelTarget}
+        title="Cancel this booking?"
+        message={
+          cancelTarget
+            ? `${cancelTarget.resource} will be free again for others. You can book it again later if you change your mind.`
+            : ""
+        }
+        confirmLabel="Cancel booking"
+        destructive
+        onCancel={() => setCancelTarget(null)}
+        onConfirm={() => {
+          if (!cancelTarget) return;
+          const id = cancelTarget.id;
+          setCancelTarget(null);
+          void handleCancelBooking(id);
+        }}
+      />
     </div>
   );
 };

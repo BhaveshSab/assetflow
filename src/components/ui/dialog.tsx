@@ -28,7 +28,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
+import { AlertCircle, AlertTriangle, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -76,6 +76,12 @@ export interface DialogProps {
   title: string;
   /** An optional description, announced together with the title. */
   description?: string;
+  /**
+   * The id of an element the caller renders as the description. Used when
+   * the description is already on the screen — otherwise a screen reader
+   * would read it twice (once from here, once from the visible text).
+   */
+  describedById?: string;
   /** The body of the dialog. */
   children?: React.ReactNode;
   /** The action row (usually the buttons). */
@@ -99,6 +105,7 @@ export function Dialog({
   onClose,
   title,
   description,
+  describedById,
   children,
   footer,
   titleHidden = false,
@@ -207,7 +214,9 @@ export function Dialog({
             aria-modal="true"
             aria-label={titleHidden ? title : undefined}
             aria-labelledby={titleHidden ? undefined : titleId}
-            aria-describedby={description ? descriptionId : undefined}
+            aria-describedby={
+              describedById ?? (description ? descriptionId : undefined)
+            }
             tabIndex={-1}
             initial={{ scale: 0.93, opacity: 0, y: 24 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -229,7 +238,7 @@ export function Dialog({
               </h2>
             )}
 
-            {description && (
+            {description && !describedById && (
               <p id={descriptionId} className="sr-only">
                 {description}
               </p>
@@ -278,12 +287,14 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const messageId = React.useId();
+
   return (
     <Dialog
       open={open}
       onClose={onCancel}
       title={title}
-      description={message}
+      describedById={messageId}
       panelClassName="max-w-sm text-center"
       testId="confirm-dialog"
       footer={
@@ -312,7 +323,21 @@ export function ConfirmDialog({
       }
     >
       <div className="px-6 py-8">
-        <p className="text-sm text-gray-400">{message}</p>
+        <div
+          className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${
+            destructive ? "bg-red-500/20" : "bg-amber-500/20"
+          }`}
+          aria-hidden="true"
+        >
+          {destructive ? (
+            <AlertTriangle size={22} className="text-red-400" />
+          ) : (
+            <AlertCircle size={22} className="text-amber-400" />
+          )}
+        </div>
+        <p id={messageId} className="text-sm text-gray-400">
+          {message}
+        </p>
       </div>
     </Dialog>
   );

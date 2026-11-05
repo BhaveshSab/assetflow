@@ -10,22 +10,23 @@ const FRUITS = [
   { id: "c", name: "Cherry" },
 ];
 
-function renderDropdown(overrides: Partial<React.ComponentProps<typeof SearchDropdown>> = {}) {
+type Fruit = (typeof FRUITS)[number];
+
+function renderDropdown() {
   const onSelect = vi.fn();
   const props = {
     label: "Select fruit",
     placeholder: "Pick one",
     icon: () => null,
     items: FRUITS,
-    selected: null,
+    selected: null as Fruit | null,
     onSelect,
-    renderItem: (f: (typeof FRUITS)[number]) => f.name,
-    renderSelected: (f: (typeof FRUITS)[number]) => f.name,
-    filterFn: (f: (typeof FRUITS)[number], q: string) =>
+    renderItem: (f: Fruit) => f.name,
+    renderSelected: (f: Fruit) => f.name,
+    filterFn: (f: Fruit, q: string) =>
       f.name.toLowerCase().includes(q.toLowerCase()),
-    ...overrides,
-  } as never;
-  render(<SearchDropdown {...props} />);
+  };
+  render(<SearchDropdown<Fruit> {...props} />);
   return { onSelect, user: userEvent.setup() };
 }
 
