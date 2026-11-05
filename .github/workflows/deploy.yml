@@ -78,8 +78,6 @@ jobs:
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-          ssh-user: ${{ vars.DEPLOY_USER }}
-          ssh-hostname: ${{ vars.DEPLOY_HOST }}
 
       - name: Deploy
         env:
@@ -89,7 +87,8 @@ jobs:
           IMAGE: ${{ steps.image.outputs.name }}:${{ github.sha }}
         run: |
           set -euo pipefail
-          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s <<REMOTE
+          ssh -o StrictHostKeyChecking=accept-new \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s <<REMOTE
           set -euo pipefail
           cd "${DEPLOY_PATH}"
           # The scripts and the compose files are always the current ones.
