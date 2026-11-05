@@ -147,8 +147,12 @@ sudo infra/scripts/harden-server.sh
 git clone https://github.com/BhaveshSab/assetflow.git /home/ubuntu/assetflow
 scp -i ~/.ssh/assetflow-key.pem ~/assetflow.env ubuntu@<new-ip>:/home/ubuntu/assetflow/infra/.env
 
-# 6. certificate first — sslip.io points at the NEW ip automatically
-sudo infra/scripts/issue-cert.sh --domain <new-ip>.sslip.io --email <you@example.com>
+# 6. certificate first — sslip.io points at the NEW ip automatically.
+#    The restored lineage names the OLD address, and certbot only lets you
+#    add identifiers, never replace them: --recreate starts a clean lineage.
+#    To keep serving the bare IP (no DNS at all), request an IP certificate:
+#      ... --ip-address <new-ip> --recreate --email <you@example.com>
+sudo infra/scripts/issue-cert.sh --domain <new-ip>.sslip.io --recreate --email <you@example.com>
 
 # 7. the stack, the schema, then the data
 docker compose -f infra/docker-compose.yml up -d --build

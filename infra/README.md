@@ -105,7 +105,7 @@ on a server those ports are reachable through an SSH tunnel only.
 | | |
 |---|---|
 | Host | AWS EC2 `t3.micro`, `ap-southeast-2b`, Ubuntu, 1 GB RAM, 30 GB gp3 |
-| Entry point | <https://3.107.83.86.sslip.io> — Let's Encrypt, valid until 2027-01-26 |
+| Entry point | <https://13.55.90.25> — a Let's Encrypt **IP certificate** (SAN `IP:13.55.90.25`), 6-day lifetime, renewed daily by cron |
 | Containers | 9: nginx, api, postgres, redis, prometheus, grafana, alertmanager, node-exporter, postgres-exporter |
 | Health | `{"status":"ok","database":"up","rateLimitStore":"redis","redis":"up"}` |
 
@@ -163,6 +163,13 @@ sudo infra/scripts/harden-server.sh                # key-only SSH, UFW, updates
 sudo infra/scripts/issue-cert.sh --self-signed     # bootstrap for the first boot
 docker compose -f infra/docker-compose.yml up -d --build
 sudo infra/scripts/issue-cert.sh --domain <host> --email <you@example.com>
+
+# …or for a padlock on a bare IP address (no domain): Let's Encrypt only
+# issues those on its shortlived profile, and only certbot >= 5.4 can
+# validate an IP over the webroot plugin — a user-level install is fine:
+#   sudo CERTBOT=~/.local/bin/certbot infra/scripts/issue-cert.sh \
+#        --ip-address <ip> --email <you@example.com>
+
 docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
 ```
 
@@ -170,8 +177,15 @@ The certificate lives in `infra/certs/live/assetflow` on the host and is
 bind-mounted at `/etc/letsencrypt` in the container. Renewal:
 
 ```bash
-sudo certbot renew --config-dir infra/certs --webroot -w infra/certbot-www
-docker compose -f infra/docker-compose.yml exec nginx nginx -s reload
+infra/scripts/renew-cert.sh    # renews, then reloads Nginx only if the files changed
+```
+
+An **IP certificate lives 160 hours**, so a renewal remembered by hand is a
+padlock that disappears. `renew-cert.sh` runs from cron once a day and fails
+loudly when fewer than two days remain:
+
+```bash
+crontab -l | { cat; echo '17 3 * * * LOG_DIR=$HOME/.local/state/assetflow CERTBOT=$HOME/.local/bin/certbot /opt/assetflow/infra/scripts/renew-cert.sh'; } | crontab -
 ```
 
 The documentation lives in [`../docs`](../docs):

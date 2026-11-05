@@ -195,7 +195,7 @@ keys ([`auth.service.ts`](backend/src/auth/auth.service.ts)).
    client ID** → **Web application**.
 2. Add the origins that will show the button, for example:
    `http://localhost:5173`, `https://your-frontend.vercel.app`,
-   `https://3.107.83.86.sslip.io`. There is **no redirect URI** to add — the
+   `https://13.55.90.25`. There is **no redirect URI** to add — the
    ID-token flow opens a popup and returns the token to the page.
 3. Put the client id (it ends in `.apps.googleusercontent.com`) in
    `backend/.env` or `infra/.env`:
@@ -213,24 +213,23 @@ gets). When the verified Google email already belongs to a password account,
 the Google identity is linked to it — the person keeps their existing role,
 assets and bookings.
 
-**Where this deployment stands:** it is **switched on**. The Web-application
-client is registered with four authorized JavaScript origins —
-`https://3.107.83.86.sslip.io`, `http://localhost:5173`,
-`https://localhost:8443` and the Vercel frontend — and the API serves the id:
+**Where this deployment stands:** it is **switched on**. The API serves the
+client id, and the button below renders on the deployment origin — which only
+happens when that exact origin is authorized for the client:
 
 ```bash
-$ curl -fsS https://3.107.83.86.sslip.io/api/auth/config
+$ curl -fsS https://13.55.90.25/api/auth/config
 {"googleClientId":"385068047594-…apps.googleusercontent.com"}
 ```
 
 The button is rendered by Google Identity Services on
-[the sign-in page](https://3.107.83.86.sslip.io/signin) with no console error,
+[the sign-in page](https://13.55.90.25/signin) with no console error,
 which is only possible when the origin is authorized for that client. The
 server rejects tokens it did not issue — a forged ID token gets `401`, a
 malformed one `400`:
 
 ```bash
-$ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://3.107.83.86.sslip.io/api/auth/google \
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://13.55.90.25/api/auth/google \
     -H 'Content-Type: application/json' -d '{"credential":"<forged>"}'
 401
 ```
@@ -606,7 +605,7 @@ The whole guide is in [`infra/README.md`](infra/README.md).
 ### This deployment, measured
 
 A `t3.micro` in `ap-southeast-2` runs the whole stack behind Nginx with a
-Let's Encrypt certificate at <https://3.107.83.86.sslip.io>. The raw terminal
+Let's Encrypt certificate at <https://13.55.90.25>. The raw terminal
 output is in [`docs/results/`](docs/results).
 
 | What | Measured | Where |
