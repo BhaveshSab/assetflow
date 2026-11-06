@@ -234,23 +234,23 @@ export default function ResourceBooking() {
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-red-950 border-red-500/40 text-red-300" : "bg-emerald-950 border-emerald-500/40 text-emerald-300"}`}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-danger/25 border-danger/40 text-danger" : "bg-success/25 border-success/40 text-success"}`}
           >{toast.type === "error" ? <X size={14} className="inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}{toast.msg}</motion.div>
         )}
       </AnimatePresence>
       {/* --- Page Header --- */}
       <div>
-        <h1 className="text-2xl font-bold text-white tracking-tight">
+        <h1 className="text-2xl font-bold text-ink tracking-tight">
           Resource Booking
         </h1>
-        <p className="text-sm text-gray-400 mt-1">
+        <p className="text-sm text-ink-muted mt-1">
           Reserve shared rooms, vehicles, and equipment with real-time overlap
           validation.
         </p>
       </div>
 
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>
@@ -261,10 +261,10 @@ export default function ResourceBooking() {
         {/* LEFT COLUMN: Resource & Date Selection */}
         <div className="lg:col-span-5 space-y-6">
           {/* Step 1: Select Resource */}
-          <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-            <div className="absolute -top-20 -left-20 w-40 h-40 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
-            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <span className="bg-blue-600/20 text-blue-400 w-5 h-5 rounded flex items-center justify-center text-xs">
+          <div className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+            <div className="absolute -top-20 -left-20 w-40 h-40 bg-info/10 rounded-full blur-3xl pointer-events-none"></div>
+            <h3 className="text-sm font-semibold text-ink-muted uppercase tracking-wider mb-4 flex items-center gap-2">
+              <span className="bg-info/20 text-info w-5 h-5 rounded flex items-center justify-center text-xs">
                 1
               </span>
               Select Resource
@@ -275,7 +275,7 @@ export default function ResourceBooking() {
                 ? Array.from({ length: 3 }).map((_, i) => (
                     <div
                       key={i}
-                      className="h-16 bg-zinc-800/50 animate-pulse rounded-xl"
+                      className="h-16 bg-surface-3/50 animate-pulse rounded-xl"
                     ></div>
                   ))
                 : resources.map((res) => (
@@ -286,15 +286,15 @@ export default function ResourceBooking() {
                       onClick={() => setSelectedResource(res)}
                       className={`cursor-pointer flex items-center gap-4 p-3 rounded-xl border transition-all ${
                         selectedResource?.id === res.id
-                          ? "bg-blue-600/10 border-blue-500/50 shadow-[0_0_15px_rgba(37,99,235,0.15)]"
-                          : "bg-[#0f111a] border-zinc-800/80 hover:border-zinc-700"
+                          ? "bg-info/10 border-info/50 shadow-[0_0_15px_rgba(37,99,235,0.15)]"
+                          : "bg-canvas border-line/80 hover:border-line"
                       }`}
                     >
                       <div
                         className={`p-2 rounded-lg ${
                           selectedResource?.id === res.id
-                            ? "bg-blue-500 text-white"
-                            : "bg-zinc-800 text-gray-400"
+                            ? "bg-info text-white"
+                            : "bg-surface-3 text-ink-muted"
                         }`}
                       >
                         {getResourceIcon(res.type)}
@@ -303,13 +303,13 @@ export default function ResourceBooking() {
                         <h4
                           className={`text-sm font-semibold ${
                             selectedResource?.id === res.id
-                              ? "text-blue-100"
-                              : "text-gray-200"
+                              ? "text-info"
+                              : "text-ink"
                           }`}
                         >
                           {res.name}
                         </h4>
-                        <div className="flex gap-3 text-xs text-zinc-500 mt-1">
+                        <div className="flex gap-3 text-xs text-ink-subtle mt-1">
                           <span className="flex items-center gap-1">
                             <Users size={10} /> {res.capacity}
                           </span>
@@ -324,15 +324,15 @@ export default function ResourceBooking() {
           </div>
 
           {/* Step 2: Select Date */}
-          <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl">
+          <div className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                <span className="bg-blue-600/20 text-blue-400 w-5 h-5 rounded flex items-center justify-center text-xs">
+              <h3 className="text-sm font-semibold text-ink-muted uppercase tracking-wider flex items-center gap-2">
+                <span className="bg-info/20 text-info w-5 h-5 rounded flex items-center justify-center text-xs">
                   2
                 </span>
                 Select Date
               </h3>
-              <span className="text-white font-medium text-sm">
+              <span className="text-ink font-medium text-sm">
                 {new Date().toLocaleString("default", { month: "long", year: "numeric" })}
               </span>
             </div>
@@ -341,7 +341,7 @@ export default function ResourceBooking() {
               {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => (
                 <div
                   key={`dow-${i}`}
-                  className="text-center text-xs font-semibold text-zinc-600 py-1"
+                  className="text-center text-xs font-semibold text-ink-faint py-1"
                 >
                   {day}
                 </div>
@@ -355,10 +355,10 @@ export default function ResourceBooking() {
                   disabled={isPast}
                   className={`w-full aspect-square flex items-center justify-center rounded-lg text-sm font-medium transition-all ${
                     isPast
-                      ? "text-zinc-700 cursor-not-allowed"
+                      ? "text-ink cursor-not-allowed"
                       : selectedDate === day
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-900/30"
-                      : "text-gray-300 hover:bg-zinc-800"
+                      ? "bg-info text-white shadow-lg shadow-blue-900/30"
+                      : "text-ink-soft hover:bg-surface-3"
                   }`}
                 >
                   {day}
@@ -371,19 +371,19 @@ export default function ResourceBooking() {
 
         {/* RIGHT COLUMN: Time Slots */}
         <div className="lg:col-span-7">
-          <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl h-full flex flex-col">
-            <div className="flex justify-between items-end mb-6 pb-4 border-b border-zinc-800/50">
+          <div className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl h-full flex flex-col">
+            <div className="flex justify-between items-end mb-6 pb-4 border-b border-line/50">
               <div>
-                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2 mb-1">
-                  <span className="bg-blue-600/20 text-blue-400 w-5 h-5 rounded flex items-center justify-center text-xs">
+                <h3 className="text-sm font-semibold text-ink-muted uppercase tracking-wider flex items-center gap-2 mb-1">
+                  <span className="bg-info/20 text-info w-5 h-5 rounded flex items-center justify-center text-xs">
                     3
                   </span>
                   Available Slots
                 </h3>
-                <h2 className="text-xl font-bold text-white">
+                <h2 className="text-xl font-bold text-ink">
                   {selectedResource?.name || "Select a resource"}
                 </h2>
-                <p className="text-sm text-blue-400 flex items-center gap-1 mt-1">
+                <p className="text-sm text-info flex items-center gap-1 mt-1">
                   <CalendarIcon size={14} /> {new Date().toLocaleString("default", { month: "short" })} {selectedDate}, {new Date().getFullYear()}
                 </p>
               </div>
@@ -394,7 +394,7 @@ export default function ResourceBooking() {
                 Array.from({ length: 5 }).map((_, i) => (
                   <div
                     key={i}
-                    className="h-16 bg-zinc-800/30 animate-pulse rounded-xl border border-zinc-800/50"
+                    className="h-16 bg-surface-3/30 animate-pulse rounded-xl border border-line/50"
                   ></div>
                 ))
               ) : (
@@ -416,20 +416,20 @@ export default function ResourceBooking() {
                         onClick={() => setSelectedSlot(slot.id)}
                         className={`w-full flex items-center justify-between p-4 rounded-xl border text-left transition-all ${
                           isBooked
-                            ? "bg-red-500/5 border-red-500/10 cursor-not-allowed opacity-75"
+                            ? "bg-danger/5 border-danger/10 cursor-not-allowed opacity-75"
                             : isSelected
-                            ? "bg-blue-600/10 border-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.15)]"
-                            : "bg-[#0f111a] border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50"
+                            ? "bg-info/10 border-info shadow-[0_0_20px_rgba(37,99,235,0.15)]"
+                            : "bg-canvas border-line hover:border-line hover:bg-surface-3/50"
                         }`}
                       >
                         <div className="flex items-center gap-4">
                           <div
                             className={`p-2 rounded-lg ${
                               isBooked
-                                ? "bg-red-500/10 text-red-400"
+                                ? "bg-danger/10 text-danger"
                                 : isSelected
-                                ? "bg-blue-500 text-white"
-                                : "bg-zinc-800 text-gray-400"
+                                ? "bg-info text-white"
+                                : "bg-surface-3 text-ink-muted"
                             }`}
                           >
                             <Clock size={18} />
@@ -438,15 +438,15 @@ export default function ResourceBooking() {
                             <p
                               className={`font-semibold ${
                                 isBooked
-                                  ? "text-gray-500"
+                                  ? "text-ink-subtle"
                                   : isSelected
-                                  ? "text-blue-100"
-                                  : "text-gray-200"
+                                  ? "text-info"
+                                  : "text-ink"
                               }`}
                             >
                               {slot.time}
                             </p>
-                            <p className="text-xs text-zinc-500 mt-0.5">
+                            <p className="text-xs text-ink-subtle mt-0.5">
                               {isBooked
                                 ? `Overlap Conflict: Booked by ${slot.bookedBy}`
                                 : "Slot available for booking"}
@@ -456,17 +456,17 @@ export default function ResourceBooking() {
 
                         <div>
                           {isBooked ? (
-                            <div className="flex items-center gap-1.5 px-3 py-1 bg-red-500/10 text-red-400 rounded-full text-xs font-semibold border border-red-500/20">
+                            <div className="flex items-center gap-1.5 px-3 py-1 bg-danger/10 text-danger rounded-full text-xs font-semibold border border-danger/20">
                               <Lock size={12} /> Unavailable
                             </div>
                           ) : isSelected ? (
-                            <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-500 text-white rounded-full text-xs font-semibold shadow-md shadow-blue-500/20">
+                            <div className="flex items-center gap-1.5 px-3 py-1 bg-info text-white rounded-full text-xs font-semibold shadow-md shadow-blue-500/20">
                               <CheckCircle2 size={12} /> Selected
                             </div>
                           ) : (
                             <ChevronRight
                               size={18}
-                              className="text-zinc-600"
+                              className="text-ink-faint"
                             />
                           )}
                         </div>
@@ -478,7 +478,7 @@ export default function ResourceBooking() {
             </div>
 
             {/* Sticky Action Footer */}
-            <div className="mt-6 pt-4 border-t border-zinc-800/50">
+            <div className="mt-6 pt-4 border-t border-line/50">
               <motion.button
                 whileHover={{ scale: selectedSlot ? 1.01 : 1 }}
                 whileTap={{ scale: selectedSlot ? 0.99 : 1 }}
@@ -486,8 +486,8 @@ export default function ResourceBooking() {
                 onClick={handleConfirmBooking}
                 className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
                   selectedSlot && !booking
-                    ? "bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]"
-                    : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                    ? "bg-info hover:bg-info text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]"
+                    : "bg-surface-3 text-ink-subtle cursor-not-allowed"
                 }`}
               >
                 {booking ? (

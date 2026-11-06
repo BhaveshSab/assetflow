@@ -80,6 +80,13 @@ It covers the complete lifecycle:
 | Notifications | `NotificationBell` | `GET /api/notifications`, `/api/notifications/:id/read`, `/read-all`, `/ping` |
 | Activity log | `ActivityLogs` | `GET /api/activity` |
 
+Two things cut across every screen: **light/dark theming** (a token per
+colour, a switch in the header and on both auth screens, saved per browser and
+following the OS until it is changed — see [`docs/FRONTEND.md`](docs/FRONTEND.md)
+§2.6) and the **accessibility work** (one dialog, one combobox, a skip link,
+labelled fields, a measured contrast table —
+[`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)).
+
 The full, line-by-line contract lives in [`backend/API.md`](backend/API.md).
 
 ---
@@ -383,7 +390,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **241 automated checks** that run against a **real
+The project ships with **256 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -407,7 +414,7 @@ npm test
 |-------|---------|----------------|
 | Backend unit | `cd backend && npm run test:unit` | **72 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
 | Backend e2e | `cd backend && npm run test:e2e` | **117 checks** (1 skipped at the default wide-open limit) — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, rate limiting, health, observability |
-| Frontend | `npm test` | **52 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials |
+| Frontend | `npm test` | **67 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials, and the theme (saved choice beats the OS, the OS is followed when nothing is saved, the class is applied, a blocked storage does not throw, the switch is keyboard-operable) |
 | Rate limit (evidence) | `cd backend && THROTTLE_LIMIT=300 npm run test:e2e -- rate-limit` | the 429 boundary at the production ceiling: 300 x `200`, then request #301 is `429` with `Retry-After: 60`, while a second user behind the same IP is unaffected — transcript in [`docs/results/`](docs/results/) |
 | Lint (backend) | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
 | Lint (frontend) | `npm run lint` | ESLint 9 + the React hooks rules over `src/` — 0 errors (16 advisory warnings, listed in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)) |

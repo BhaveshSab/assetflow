@@ -250,10 +250,10 @@ const apiService = {
 // HELPERS
 // ─────────────────────────────────────────────────────────────
 const statusDot: Record<string, string> = {
-  success: "bg-emerald-400",
-  danger: "bg-red-400",
-  warning: "bg-amber-400",
-  info: "bg-blue-400",
+  success: "bg-success",
+  danger: "bg-danger",
+  warning: "bg-warning",
+  info: "bg-info",
 };
 
 const assetIconMap: Record<string, React.ReactNode> = {
@@ -266,23 +266,23 @@ const assetIconMap: Record<string, React.ReactNode> = {
 };
 
 const priorityStyle: Record<string, string> = {
-  High: "bg-red-500/20 text-red-400 border border-red-500/30",
-  Medium: "bg-amber-500/20 text-amber-400 border border-amber-500/30",
-  Low: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30",
+  High: "bg-danger/20 text-danger border border-danger/30",
+  Medium: "bg-warning/20 text-warning border border-warning/30",
+  Low: "bg-success/20 text-success border border-success/30",
 };
 
 const maintenanceStatusStyle: Record<string, string> = {
-  Pending: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
-  InProgress: "bg-blue-500/20 text-blue-400 border border-blue-500/30",
-  Resolved: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30",
-  Approved: "bg-purple-500/20 text-purple-400 border border-purple-500/30",
+  Pending: "bg-ink-subtle/20 text-ink-muted border border-line-strong/30",
+  InProgress: "bg-info/20 text-info border border-info/30",
+  Resolved: "bg-success/20 text-success border border-success/30",
+  Approved: "bg-violet/20 text-violet border border-violet/30",
 };
 
 const bookingStatusStyle: Record<string, string> = {
-  Upcoming: "bg-blue-500/20 text-blue-400 border border-blue-500/30",
-  Ongoing: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30",
-  Completed: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
-  Cancelled: "bg-red-500/20 text-red-400 border border-red-500/30",
+  Upcoming: "bg-info/20 text-info border border-info/30",
+  Ongoing: "bg-success/20 text-success border border-success/30",
+  Completed: "bg-ink-subtle/20 text-ink-muted border border-line-strong/30",
+  Cancelled: "bg-danger/20 text-danger border border-danger/30",
 };
 
 const isDaysAway = (dateStr: string | null): number | null => {
@@ -293,8 +293,8 @@ const isDaysAway = (dateStr: string | null): number | null => {
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ color: string; name: string; value: number }>; label?: string }) => {
   if (active && payload?.length) {
     return (
-      <div className="bg-[#1e2235] border border-[#333] rounded-xl p-3 shadow-xl text-xs">
-        <p className="text-gray-400 mb-1">{label}</p>
+      <div className="bg-surface-3 border border-[#333] rounded-xl p-3 shadow-xl text-xs">
+        <p className="text-ink-muted mb-1">{label}</p>
         {payload.map((e, i) => (
           <p key={i} style={{ color: e.color }} className="font-semibold">
             {e.name}: {e.value}
@@ -335,23 +335,23 @@ const KPICard = ({
     className={`relative rounded-2xl p-5 border flex flex-col gap-3 overflow-hidden
       ${
         isOverdue
-          ? "bg-red-950/40 border-red-500/40 shadow-[0_0_24px_rgba(239,68,68,0.15)]"
-          : "bg-[#1a1d2e] border-[#2a2d3e]"
+          ? "bg-danger/10 border-danger/40 shadow-[0_0_24px_rgba(239,68,68,0.15)]"
+          : "bg-surface border-line"
       }`}
   >
     {isOverdue && (
       <div className="absolute top-2 right-2">
-        <span className="flex items-center gap-1 bg-red-500/20 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-500/30">
+        <span className="flex items-center gap-1 bg-danger/20 text-danger text-[10px] font-bold px-2 py-0.5 rounded-full border border-danger/30">
           <AlertTriangle size={9} /> RETURN NOW
         </span>
       </div>
     )}
     <div className="flex items-start justify-between">
       <div>
-        <p className={`text-xs font-medium tracking-wide uppercase ${isOverdue ? "text-red-400" : "text-gray-400"}`}>
+        <p className={`text-xs font-medium tracking-wide uppercase ${isOverdue ? "text-danger" : "text-ink-muted"}`}>
           {title}
         </p>
-        <p className={`text-3xl font-bold mt-1 ${isOverdue ? "text-red-400" : "text-white"}`}>
+        <p className={`text-3xl font-bold mt-1 ${isOverdue ? "text-danger" : "text-ink"}`}>
           {value ?? "\u2014"}
         </p>
       </div>
@@ -359,7 +359,7 @@ const KPICard = ({
         <Icon size={20} className={color} />
       </div>
     </div>
-    <p className={`text-[11px] ${isOverdue ? "text-red-400/70" : "text-gray-500"}`}>{trend}</p>
+    <p className={`text-[11px] ${isOverdue ? "text-danger/70" : "text-ink-subtle"}`}>{trend}</p>
   </motion.div>
 );
 
@@ -388,16 +388,16 @@ const QuickAction = ({
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
     onClick={onClick}
-    className="w-full flex items-center gap-3 p-4 rounded-xl border border-[#2a2d3e] bg-[#1a1d2e] hover:border-[#3a3d4e] hover:bg-[#1e2235] transition-all text-left group"
+    className="w-full flex items-center gap-3 p-4 rounded-xl border border-line bg-surface hover:border-line hover:bg-surface-3 transition-all text-left group"
   >
     <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${color} flex-shrink-0`}>
       <Icon size={18} />
     </div>
     <div className="flex-1 min-w-0">
-      <p className="text-sm font-semibold text-white">{label}</p>
-      <p className="text-xs text-gray-500 truncate">{desc}</p>
+      <p className="text-sm font-semibold text-ink">{label}</p>
+      <p className="text-xs text-ink-subtle truncate">{desc}</p>
     </div>
-    <ChevronRight size={15} className="text-gray-600 group-hover:text-gray-400 transition-colors flex-shrink-0" />
+    <ChevronRight size={15} className="text-ink-faint group-hover:text-ink-muted transition-colors flex-shrink-0" />
   </motion.button>
 );
 
@@ -417,36 +417,36 @@ const NotificationPanel = ({
     initial={{ opacity: 0, y: -10, scale: 0.95 }}
     animate={{ opacity: 1, y: 0, scale: 1 }}
     exit={{ opacity: 0, y: -10, scale: 0.95 }}
-    className="absolute top-14 right-0 w-80 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl shadow-2xl z-50 overflow-hidden"
+    className="absolute top-14 right-0 w-80 bg-surface border border-line rounded-2xl shadow-2xl z-50 overflow-hidden"
   >
-    <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2d3e]">
-      <span className="text-sm font-semibold text-white">My Notifications</span>
+    <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+      <span className="text-sm font-semibold text-ink">My Notifications</span>
       <button aria-label="Close" onClick={onClose}>
-        <X size={14} className="text-gray-400 hover:text-white" />
+        <X size={14} className="text-ink-muted hover:text-ink" />
       </button>
     </div>
     {overdueCount > 0 && (
-      <div className="px-4 py-2 bg-red-950/40 border-b border-red-500/20">
-        <p className="text-xs text-red-400 flex items-center gap-1.5">
+      <div className="px-4 py-2 bg-danger/10 border-b border-danger/20">
+        <p className="text-xs text-danger flex items-center gap-1.5">
           <AlertTriangle size={11} /> You have {overdueCount} overdue asset{overdueCount > 1 ? "s" : ""}. Please return immediately.
         </p>
       </div>
     )}
-    <div className="max-h-64 overflow-y-auto divide-y divide-[#2a2d3e]">
+    <div className="max-h-64 overflow-y-auto divide-y divide-line">
       {activity.map((a) => (
-        <div key={a.id} className="px-4 py-3 hover:bg-[#22253a] transition-colors">
+        <div key={a.id} className="px-4 py-3 hover:bg-surface-3 transition-colors">
           <div className="flex items-start gap-2">
             <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${statusDot[a.status]}`} />
             <div>
-              <p className="text-xs text-gray-300 leading-snug">{a.text}</p>
-              <p className="text-[10px] text-gray-500 mt-0.5">{a.time}</p>
+              <p className="text-xs text-ink-soft leading-snug">{a.text}</p>
+              <p className="text-[10px] text-ink-subtle mt-0.5">{a.time}</p>
             </div>
           </div>
         </div>
       ))}
     </div>
-    <div className="px-4 py-2 border-t border-[#2a2d3e]">
-      <p className="text-[10px] text-gray-600 text-center">Showing your most recent activity</p>
+    <div className="px-4 py-2 border-t border-line">
+      <p className="text-[10px] text-ink-faint text-center">Showing your most recent activity</p>
     </div>
   </motion.div>
 );
@@ -535,16 +535,16 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
   const username = session?.user?.name || session?.user?.email?.split("@")[0] || "Employee";
 
   const kpiCards = [
-    { title: "My Allocated Assets", value: kpi?.myAllocatedAssets, trend: kpi?.kpiTrends?.myAllocatedAssets, icon: Package, color: "text-blue-400", iconBg: "bg-blue-400/10", delay: 0.05 },
-    { title: "My Active Bookings", value: kpi?.myActiveBookings, trend: kpi?.kpiTrends?.myActiveBookings, icon: CalendarCheck, color: "text-purple-400", iconBg: "bg-purple-400/10", delay: 0.1 },
+    { title: "My Allocated Assets", value: kpi?.myAllocatedAssets, trend: kpi?.kpiTrends?.myAllocatedAssets, icon: Package, color: "text-info", iconBg: "bg-info/10", delay: 0.05 },
+    { title: "My Active Bookings", value: kpi?.myActiveBookings, trend: kpi?.kpiTrends?.myActiveBookings, icon: CalendarCheck, color: "text-violet", iconBg: "bg-violet/10", delay: 0.1 },
     { title: "My Upcoming Returns", value: kpi?.myUpcomingReturns, trend: kpi?.kpiTrends?.myUpcomingReturns, icon: Clock, color: "text-cyan-400", iconBg: "bg-cyan-400/10", delay: 0.15 },
-    { title: "My Overdue Returns", value: kpi?.myOverdueReturns, trend: kpi?.kpiTrends?.myOverdueReturns, icon: AlertTriangle, color: "text-red-400", iconBg: "bg-red-400/10", isOverdue: true, delay: 0.2 },
+    { title: "My Overdue Returns", value: kpi?.myOverdueReturns, trend: kpi?.kpiTrends?.myOverdueReturns, icon: AlertTriangle, color: "text-danger", iconBg: "bg-danger/10", isOverdue: true, delay: 0.2 },
   ];
 
   const quickActions = [
-    { icon: BookOpen, label: "Book a Resource", desc: "Reserve a room, vehicle or equipment", color: "bg-purple-500/20 text-purple-400", onClick: () => onNavigate("booking"), delay: 0.05 },
-    { icon: Wrench, label: "Raise Maintenance Request", desc: "Report a broken or faulty asset", color: "bg-amber-500/20 text-amber-400", onClick: () => onNavigate("maintenance"), delay: 0.1 },
-    { icon: ArrowLeftRight, label: "Initiate Transfer / Return", desc: "Hand over or return an asset", color: "bg-blue-500/20 text-blue-400", onClick: () => onNavigate("transfers"), delay: 0.15 },
+    { icon: BookOpen, label: "Book a Resource", desc: "Reserve a room, vehicle or equipment", color: "bg-violet/20 text-violet", onClick: () => onNavigate("booking"), delay: 0.05 },
+    { icon: Wrench, label: "Raise Maintenance Request", desc: "Report a broken or faulty asset", color: "bg-warning/20 text-warning", onClick: () => onNavigate("maintenance"), delay: 0.1 },
+    { icon: ArrowLeftRight, label: "Initiate Transfer / Return", desc: "Hand over or return an asset", color: "bg-info/20 text-info", onClick: () => onNavigate("transfers"), delay: 0.15 },
   ];
 
   const overdueAssets = myAssets.filter((a) => a.status === "Overdue");
@@ -552,11 +552,11 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
   // ── Access guard (AFTER all hooks) ──
   if (!isEmployee) {
     return (
-      <div className="bg-[#0f111a] rounded-xl border border-red-500/30 flex flex-col items-center justify-center py-32">
-        <AlertTriangle size={40} className="text-red-400 mb-3" />
-        <p className="text-white font-bold text-lg">Access Denied</p>
-        <p className="text-gray-500 text-sm mt-1">This dashboard is for standard employees only.</p>
-        <button onClick={onSignOut} className="mt-4 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm hover:bg-red-500/30 transition-colors">
+      <div className="bg-canvas rounded-xl border border-danger/30 flex flex-col items-center justify-center py-32">
+        <AlertTriangle size={40} className="text-danger mb-3" />
+        <p className="text-ink font-bold text-lg">Access Denied</p>
+        <p className="text-ink-subtle text-sm mt-1">This dashboard is for standard employees only.</p>
+        <button onClick={onSignOut} className="mt-4 px-4 py-2 bg-danger/20 text-danger rounded-lg text-sm hover:bg-danger/30 transition-colors">
           Sign Out
         </button>
       </div>
@@ -575,8 +575,8 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border
               ${
                 toast.type === "error"
-                  ? "bg-red-950 border-red-500/40 text-red-300"
-                  : "bg-emerald-950 border-emerald-500/40 text-emerald-300"
+                  ? "bg-danger/25 border-danger/40 text-danger"
+                  : "bg-success/25 border-success/40 text-success"
               }`}
           >
             {toast.type === "error" ? (
@@ -591,13 +591,13 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
 
       {/* ── DATA ERROR BANNER ── */}
       {dataError && (
-        <div className="flex items-center gap-3 bg-red-950/40 border border-red-500/30 rounded-2xl px-5 py-3 mb-6">
-          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
-          <p className="text-sm text-red-300 flex-1">{dataError}</p>
+        <div className="flex items-center gap-3 bg-danger/10 border border-danger/30 rounded-2xl px-5 py-3 mb-6">
+          <AlertTriangle size={16} className="text-danger flex-shrink-0" />
+          <p className="text-sm text-danger flex-1">{dataError}</p>
           <button
             aria-label="Refresh"
             onClick={fetchAll}
-            className="text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+            className="text-xs bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
           >
             Retry
           </button>
@@ -607,14 +607,14 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
       {/* ── HEADER ── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-white">
-            Welcome back, <span className="text-blue-400">{username}</span>
+          <h1 className="text-xl font-bold text-ink">
+            Welcome back, <span className="text-info">{username}</span>
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">Your personal asset & resource portal</p>
+          <p className="text-xs text-ink-subtle mt-0.5">Your personal asset & resource portal</p>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="hidden sm:block text-[11px] text-gray-600">
+          <span className="hidden sm:block text-[11px] text-ink-faint">
             Updated {lastUpdated.toLocaleTimeString()}
           </span>
 
@@ -622,20 +622,20 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             aria-label="Refresh"
             onClick={fetchAll}
             disabled={refreshing}
-            className="p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors"
+            className="p-2 rounded-lg bg-surface border border-line hover:border-info/40 transition-colors"
           >
-            <RefreshCw size={14} className={`text-gray-400 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw size={14} className={`text-ink-muted ${refreshing ? "animate-spin" : ""}`} />
           </button>
 
           {/* Notification Bell */}
           <div className="relative">
             <button
               onClick={() => setShowNotif((v) => !v)}
-              className="relative p-2 rounded-lg bg-[#1a1d2e] border border-[#2a2d3e] hover:border-blue-500/40 transition-colors"
+              className="relative p-2 rounded-lg bg-surface border border-line hover:border-info/40 transition-colors"
             >
-              <Bell size={16} className="text-gray-400" />
+              <Bell size={16} className="text-ink-muted" />
               {(kpi?.myOverdueReturns ?? 0) > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-danger text-white text-[9px] font-bold rounded-full flex items-center justify-center">
                   {kpi?.myOverdueReturns ?? 0}
                 </span>
               )}
@@ -651,12 +651,12 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             </AnimatePresence>
           </div>
 
-          <div className="flex items-center gap-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-xl px-3 py-1.5">
-            <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white">
+          <div className="flex items-center gap-2 bg-surface border border-line rounded-xl px-3 py-1.5">
+            <div className="w-6 h-6 rounded-full bg-info flex items-center justify-center text-[10px] font-bold text-white">
               {username[0]?.toUpperCase()}
             </div>
-            <span className="text-xs text-gray-300 hidden sm:block">{session?.user?.email}</span>
-            <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded-full font-bold">
+            <span className="text-xs text-ink-soft hidden sm:block">{session?.user?.email}</span>
+            <span className="text-[9px] bg-success/20 text-success border border-success/30 px-1.5 py-0.5 rounded-full font-bold">
               EMPLOYEE
             </span>
           </div>
@@ -672,28 +672,28 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="bg-red-950/50 border border-red-500/40 rounded-2xl px-5 py-4"
+              className="bg-danger/12 border border-danger/40 rounded-2xl px-5 py-4"
             >
               <div className="flex items-start gap-3">
-                <CircleAlert size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+                <CircleAlert size={18} className="text-danger flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-red-400 mb-1">
+                  <p className="text-sm font-bold text-danger mb-1">
                     You have {overdueAssets.length} overdue asset{overdueAssets.length > 1 ? "s" : ""}!
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {overdueAssets.map((a) => (
-                      <span key={a.id} className="text-xs bg-red-500/10 border border-red-500/20 text-red-300 px-2 py-1 rounded-lg">
-                        {a.assetName} <span className="text-red-500">({a.assetTag})</span>
+                      <span key={a.id} className="text-xs bg-danger/10 border border-danger/20 text-danger px-2 py-1 rounded-lg">
+                        {a.assetName} <span className="text-danger">({a.assetTag})</span>
                       </span>
                     ))}
                   </div>
-                  <p className="text-xs text-red-400/70 mt-2">
+                  <p className="text-xs text-danger/70 mt-2">
                     Please return these items to IT or contact your Asset Manager immediately.
                   </p>
                 </div>
                 <button
                   onClick={() => onNavigate("transfers")}
-                  className="flex-shrink-0 text-xs bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg transition-colors"
+                  className="flex-shrink-0 text-xs bg-danger/20 hover:bg-danger/30 text-danger border border-danger/30 px-3 py-1.5 rounded-lg transition-colors"
                 >
                   Initiate Return &rarr;
                 </button>
@@ -706,7 +706,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
         {loading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-5 h-32 animate-pulse" />
+              <div key={i} className="bg-surface border border-line rounded-2xl p-5 h-32 animate-pulse" />
             ))}
           </div>
         ) : (
@@ -724,22 +724,22 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, type: "spring" as const, stiffness: 100 }}
-            className="lg:col-span-2 bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl overflow-hidden"
+            className="lg:col-span-2 bg-surface border border-line rounded-2xl overflow-hidden"
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d3e]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
               <div className="flex items-center gap-2">
-                <Package size={15} className="text-blue-400" />
-                <h2 className="text-sm font-semibold text-white">My Allocated Assets</h2>
-                <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-bold">
+                <Package size={15} className="text-info" />
+                <h2 className="text-sm font-semibold text-ink">My Allocated Assets</h2>
+                <span className="text-[10px] bg-info/20 text-info border border-info/30 px-2 py-0.5 rounded-full font-bold">
                   {myAssets.length}
                 </span>
               </div>
-              <button onClick={() => onNavigate("my-assets")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              <button onClick={() => onNavigate("my-assets")} className="text-xs text-info hover:text-info transition-colors">
                 View all &rarr;
               </button>
             </div>
 
-            <div className="divide-y divide-[#1e2235]">
+            <div className="divide-y divide-line">
               {myAssets.map((asset, i) => {
                 const daysLeft = isDaysAway(asset.expectedReturn);
                 const isOverdue = asset.status === "Overdue" || (daysLeft !== null && daysLeft < 0);
@@ -751,42 +751,42 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.32 + i * 0.05 }}
-                    className={`px-5 py-4 hover:bg-[#1e2235] transition-colors ${isOverdue ? "bg-red-950/20" : ""}`}
+                    className={`px-5 py-4 hover:bg-surface-3 transition-colors ${isOverdue ? "bg-danger/5" : ""}`}
                   >
                     <div className="flex items-start gap-3">
                       <div
                         className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0
-                        ${isOverdue ? "bg-red-500/20 text-red-400" : "bg-blue-500/15 text-blue-400"}`}
+                        ${isOverdue ? "bg-danger/20 text-danger" : "bg-info/15 text-info"}`}
                       >
                         {assetIconMap[asset.icon] ?? <Tag size={16} />}
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-semibold text-white">{asset.assetName}</p>
-                          <span className="text-[11px] text-gray-500">{asset.assetTag}</span>
+                          <p className="text-sm font-semibold text-ink">{asset.assetName}</p>
+                          <span className="text-[11px] text-ink-subtle">{asset.assetTag}</span>
                           {isOverdue && (
-                            <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full font-bold">
+                            <span className="text-[10px] bg-danger/20 text-danger border border-danger/30 px-1.5 py-0.5 rounded-full font-bold">
                               OVERDUE
                             </span>
                           )}
                           {isDueSoon && !isOverdue && (
-                            <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full font-bold">
+                            <span className="text-[10px] bg-warning/20 text-warning border border-warning/30 px-1.5 py-0.5 rounded-full font-bold">
                               DUE SOON
                             </span>
                           )}
                         </div>
                         <div className="flex items-center gap-3 mt-1 flex-wrap">
-                          <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                          <span className="text-[11px] text-ink-subtle flex items-center gap-1">
                             <Tag size={10} /> {asset.category}
                           </span>
-                          <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                          <span className="text-[11px] text-ink-subtle flex items-center gap-1">
                             <BadgeCheck size={10} /> {asset.condition}
                           </span>
                           {asset.expectedReturn ? (
                             <span
                               className={`text-[11px] flex items-center gap-1
-                              ${isOverdue ? "text-red-400" : isDueSoon ? "text-amber-400" : "text-gray-500"}`}
+                              ${isOverdue ? "text-danger" : isDueSoon ? "text-warning" : "text-ink-subtle"}`}
                             >
                               <Calendar size={10} />
                               {isOverdue
@@ -794,7 +794,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                                 : `Return in ${daysLeft}d (${asset.expectedReturn})`}
                             </span>
                           ) : (
-                            <span className="text-[11px] text-gray-600 flex items-center gap-1">
+                            <span className="text-[11px] text-ink-faint flex items-center gap-1">
                               <Calendar size={10} /> No return date
                             </span>
                           )}
@@ -803,7 +803,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
 
                       <button
                         onClick={() => onNavigate("my-assets")}
-                        className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-[#2a2d3e] text-gray-400 hover:border-blue-500/40 hover:text-blue-400 transition-all"
+                        className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-line text-ink-muted hover:border-info/40 hover:text-info transition-all"
                       >
                         Details
                       </button>
@@ -813,7 +813,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               })}
 
               {myAssets.length === 0 && (
-                <div className="py-10 text-center text-gray-500 text-xs">
+                <div className="py-10 text-center text-ink-subtle text-xs">
                   <Package size={28} className="mx-auto mb-2 opacity-30" />
                   No assets allocated to you yet.
                 </div>
@@ -827,11 +827,11 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.32, type: "spring" as const, stiffness: 100 }}
-              className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-4 flex flex-col gap-2.5"
+              className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-2.5"
             >
               <div className="flex items-center gap-2 mb-1">
-                <Zap size={13} className="text-yellow-400" />
-                <h2 className="text-sm font-semibold text-white">Quick Actions</h2>
+                <Zap size={13} className="text-warning" />
+                <h2 className="text-sm font-semibold text-ink">Quick Actions</h2>
               </div>
               {quickActions.map((action, i) => (
                 <QuickAction key={i} {...action} />
@@ -842,23 +842,23 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.36, type: "spring" as const, stiffness: 100 }}
-              className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl p-4"
+              className="bg-surface border border-line rounded-2xl p-4"
             >
-              <p className="text-sm font-semibold text-white mb-1">My Assets Over Time</p>
-              <p className="text-xs text-gray-500 mb-3">How many items you've held</p>
+              <p className="text-sm font-semibold text-ink mb-1">My Assets Over Time</p>
+              <p className="text-xs text-ink-subtle mb-3">How many items you've held</p>
               <ResponsiveContainer width="100%" height={90}>
                 <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="areaGradEmp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2235" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fill: "#6b7280", fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--chart-grid))" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: "hsl(var(--chart-tick))", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis hide />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="assets" name="Assets" stroke="#3b82f6" fill="url(#areaGradEmp)" strokeWidth={2} dot={{ fill: "#3b82f6", r: 3 }} />
+                  <Area type="monotone" dataKey="assets" name="Assets" stroke="hsl(var(--chart-1))" fill="url(#areaGradEmp)" strokeWidth={2} dot={{ fill: "hsl(var(--chart-1))", r: 3 }} />
                 </AreaChart>
               </ResponsiveContainer>
             </motion.div>
@@ -872,43 +872,43 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.42, type: "spring" as const, stiffness: 100 }}
-            className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl overflow-hidden"
+            className="bg-surface border border-line rounded-2xl overflow-hidden"
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d3e]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
               <div className="flex items-center gap-2">
-                <CalendarCheck size={15} className="text-purple-400" />
-                <h2 className="text-sm font-semibold text-white">My Resource Bookings</h2>
-                <span className="text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full font-bold">
+                <CalendarCheck size={15} className="text-violet" />
+                <h2 className="text-sm font-semibold text-ink">My Resource Bookings</h2>
+                <span className="text-[10px] bg-violet/20 text-violet border border-violet/30 px-2 py-0.5 rounded-full font-bold">
                   {myBookings.filter((b) => b.status === "Upcoming").length} upcoming
                 </span>
               </div>
-              <button onClick={() => onNavigate("booking")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              <button onClick={() => onNavigate("booking")} className="text-xs text-info hover:text-info transition-colors">
                 Book new &rarr;
               </button>
             </div>
 
-            <div className="divide-y divide-[#1e2235]">
+            <div className="divide-y divide-line">
               {myBookings.map((booking, i) => (
                 <motion.div
                   key={booking.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.44 + i * 0.04 }}
-                  className="px-5 py-4 hover:bg-[#1e2235] transition-colors"
+                  className="px-5 py-4 hover:bg-surface-3 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <p className="text-sm font-semibold text-white">{booking.resource}</p>
+                        <p className="text-sm font-semibold text-ink">{booking.resource}</p>
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${bookingStatusStyle[booking.status]}`}>
                           {booking.status}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                      <p className="text-xs text-ink-muted flex items-center gap-1.5">
                         <Calendar size={10} />
                         {booking.date} &middot; {booking.start} - {booking.end}
                       </p>
-                      <p className="text-[11px] text-gray-600 flex items-center gap-1 mt-0.5">
+                      <p className="text-[11px] text-ink-faint flex items-center gap-1 mt-0.5">
                         <MapPin size={10} /> {booking.location}
                       </p>
                     </div>
@@ -921,7 +921,7 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
                             resource: booking.resource ?? "this resource",
                           })
                         }
-                        className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+                        className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 transition-colors disabled:opacity-50"
                       >
                         {cancelLoading[booking.id] ? "..." : "Cancel"}
                       </button>
@@ -931,10 +931,10 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               ))}
 
               {myBookings.length === 0 && (
-                <div className="py-10 text-center text-gray-500 text-xs">
+                <div className="py-10 text-center text-ink-subtle text-xs">
                   <CalendarCheck size={28} className="mx-auto mb-2 opacity-30" />
                   No bookings yet.
-                  <button onClick={() => onNavigate("booking")} className="block mx-auto mt-2 text-blue-400 hover:underline">
+                  <button onClick={() => onNavigate("booking")} className="block mx-auto mt-2 text-info hover:underline">
                     Book a resource &rarr;
                   </button>
                 </div>
@@ -947,38 +947,38 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.46, type: "spring" as const, stiffness: 100 }}
-            className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl overflow-hidden"
+            className="bg-surface border border-line rounded-2xl overflow-hidden"
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d3e]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
               <div className="flex items-center gap-2">
-                <Wrench size={15} className="text-amber-400" />
-                <h2 className="text-sm font-semibold text-white">My Maintenance Requests</h2>
+                <Wrench size={15} className="text-warning" />
+                <h2 className="text-sm font-semibold text-ink">My Maintenance Requests</h2>
               </div>
-              <button onClick={() => onNavigate("maintenance")} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+              <button onClick={() => onNavigate("maintenance")} className="text-xs text-info hover:text-info transition-colors">
                 Raise new &rarr;
               </button>
             </div>
 
-            <div className="divide-y divide-[#1e2235]">
+            <div className="divide-y divide-line">
               {myMaint.map((req, i) => (
                 <motion.div
                   key={req.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.48 + i * 0.04 }}
-                  className="px-5 py-4 hover:bg-[#1e2235] transition-colors"
+                  className="px-5 py-4 hover:bg-surface-3 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <p className="text-sm font-semibold text-white">{req.assetName}</p>
-                        <span className="text-[11px] text-gray-500">{req.assetTag}</span>
+                        <p className="text-sm font-semibold text-ink">{req.assetName}</p>
+                        <span className="text-[11px] text-ink-subtle">{req.assetTag}</span>
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${priorityStyle[req.priority]}`}>
                           {req.priority}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-400 truncate">{req.issue}</p>
-                      <p className="text-[11px] text-gray-600 mt-0.5 flex items-center gap-1">
+                      <p className="text-xs text-ink-muted truncate">{req.issue}</p>
+                      <p className="text-[11px] text-ink-faint mt-0.5 flex items-center gap-1">
                         <Calendar size={10} /> Raised {req.raisedOn}
                       </p>
                     </div>
@@ -990,10 +990,10 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
               ))}
 
               {myMaint.length === 0 && (
-                <div className="py-10 text-center text-gray-500 text-xs">
+                <div className="py-10 text-center text-ink-subtle text-xs">
                   <Wrench size={28} className="mx-auto mb-2 opacity-30" />
                   No maintenance requests raised.
-                  <button onClick={() => onNavigate("maintenance")} className="block mx-auto mt-2 text-blue-400 hover:underline">
+                  <button onClick={() => onNavigate("maintenance")} className="block mx-auto mt-2 text-info hover:underline">
                     Raise a request &rarr;
                   </button>
                 </div>
@@ -1007,28 +1007,28 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.52, type: "spring" as const, stiffness: 100 }}
-          className="bg-[#1a1d2e] border border-[#2a2d3e] rounded-2xl overflow-hidden"
+          className="bg-surface border border-line rounded-2xl overflow-hidden"
         >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d3e]">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-line">
             <div className="flex items-center gap-2">
-              <Activity size={15} className="text-blue-400" />
-              <h2 className="text-sm font-semibold text-white">My Recent Activity</h2>
+              <Activity size={15} className="text-info" />
+              <h2 className="text-sm font-semibold text-ink">My Recent Activity</h2>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-[#1e2235]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-line">
             {activity.map((item, i) => (
               <motion.div
                 key={item.id}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.54 + i * 0.04 }}
-                className="px-5 py-4 flex items-start gap-3 hover:bg-[#1e2235] transition-colors"
+                className="px-5 py-4 flex items-start gap-3 hover:bg-surface-3 transition-colors"
               >
                 <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${statusDot[item.status]}`} />
                 <div>
-                  <p className="text-xs text-gray-300 leading-snug">{item.text}</p>
-                  <p className="text-[10px] text-gray-600 mt-0.5">{item.time}</p>
+                  <p className="text-xs text-ink-soft leading-snug">{item.text}</p>
+                  <p className="text-[10px] text-ink-faint mt-0.5">{item.time}</p>
                 </div>
               </motion.div>
             ))}
@@ -1040,16 +1040,16 @@ const EmployeeDashboard = ({ onNavigate, onSignOut }: EmployeeDashboardProps) =>
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.6 }}
-          className="flex items-start gap-3 bg-blue-950/30 border border-blue-500/20 rounded-2xl px-5 py-3"
+          className="flex items-start gap-3 bg-info/8 border border-info/20 rounded-2xl px-5 py-3"
         >
-          <Info size={15} className="text-blue-400 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-blue-300/80 leading-relaxed">
-            You are viewing your <span className="font-semibold text-blue-300">personal portal</span>. Only assets, bookings, and requests associated with your account are shown here.
+          <Info size={15} className="text-info flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-info/80 leading-relaxed">
+            You are viewing your <span className="font-semibold text-info">personal portal</span>. Only assets, bookings, and requests associated with your account are shown here.
             To report issues or request new equipment, use the Quick Actions above or contact your Asset Manager.
           </p>
         </motion.div>
 
-        <div className="text-center text-[11px] text-gray-700 pb-2">
+        <div className="text-center text-[11px] text-ink pb-2">
           AssetFlow ERP &middot; Employee Portal &middot; Last updated {lastUpdated.toLocaleTimeString()}
         </div>
       </div>

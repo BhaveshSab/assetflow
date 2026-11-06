@@ -2,50 +2,114 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * ── The two themes ───────────────────────────────────────────────────────
+ *
+ * Every colour in the interface is a token, never a literal. The tokens come
+ * in pairs: `:root` is the light theme, `.dark` is the dark one, and the only
+ * difference between them is the values below — a component that uses
+ * `bg-surface text-ink-muted` is correct in both without knowing which is on.
+ *
+ * `src/lib/theme.ts` decides which class lands on <html>: the saved choice
+ * first, then the operating system's `prefers-color-scheme`, and it can be
+ * switched from the header at any time.
+ *
+ * The shadcn/ui names at the bottom (`--background`, `--primary`, …) are kept
+ * because the primitives in `src/components/ui/*` are written against them;
+ * they are aliases of the tokens above, not a second palette.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 265 60% 52%;
+    /* Surfaces — what a thing sits on */
+    --canvas: 228 40% 97%; /* the page itself */
+    --surface: 0 0% 100%; /* a card or a panel */
+    --surface-2: 228 39% 96%; /* a section inside a card */
+    --surface-3: 222 33% 92%; /* a pressed row, a hover */
+    --line: 220 26% 89%; /* hairlines, card borders */
+    --line-strong: 219 22% 80%; /* an emphasised border */
+
+    /* Ink — the text, from loudest to quietest */
+    --ink: 222 47% 11%;
+    --ink-soft: 215 25% 27%;
+    --ink-muted: 218 14% 41%;
+    /* 43 % and 46 % are the lightest values that still clear 4.5:1 on both
+       the page and a card — measured, not eyeballed (docs/ACCESSIBILITY.md). */
+    --ink-subtle: 218 12% 43%;
+    --ink-faint: 219 11% 46%;
+
+    /* Meaning — each has a light and a dark value chosen for AA contrast */
+    --primary: 221 83% 53%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --success: 142 72% 29%;
+    --warning: 32 95% 34%;
+    --info: 217 91% 40%;
+    --danger: 0 72% 43%;
+    --violet: 270 70% 42%;
+
+    /* Charts — Recharts cannot read Tailwind classes, so it reads these */
+    --chart-1: 217 91% 50%;
+    --chart-2: 213 94% 60%;
+    --chart-3: 160 84% 34%;
+    --chart-grid: 220 26% 89%;
+    --chart-tick: 218 11% 55%;
+
+    /* shadcn/ui aliases (the primitives are written against these) */
+    --background: var(--canvas);
+    --foreground: var(--ink);
+    --card: var(--surface);
+    --card-foreground: var(--ink);
+    --popover: var(--surface);
+    --popover-foreground: var(--ink);
+    --secondary: var(--surface-3);
+    --secondary-foreground: var(--ink);
+    --muted: var(--surface-2);
+    --muted-foreground: var(--ink-muted);
+    --accent: var(--surface-3);
+    --accent-foreground: var(--ink);
+    --destructive: var(--danger);
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--line);
+    /* The boundary of a form control is the only thing that says "this is a
+       field", so WCAG 1.4.11 wants 3:1 against its neighbours — heavier than
+       a decorative card border. Measured in scripts/contrast-audit.py. */
+    --input: 218 12% 53%;
+    --ring: var(--primary);
     --radius: 0.75rem;
+
+    color-scheme: light;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --canvas: 228 28% 8%; /* #0f111a */
+    --surface: 231 27% 14%; /* #1a1d2e */
+    --surface-2: 231 27% 12%; /* #161925 */
+    --surface-3: 233 26% 18%; /* #22253a */
+    --line: 230 27% 16%; /* #1e2235 */
+    --line-strong: 229 14% 27%; /* #3a3d4e */
+
+    --ink: 220 33% 98%;
+    --ink-soft: 216 12% 84%;
+    --ink-muted: 240 5% 65%;
+    --ink-subtle: 240 4% 58%;
+    --ink-faint: 240 4% 54%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --success: 152 60% 52%;
+    --warning: 38 92% 55%;
+    --info: 213 94% 68%;
+    --danger: 0 84% 65%;
+    --violet: 270 91% 72%;
+
+    --chart-1: 217 91% 60%;
+    --chart-2: 213 94% 72%;
+    --chart-3: 160 84% 45%;
+    --chart-grid: 230 27% 16%;
+    --chart-tick: 240 4% 46%;
+
+    --input: 229 12% 48%;
+
+    color-scheme: dark;
   }
 }
 

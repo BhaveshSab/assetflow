@@ -7,7 +7,29 @@
       name="description"
       content="AssetFlow — enterprise asset & resource management: allocations, transfers, bookings, maintenance, audits and analytics."
     />
-    <meta name="theme-color" content="#09090b" />
+    <meta name="theme-color" content="#0f111a" />
+    <!--
+      Paints the saved theme before the bundle is fetched, so a visitor who
+      chose dark never sees a white flash on load. It must stay in step with
+      `src/lib/theme.ts` — same storage key, same class, same fallback order.
+      Keep it this small and this early: anything asynchronous here would
+      reintroduce the flash it exists to prevent.
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("assetflow-theme");
+          var dark =
+            saved === "dark" ||
+            (saved !== "light" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (error) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
     <link
       rel="icon"
       type="image/svg+xml"

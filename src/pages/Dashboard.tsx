@@ -36,9 +36,9 @@ function ViewFallback() {
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-center py-20 gap-2 text-zinc-500 text-sm"
+      className="flex items-center justify-center py-20 gap-2 text-ink-subtle text-sm"
     >
-      <Loader2 size={18} className="animate-spin text-blue-400" aria-hidden="true" />
+      <Loader2 size={18} className="animate-spin text-info" aria-hidden="true" />
       Loading…
     </div>
   );

@@ -41,11 +41,11 @@ export interface RegisterAssetModalProps {
 // CONDITION OPTIONS
 // ─────────────────────────────────────────────────────────────
 const CONDITIONS: { value: Condition; label: string; color: string; dot: string }[] = [
-  { value: "NEW",     label: "New",     color: "text-emerald-400", dot: "bg-emerald-400" },
-  { value: "GOOD",    label: "Good",    color: "text-blue-400",    dot: "bg-blue-400"    },
-  { value: "FAIR",    label: "Fair",    color: "text-amber-400",   dot: "bg-amber-400"   },
-  { value: "POOR",    label: "Poor",    color: "text-orange-400",  dot: "bg-orange-400"  },
-  { value: "DAMAGED", label: "Damaged", color: "text-red-400",     dot: "bg-red-400"     },
+  { value: "NEW",     label: "New",     color: "text-success", dot: "bg-success" },
+  { value: "GOOD",    label: "Good",    color: "text-info",    dot: "bg-info"    },
+  { value: "FAIR",    label: "Fair",    color: "text-warning",   dot: "bg-warning"   },
+  { value: "POOR",    label: "Poor",    color: "text-warning",  dot: "bg-warning"  },
+  { value: "DAMAGED", label: "Damaged", color: "text-danger",     dot: "bg-danger"     },
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -76,8 +76,8 @@ const registerService = {
 // INPUT FIELD WRAPPER
 // ─────────────────────────────────────────────────────────────
 const inputCls = (hasError?: boolean) =>
-  `w-full bg-[#0f111a] border rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none transition-all
-  ${hasError ? "border-red-500/60 focus:border-red-500" : "border-zinc-700/80 focus:border-blue-500/60 focus:bg-[#0a0c14]"}`;
+  `w-full bg-canvas border rounded-xl px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none transition-all
+  ${hasError ? "border-danger/60 focus:border-danger" : "border-line/80 focus:border-info/60 focus:bg-canvas"}`;
 
 // ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
@@ -198,34 +198,34 @@ export default function RegisterAssetModal({
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", damping: 14, stiffness: 200 }}
-            className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center"
+            className="w-20 h-20 rounded-full bg-success/20 flex items-center justify-center"
           >
-            <CheckCircle2 size={40} className="text-emerald-400" />
+            <CheckCircle2 size={40} className="text-success" />
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-            <p className="text-xl font-bold text-white mb-1">Asset Registered!</p>
-            <p className="text-zinc-400 text-sm">
-              <span className="text-blue-400 font-semibold">{newAsset.name}</span> has been added to the inventory.
+            <p className="text-xl font-bold text-ink mb-1">Asset Registered!</p>
+            <p className="text-ink-muted text-sm">
+              <span className="text-info font-semibold">{newAsset.name}</span> has been added to the inventory.
             </p>
 
             {/* Auto-generated tag */}
-            <div className="mt-4 inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-xl px-5 py-3">
-              <Sparkles size={15} className="text-blue-400" />
+            <div className="mt-4 inline-flex items-center gap-2 bg-info/10 border border-info/25 rounded-xl px-5 py-3">
+              <Sparkles size={15} className="text-info" />
               <div className="text-left">
-                <p className="text-[11px] text-zinc-500">Auto-generated Asset Tag</p>
-                <p className="text-xl font-black text-blue-400 font-mono tracking-widest">{newAsset.assetTag}</p>
+                <p className="text-[11px] text-ink-subtle">Auto-generated Asset Tag</p>
+                <p className="text-xl font-black text-info font-mono tracking-widest">{newAsset.assetTag}</p>
               </div>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-left">
-              <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3">
-                <p className="text-zinc-500 mb-0.5">Category</p>
-                <p className="text-white font-semibold">{newAsset.category?.name ?? form.categoryName}</p>
+              <div className="bg-canvas border border-line rounded-xl px-4 py-3">
+                <p className="text-ink-subtle mb-0.5">Category</p>
+                <p className="text-ink font-semibold">{newAsset.category?.name ?? form.categoryName}</p>
               </div>
-              <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3">
-                <p className="text-zinc-500 mb-0.5">Status</p>
-                <p className="text-emerald-400 font-semibold">Available</p>
+              <div className="bg-canvas border border-line rounded-xl px-4 py-3">
+                <p className="text-ink-subtle mb-0.5">Status</p>
+                <p className="text-success font-semibold">Available</p>
               </div>
             </div>
           </motion.div>
@@ -244,13 +244,13 @@ export default function RegisterAssetModal({
                 setErrors({});
                 setGlobalError("");
               }}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all"
             >
               Register Another
             </button>
             <button
               onClick={() => { onSuccess(newAsset); onClose(); }}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all"
             >
               Done
             </button>
@@ -262,18 +262,18 @@ export default function RegisterAssetModal({
       {step === "form" && (
         <>
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-line flex-shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center">
-                <Package size={20} className="text-blue-400" />
+              <div className="w-10 h-10 rounded-xl bg-info/15 flex items-center justify-center">
+                <Package size={20} className="text-info" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Register New Asset</h2>
-                <p className="text-[11px] text-zinc-500">Add a new physical asset to the inventory</p>
+                <h2 className="text-sm font-bold text-ink">Register New Asset</h2>
+                <p className="text-[11px] text-ink-subtle">Add a new physical asset to the inventory</p>
               </div>
             </div>
-            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-              <X size={16} className="text-zinc-400" />
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+              <X size={16} className="text-ink-muted" />
             </button>
           </div>
 
@@ -282,7 +282,7 @@ export default function RegisterAssetModal({
 
             {/* Global error */}
             {globalError && (
-              <div role="alert" className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+              <div role="alert" className="flex items-center gap-2.5 bg-danger/10 border border-danger/30 rounded-xl px-4 py-3 text-sm text-danger">
                 <AlertCircle size={15} className="flex-shrink-0" /> {globalError}
               </div>
             )}
@@ -291,7 +291,7 @@ export default function RegisterAssetModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Asset Name" required error={errors.name}>
                 <div className="relative">
-                  <Package size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <Package size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input
                     type="text"
                     placeholder="e.g. Dell Laptop XPS 15"
@@ -308,41 +308,41 @@ export default function RegisterAssetModal({
                   <button
                     type="button"
                     onClick={() => setCatOpen((o) => !o)}
-                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-left transition-all text-sm bg-[#0f111a]
-                      ${errors.categoryId ? "border-red-500/60" : catOpen ? "border-blue-500/60" : "border-zinc-700/80 hover:border-zinc-600"}`}
+                    className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-left transition-all text-sm bg-canvas
+                      ${errors.categoryId ? "border-danger/60" : catOpen ? "border-info/60" : "border-line/80 hover:border-line-strong"}`}
                   >
-                    <Building2 size={15} className="text-zinc-500 flex-shrink-0" />
-                    <span className={form.categoryId ? "text-white flex-1" : "text-zinc-600 flex-1"}>
+                    <Building2 size={15} className="text-ink-subtle flex-shrink-0" />
+                    <span className={form.categoryId ? "text-ink flex-1" : "text-ink-faint flex-1"}>
                       {form.categoryName || "Select category…"}
                     </span>
                     {fetching
-                      ? <Loader2 size={13} className="animate-spin text-zinc-500" />
-                      : <ChevronDown size={13} className={`text-zinc-500 transition-transform ${catOpen ? "rotate-180" : ""}`} />}
+                      ? <Loader2 size={13} className="animate-spin text-ink-subtle" />
+                      : <ChevronDown size={13} className={`text-ink-subtle transition-transform ${catOpen ? "rotate-180" : ""}`} />}
                   </button>
 
                   <AnimatePresence>
                     {catOpen && (
                       <motion.div
                         initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                        className="absolute z-50 top-full mt-1.5 w-full bg-[#1a1d2e] border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
+                        className="absolute z-50 top-full mt-1.5 w-full bg-surface border border-line rounded-xl shadow-2xl overflow-hidden"
                       >
-                        <div className="max-h-44 overflow-y-auto divide-y divide-zinc-800/50">
+                        <div className="max-h-44 overflow-y-auto divide-y divide-line/50">
                           {loadError ? (
-                            <div className="py-6 px-4 text-center text-xs text-red-400">
+                            <div className="py-6 px-4 text-center text-xs text-danger">
                               {loadError} — try again later
                             </div>
                           ) : categories.length === 0 ? (
-                            <div className="py-6 text-center text-xs text-zinc-500">No categories found</div>
+                            <div className="py-6 text-center text-xs text-ink-subtle">No categories found</div>
                           ) : null}
                           {categories.map((cat) => (
                             <button key={cat.id} type="button"
                               onClick={() => { set("categoryId", cat.id); set("categoryName", cat.name); setCatOpen(false); }}
-                              className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-zinc-700/40
-                                ${form.categoryId === cat.id ? "text-blue-400 bg-blue-500/10" : "text-zinc-300"}`}
+                              className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-3/40
+                                ${form.categoryId === cat.id ? "text-info bg-info/10" : "text-ink-soft"}`}
                             >
-                              <Building2 size={13} className="text-zinc-500" />
+                              <Building2 size={13} className="text-ink-subtle" />
                               <span className="text-sm">{cat.name}</span>
-                              {form.categoryId === cat.id && <Check size={13} className="ml-auto text-blue-400" />}
+                              {form.categoryId === cat.id && <Check size={13} className="ml-auto text-info" />}
                             </button>
                           ))}
                         </div>
@@ -357,7 +357,7 @@ export default function RegisterAssetModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Serial Number">
                 <div className="relative">
-                  <Hash size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <Hash size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input
                     type="text"
                     placeholder="e.g. DL-2024-001"
@@ -370,7 +370,7 @@ export default function RegisterAssetModal({
 
               <Field label="Location">
                 <div className="relative">
-                  <MapPin size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <MapPin size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input
                     type="text"
                     placeholder="e.g. IT Storage, Floor 2"
@@ -386,7 +386,7 @@ export default function RegisterAssetModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Acquisition Date">
                 <div className="relative">
-                  <Calendar size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <Calendar size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input
                     type="date"
                     value={form.acquisitionDate}
@@ -398,7 +398,7 @@ export default function RegisterAssetModal({
 
               <Field label="Acquisition Cost (₹)" error={errors.acquisitionCost}>
                 <div className="relative">
-                  <DollarSign size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <DollarSign size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input
                     type="number"
                     placeholder="e.g. 85000"
@@ -408,7 +408,7 @@ export default function RegisterAssetModal({
                     className={`${inputCls(!!errors.acquisitionCost)} pl-10`}
                   />
                 </div>
-                <p className="text-[10px] text-zinc-600 mt-1">For records only — not linked to accounting</p>
+                <p className="text-[10px] text-ink-faint mt-1">For records only — not linked to accounting</p>
               </Field>
             </div>
 
@@ -422,8 +422,8 @@ export default function RegisterAssetModal({
                     onClick={() => set("condition", c.value)}
                     className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-all
                       ${form.condition === c.value
-                        ? `bg-zinc-700/60 border-zinc-500 ${c.color}`
-                        : "border-zinc-800 text-zinc-600 hover:border-zinc-600 hover:text-zinc-300"}`}
+                        ? `bg-surface-3/60 border-line-strong ${c.color}`
+                        : "border-line text-ink-faint hover:border-line-strong hover:text-ink-soft"}`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
                     {c.label}
@@ -433,21 +433,21 @@ export default function RegisterAssetModal({
             </Field>
 
             {/* ── Bookable toggle ── */}
-            <div className="flex items-center justify-between bg-[#0f111a] border border-zinc-700/80 rounded-xl px-4 py-3.5">
+            <div className="flex items-center justify-between bg-canvas border border-line/80 rounded-xl px-4 py-3.5">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-purple-500/15 flex items-center justify-center">
-                  <BookOpen size={14} className="text-purple-400" />
+                <div className="w-8 h-8 rounded-lg bg-violet/15 flex items-center justify-center">
+                  <BookOpen size={14} className="text-violet" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-white">Shared / Bookable Resource</p>
-                  <p className="text-[11px] text-zinc-500">Employees can book this via Resource Booking</p>
+                  <p className="text-sm font-semibold text-ink">Shared / Bookable Resource</p>
+                  <p className="text-[11px] text-ink-subtle">Employees can book this via Resource Booking</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => set("isBookable", !form.isBookable)}
                 className={`relative w-11 h-6 rounded-full transition-all duration-300 focus:outline-none
-                  ${form.isBookable ? "bg-purple-500" : "bg-zinc-600"}`}
+                  ${form.isBookable ? "bg-violet" : "bg-line-strong"}`}
               >
                 <motion.span
                   animate={{ x: form.isBookable ? 20 : 2 }}
@@ -462,11 +462,11 @@ export default function RegisterAssetModal({
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border border-dashed border-zinc-700 hover:border-zinc-500 transition-colors text-sm text-zinc-500 hover:text-zinc-300"
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border border-dashed border-line hover:border-line-strong transition-colors text-sm text-ink-subtle hover:text-ink-soft"
               >
                 <Camera size={16} />
                 {form.photoFileName
-                  ? <span className="text-emerald-400">✓ {form.photoFileName}</span>
+                  ? <span className="text-success">✓ {form.photoFileName}</span>
                   : "Click to attach a photo or document"}
               </button>
               <input
@@ -481,28 +481,28 @@ export default function RegisterAssetModal({
             </Field>
 
             {/* ── Info notice ── */}
-            <div className="flex items-start gap-2.5 bg-blue-950/30 border border-blue-500/20 rounded-xl px-4 py-3">
-              <Tag size={13} className="text-blue-400 flex-shrink-0 mt-0.5" />
-              <p className="text-[11px] text-blue-300/80 leading-relaxed">
-                <span className="font-semibold text-blue-300">Asset Tag</span> will be auto-generated (e.g. AF-0145) by the system after registration.
-                The asset will be set to <span className="text-emerald-400 font-semibold">Available</span> status and ready for allocation.
+            <div className="flex items-start gap-2.5 bg-info/8 border border-info/20 rounded-xl px-4 py-3">
+              <Tag size={13} className="text-info flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-info/80 leading-relaxed">
+                <span className="font-semibold text-info">Asset Tag</span> will be auto-generated (e.g. AF-0145) by the system after registration.
+                The asset will be set to <span className="text-success font-semibold">Available</span> status and ready for allocation.
               </p>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
+          <div className="px-6 py-4 border-t border-line flex gap-3 flex-shrink-0">
             <button
               aria-label="Close"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all"
             >
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-600/20"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-blue-600/20"
             >
               {submitting
                 ? <><Loader2 size={14} className="animate-spin" /> Registering…</>

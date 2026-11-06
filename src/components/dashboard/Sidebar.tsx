@@ -79,13 +79,13 @@ const ALL_NAV_ITEMS: (NavItem & { allowedRoles: Role[] })[] = [
 // ROLE CONFIG
 // ─────────────────────────────────────────────────────────────
 const roleConfig: Record<Role, { label: string; color: string; icon: React.ElementType }> = {
-  ADMIN:           { label: "Admin",         color: "bg-purple-500/20 text-purple-300 border border-purple-500/30", icon: Crown },
-  ASSET_MANAGER:   { label: "Asset Manager", color: "bg-blue-500/20 text-blue-300 border border-blue-500/30",       icon: ShieldCheck },
-  DEPARTMENT_HEAD: { label: "Dept. Head",    color: "bg-amber-500/20 text-amber-300 border border-amber-500/30",   icon: Briefcase },
-  EMPLOYEE:        { label: "Employee",      color: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30", icon: User },
+  ADMIN:           { label: "Admin",         color: "bg-violet/20 text-violet border border-violet/30", icon: Crown },
+  ASSET_MANAGER:   { label: "Asset Manager", color: "bg-info/20 text-info border border-info/30",       icon: ShieldCheck },
+  DEPARTMENT_HEAD: { label: "Dept. Head",    color: "bg-warning/20 text-warning border border-warning/30",   icon: Briefcase },
+  EMPLOYEE:        { label: "Employee",      color: "bg-success/20 text-success border border-success/30", icon: User },
 };
 
-const avatarColors = ["bg-blue-600", "bg-purple-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-cyan-600"];
+const avatarColors = ["bg-info", "bg-violet", "bg-success", "bg-warning", "bg-danger", "bg-cyan-600"];
 const getAvatarColor = (name: string) => avatarColors[name.charCodeAt(0) % avatarColors.length];
 
 // ─────────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
         aria-expanded={mobileOpen}
         aria-controls="app-sidebar"
         onClick={() => setMobileOpen(true)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-[#1a1d2e] border border-zinc-700 rounded-xl text-gray-400 hover:text-white transition-colors"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-surface border border-line rounded-xl text-ink-muted hover:text-ink transition-colors"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="3" y1="6" x2="21" y2="6" />
@@ -177,7 +177,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
         transition={{ type: "spring" as const, stiffness: 300, damping: 30 }}
         className={`
           fixed top-0 left-0 h-screen z-50
-          bg-[#0f111a] border-r border-zinc-800/60
+          bg-canvas border-r border-line/60
           flex flex-col
           shadow-[4px_0_24px_rgba(0,0,0,0.4)]
           transition-transform duration-300
@@ -186,9 +186,9 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
         `}
       >
         {/* ── LOGO ── */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-zinc-800/60 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-4 border-b border-line/60 flex-shrink-0">
           <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-600/30">
+            <div className="w-8 h-8 rounded-xl bg-info flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-600/30">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
                 <rect x="2" y="3" width="7" height="7" rx="1.5" />
                 <rect x="15" y="3" width="7" height="7" rx="1.5" />
@@ -200,7 +200,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
               {!collapsed && (
                 <motion.span
                   initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: "auto" }} exit={{ opacity: 0, width: 0 }}
-                  className="text-base font-extrabold text-white tracking-tight whitespace-nowrap overflow-hidden"
+                  className="text-base font-extrabold text-ink tracking-tight whitespace-nowrap overflow-hidden"
                 >
                   AssetFlow
                 </motion.span>
@@ -212,7 +212,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? "Expand the navigation" : "Collapse the navigation"}
             aria-expanded={!collapsed}
-            className="hidden lg:flex p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-zinc-800 transition-all flex-shrink-0"
+            className="hidden lg:flex p-1.5 rounded-lg text-ink-faint hover:text-ink-soft hover:bg-surface-3 transition-all flex-shrink-0"
           >
             {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
@@ -226,7 +226,7 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                 {!collapsed && (
                   <motion.p
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest px-2 mb-1.5"
+                    className="text-[10px] font-bold text-ink-faint uppercase tracking-widest px-2 mb-1.5"
                   >
                     {section}
                   </motion.p>
@@ -251,19 +251,19 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                       className={`
                         w-full flex items-center gap-3 px-2.5 py-2 rounded-xl transition-all duration-150 text-left relative group
                         ${isActive
-                          ? "bg-blue-600/20 text-blue-400 border border-blue-500/25 shadow-sm"
-                          : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 border border-transparent"}
+                          ? "bg-info/20 text-info border border-info/25 shadow-sm"
+                          : "text-ink-subtle hover:text-ink hover:bg-surface-3/60 border border-transparent"}
                         ${collapsed ? "justify-center" : ""}
                       `}
                     >
                       {isActive && (
                         <motion.div
                           layoutId="activeBar"
-                          className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-blue-400 rounded-full"
+                          className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-info rounded-full"
                         />
                       )}
 
-                      <Icon size={17} className={`flex-shrink-0 ${isActive ? "text-blue-400" : ""}`} />
+                      <Icon size={17} className={`flex-shrink-0 ${isActive ? "text-info" : ""}`} />
 
                       <AnimatePresence>
                         {!collapsed && (
@@ -277,20 +277,20 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                       </AnimatePresence>
 
                       {badge !== null && badge > 0 && !collapsed && (
-                        <span className="flex-shrink-0 text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                        <span className="flex-shrink-0 text-[10px] font-bold bg-warning/20 text-warning border border-warning/30 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
                           {badge > 99 ? "99+" : badge}
                         </span>
                       )}
 
                       {badge !== null && badge > 0 && collapsed && (
-                        <span className="absolute top-1 right-1 w-2 h-2 bg-amber-400 rounded-full" />
+                        <span className="absolute top-1 right-1 w-2 h-2 bg-warning rounded-full" />
                       )}
 
                       {collapsed && (
-                        <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-zinc-800 border border-zinc-700 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap shadow-xl z-50">
+                        <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-surface-3 border border-line text-ink text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap shadow-xl z-50">
                           {item.label}
                           {badge !== null && badge > 0 && (
-                            <span className="ml-1.5 text-amber-400">({badge})</span>
+                            <span className="ml-1.5 text-warning">({badge})</span>
                           )}
                         </div>
                       )}
@@ -303,24 +303,24 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
         </nav>
 
         {/* ── USER PROFILE SECTION ── */}
-        <div className="border-t border-zinc-800/60 p-3 flex-shrink-0">
+        <div className="border-t border-line/60 p-3 flex-shrink-0">
           <AnimatePresence>
             {!collapsed ? (
               <motion.div
                 key="expanded" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-2"
               >
-                <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-zinc-800/40 border border-zinc-800">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0 ${getAvatarColor(user.name)}`}>
+                <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-surface-3/40 border border-line">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-ink flex-shrink-0 ${getAvatarColor(user.name)}`}>
                     {initials}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-white truncate">{user.name}</p>
-                    <p className="text-[10px] text-zinc-500 truncate">{user.email}</p>
+                    <p className="text-xs font-semibold text-ink truncate">{user.name}</p>
+                    <p className="text-[10px] text-ink-subtle truncate">{user.email}</p>
                   </div>
-                  <button className="relative p-1 rounded-lg hover:bg-zinc-700 transition-colors flex-shrink-0">
-                    <Bell size={13} className="text-zinc-400" />
+                  <button className="relative p-1 rounded-lg hover:bg-surface-3 transition-colors flex-shrink-0">
+                    <Bell size={13} className="text-ink-muted" />
                     {(badges.notifications ?? 0) > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center">
+                      <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-danger rounded-full text-[8px] text-white font-bold flex items-center justify-center">
                         {badges.notifications}
                       </span>
                     )}
@@ -331,13 +331,13 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                   <RoleIcon size={11} />
                   {roleCfg.label}
                   {user.role === "ADMIN" && (
-                    <span className="ml-auto text-[9px] bg-purple-500/20 px-1 rounded">ADMIN</span>
+                    <span className="ml-auto text-[9px] bg-violet/20 px-1 rounded">ADMIN</span>
                   )}
                 </div>
 
                 <button
                   onClick={() => setShowSignout(true)}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all text-[12px] font-medium"
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-ink-subtle hover:text-danger hover:bg-danger/10 transition-all text-[12px] font-medium"
                 >
                   <LogOut size={13} />
                   Sign Out
@@ -349,14 +349,14 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
               >
                 <div
                   title={`${user.name} — ${roleCfg.label}`}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white ${getAvatarColor(user.name)}`}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-ink ${getAvatarColor(user.name)}`}
                 >
                   {initials}
                 </div>
                 <button
                   onClick={() => setShowSignout(true)}
                   title="Sign Out"
-                  className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                  className="p-1.5 rounded-lg text-ink-faint hover:text-danger hover:bg-danger/10 transition-all"
                 >
                   <LogOut size={14} />
                 </button>

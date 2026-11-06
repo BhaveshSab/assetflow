@@ -51,26 +51,26 @@ export class ErrorBoundary extends Component<
     return (
       <div
         role="alert"
-        className="min-h-screen bg-zinc-950 flex items-center justify-center p-6"
+        className="min-h-screen bg-canvas flex items-center justify-center p-6"
       >
-        <div className="max-w-md w-full bg-[#1a1d2e] border border-zinc-700 rounded-2xl p-8 text-center shadow-2xl">
+        <div className="max-w-md w-full bg-surface border border-line rounded-2xl p-8 text-center shadow-2xl">
           <div
-            className="w-14 h-14 rounded-full bg-red-500/15 flex items-center justify-center mx-auto mb-5"
+            className="w-14 h-14 rounded-full bg-danger/15 flex items-center justify-center mx-auto mb-5"
             aria-hidden="true"
           >
-            <span className="text-red-400 text-2xl font-bold">!</span>
+            <span className="text-danger text-2xl font-bold">!</span>
           </div>
 
-          <h1 className="text-white font-bold text-lg mb-2">
+          <h1 className="text-ink font-bold text-lg mb-2">
             {this.props.area ? `The ${this.props.area} could not be shown` : "Something went wrong"}
           </h1>
 
-          <p className="text-zinc-400 text-sm mb-1">
+          <p className="text-ink-muted text-sm mb-1">
             The rest of AssetFlow still works. You can try that part again, or
             reload the page if it keeps happening.
           </p>
 
-          <p className="text-zinc-500 text-xs font-mono mb-6 break-words">
+          <p className="text-ink-subtle text-xs font-mono mb-6 break-words">
             {error.message}
           </p>
 
@@ -78,14 +78,14 @@ export class ErrorBoundary extends Component<
             <button
               type="button"
               onClick={this.reset}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all"
             >
               Try again
             </button>
             <button
               type="button"
               onClick={this.reload}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 text-sm hover:border-zinc-500 transition-all"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-soft text-sm hover:border-line-strong transition-all"
             >
               Reload the page
             </button>

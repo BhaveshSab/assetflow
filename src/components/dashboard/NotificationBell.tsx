@@ -35,24 +35,24 @@ const timeAgo = (dateStr: string) => {
 
 /** Friendly title + icon per backend NotificationType enum. */
 const typeConfig: Record<string, { title: string; border: string; dot: string; icon: LucideIcon }> = {
-  OVERDUE_RETURN:       { title: "Overdue Return",       border: "border-l-red-500",     dot: "bg-red-400",     icon: AlertTriangle },
-  ASSET_ASSIGNED:       { title: "Asset Assigned",       border: "border-l-emerald-500", dot: "bg-emerald-400", icon: Package },
-  ASSET_RETURNED:       { title: "Asset Returned",       border: "border-l-emerald-500", dot: "bg-emerald-400", icon: CornerUpLeft },
-  TRANSFER_REQUESTED:   { title: "Transfer Requested",   border: "border-l-blue-500",    dot: "bg-blue-400",    icon: ArrowLeftRight },
-  TRANSFER_APPROVED:    { title: "Transfer Approved",    border: "border-l-blue-500",    dot: "bg-blue-400",    icon: ArrowLeftRight },
-  TRANSFER_REJECTED:    { title: "Transfer Rejected",    border: "border-l-red-500",     dot: "bg-red-400",     icon: ArrowLeftRight },
-  MAINTENANCE_RAISED:   { title: "Maintenance Raised",   border: "border-l-amber-500",   dot: "bg-amber-400",   icon: Wrench },
-  MAINTENANCE_APPROVED: { title: "Maintenance Approved", border: "border-l-amber-500",   dot: "bg-amber-400",   icon: Wrench },
-  MAINTENANCE_REJECTED: { title: "Maintenance Rejected", border: "border-l-red-500",     dot: "bg-red-400",     icon: Wrench },
-  MAINTENANCE_RESOLVED: { title: "Maintenance Resolved", border: "border-l-emerald-500", dot: "bg-emerald-400", icon: Wrench },
-  BOOKING_CONFIRMED:    { title: "Booking Confirmed",    border: "border-l-purple-500",  dot: "bg-purple-400",  icon: CalendarCheck },
-  BOOKING_CANCELLED:    { title: "Booking Cancelled",    border: "border-l-red-500",     dot: "bg-red-400",     icon: CalendarCheck },
-  BOOKING_REMINDER:     { title: "Booking Reminder",     border: "border-l-purple-500",  dot: "bg-purple-400",  icon: CalendarCheck },
+  OVERDUE_RETURN:       { title: "Overdue Return",       border: "border-l-red-500",     dot: "bg-danger",     icon: AlertTriangle },
+  ASSET_ASSIGNED:       { title: "Asset Assigned",       border: "border-l-emerald-500", dot: "bg-success", icon: Package },
+  ASSET_RETURNED:       { title: "Asset Returned",       border: "border-l-emerald-500", dot: "bg-success", icon: CornerUpLeft },
+  TRANSFER_REQUESTED:   { title: "Transfer Requested",   border: "border-l-blue-500",    dot: "bg-info",    icon: ArrowLeftRight },
+  TRANSFER_APPROVED:    { title: "Transfer Approved",    border: "border-l-blue-500",    dot: "bg-info",    icon: ArrowLeftRight },
+  TRANSFER_REJECTED:    { title: "Transfer Rejected",    border: "border-l-red-500",     dot: "bg-danger",     icon: ArrowLeftRight },
+  MAINTENANCE_RAISED:   { title: "Maintenance Raised",   border: "border-l-amber-500",   dot: "bg-warning",   icon: Wrench },
+  MAINTENANCE_APPROVED: { title: "Maintenance Approved", border: "border-l-amber-500",   dot: "bg-warning",   icon: Wrench },
+  MAINTENANCE_REJECTED: { title: "Maintenance Rejected", border: "border-l-red-500",     dot: "bg-danger",     icon: Wrench },
+  MAINTENANCE_RESOLVED: { title: "Maintenance Resolved", border: "border-l-emerald-500", dot: "bg-success", icon: Wrench },
+  BOOKING_CONFIRMED:    { title: "Booking Confirmed",    border: "border-l-purple-500",  dot: "bg-violet",  icon: CalendarCheck },
+  BOOKING_CANCELLED:    { title: "Booking Cancelled",    border: "border-l-red-500",     dot: "bg-danger",     icon: CalendarCheck },
+  BOOKING_REMINDER:     { title: "Booking Reminder",     border: "border-l-purple-500",  dot: "bg-violet",  icon: CalendarCheck },
   AUDIT_ASSIGNED:       { title: "Audit Assigned",       border: "border-l-cyan-500",    dot: "bg-cyan-400",    icon: ClipboardList },
   AUDIT_DISCREPANCY:    { title: "Audit Discrepancy",    border: "border-l-cyan-500",    dot: "bg-cyan-400",    icon: ClipboardList },
   AUDIT_CLOSED:         { title: "Audit Closed",         border: "border-l-cyan-500",    dot: "bg-cyan-400",    icon: ClipboardList },
 };
-const defaultCfg = { title: "Notification", border: "border-l-zinc-600", dot: "bg-zinc-500", icon: Info };
+const defaultCfg = { title: "Notification", border: "border-l-zinc-600", dot: "bg-ink-subtle", icon: Info };
 
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -122,7 +122,7 @@ export default function NotificationBell() {
       {/* ── Bell button ── */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="relative inline-flex items-center justify-center rounded-lg p-2 text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100"
+        className="relative inline-flex items-center justify-center rounded-lg p-2 text-ink-muted transition-colors hover:bg-surface-3/60 hover:text-ink"
         aria-label="Notifications"
       >
         <Bell size={16} />
@@ -130,7 +130,7 @@ export default function NotificationBell() {
           <motion.span
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1"
+            className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-danger text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1"
           >
             {unreadCount > 99 ? "99+" : unreadCount}
           </motion.span>
@@ -145,15 +145,15 @@ export default function NotificationBell() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.96 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-12 w-[min(20rem,calc(100vw-2rem))] bg-[#1a1d2e] border border-zinc-700 rounded-2xl shadow-2xl z-50 overflow-hidden"
+            className="absolute right-0 top-12 w-[min(20rem,calc(100vw-2rem))] bg-surface border border-line rounded-2xl shadow-2xl z-50 overflow-hidden"
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-line">
               <div className="flex items-center gap-2">
-                <Bell size={14} className="text-zinc-400" />
-                <span className="text-sm font-semibold text-white">Notifications</span>
+                <Bell size={14} className="text-ink-muted" />
+                <span className="text-sm font-semibold text-ink">Notifications</span>
                 {unreadCount > 0 && (
-                  <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full font-bold">
+                  <span className="text-[10px] bg-danger/20 text-danger border border-danger/30 px-1.5 py-0.5 rounded-full font-bold">
                     {unreadCount} new
                   </span>
                 )}
@@ -164,29 +164,29 @@ export default function NotificationBell() {
                     onClick={markAllRead}
                     disabled={loading}
                     title="Mark all read"
-                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1 text-[11px] text-info hover:text-info transition-colors disabled:opacity-50"
                   >
                     <CheckCheck size={13} />
                     All read
                   </button>
                 )}
                 <button onClick={() => setOpen(false)}>
-                  <X size={14} className="text-zinc-500 hover:text-white transition-colors" />
+                  <X size={14} className="text-ink-subtle hover:text-ink transition-colors" />
                 </button>
               </div>
             </div>
 
             {/* Error */}
             {error && (
-              <div role="alert" className="px-4 py-2 text-xs text-red-400 bg-red-950/30 border-b border-red-500/20">
+              <div role="alert" className="px-4 py-2 text-xs text-danger bg-danger/8 border-b border-danger/20">
                 {error}
               </div>
             )}
 
             {/* List */}
-            <div className="max-h-80 overflow-y-auto divide-y divide-zinc-800/50">
+            <div className="max-h-80 overflow-y-auto divide-y divide-line/50">
               {notifs.length === 0 ? (
-                <div className="py-10 flex flex-col items-center gap-2 text-zinc-600">
+                <div className="py-10 flex flex-col items-center gap-2 text-ink-faint">
                   <Bell size={28} className="opacity-30" />
                   <p className="text-sm">No notifications</p>
                 </div>
@@ -199,21 +199,21 @@ export default function NotificationBell() {
                       key={n.id}
                       onClick={() => markRead(n)}
                       className={`w-full text-left px-4 py-3 border-l-2 ${cfg.border}
-                        ${n.isRead ? "opacity-60" : "bg-zinc-800/20"}
-                        hover:bg-zinc-700/30 transition-colors`}
+                        ${n.isRead ? "opacity-60" : "bg-surface-3/20"}
+                        hover:bg-surface-3/30 transition-colors`}
                     >
                       <div className="flex items-start gap-2.5">
-                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${n.isRead ? "bg-zinc-800" : "bg-zinc-700"}`}>
-                          <Icon size={12} className={n.isRead ? "text-zinc-500" : "text-white"} />
+                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${n.isRead ? "bg-surface-3" : "bg-surface-3"}`}>
+                          <Icon size={12} className={n.isRead ? "text-ink-subtle" : "text-ink"} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-semibold leading-snug ${n.isRead ? "text-zinc-400" : "text-white"}`}>
+                          <p className={`text-xs font-semibold leading-snug ${n.isRead ? "text-ink-muted" : "text-ink"}`}>
                             {cfg.title}
                           </p>
-                          <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed line-clamp-2">
+                          <p className="text-[11px] text-ink-subtle mt-0.5 leading-relaxed line-clamp-2">
                             {n.message}
                           </p>
-                          <p className="text-[10px] text-zinc-600 mt-1">{timeAgo(n.createdAt)}</p>
+                          <p className="text-[10px] text-ink-faint mt-1">{timeAgo(n.createdAt)}</p>
                         </div>
                         {!n.isRead && (
                           <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${cfg.dot}`} />
@@ -227,8 +227,8 @@ export default function NotificationBell() {
 
             {/* Footer */}
             {notifs.length > 0 && (
-              <div className="px-4 py-2.5 border-t border-zinc-800 text-center">
-                <span className="text-[11px] text-zinc-600">
+              <div className="px-4 py-2.5 border-t border-line text-center">
+                <span className="text-[11px] text-ink-faint">
                   {notifs.length} total · {unreadCount} unread
                 </span>
               </div>

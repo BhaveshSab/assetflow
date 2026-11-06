@@ -150,11 +150,11 @@ interface AllocateAssetModalProps {
 const today = () => new Date().toISOString().split("T")[0];
 
 const conditionConfig: Record<Condition, { color: string; dot: string }> = {
-  New:       { color: "text-emerald-400", dot: "bg-emerald-400" },
-  Excellent: { color: "text-blue-400",    dot: "bg-blue-400"    },
+  New:       { color: "text-success", dot: "bg-success" },
+  Excellent: { color: "text-info",    dot: "bg-info"    },
   Good:      { color: "text-cyan-400",    dot: "bg-cyan-400"    },
-  Fair:      { color: "text-amber-400",   dot: "bg-amber-400"   },
-  Poor:      { color: "text-red-400",     dot: "bg-red-400"     },
+  Fair:      { color: "text-warning",   dot: "bg-warning"   },
+  Poor:      { color: "text-danger",     dot: "bg-danger"     },
 };
 
 /** Backend enum (NEW/GOOD/FAIR/POOR/DAMAGED) → display Condition label. */
@@ -169,8 +169,8 @@ const normalizeCondition = (value: string | null | undefined): Condition =>
   } as Record<string, Condition>)[(value ?? "").toUpperCase()] ?? "Good";
 
 const avatarColors = [
-  "bg-blue-600","bg-purple-600","bg-emerald-600",
-  "bg-amber-600","bg-rose-600","bg-cyan-600","bg-indigo-600",
+  "bg-info","bg-violet","bg-success",
+  "bg-warning","bg-danger","bg-cyan-600","bg-info",
 ];
 const getAvatarColor = (name: string) =>
   avatarColors[name.charCodeAt(0) % avatarColors.length];
@@ -189,34 +189,34 @@ const AssetSummaryCard = ({ asset }: { asset: Asset }) => {
       initial={{ opacity: 0, height: 0 }}
       animate={{ opacity: 1, height: "auto" }}
       exit={{ opacity: 0, height: 0 }}
-      className="bg-blue-950/30 border border-blue-500/25 rounded-xl p-4 overflow-hidden"
+      className="bg-info/8 border border-info/25 rounded-xl p-4 overflow-hidden"
     >
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0">
-          <Package size={18} className="text-blue-400" />
+        <div className="w-10 h-10 rounded-xl bg-info/15 flex items-center justify-center flex-shrink-0">
+          <Package size={18} className="text-info" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-bold text-white">{asset.name}</p>
-            <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+            <p className="text-sm font-bold text-ink">{asset.name}</p>
+            <span className="text-[10px] bg-success/20 text-success border border-success/30 px-2 py-0.5 rounded-full font-bold">
               AVAILABLE
             </span>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
-            <p className="text-[11px] text-zinc-400 flex items-center gap-1.5">
-              <Tag size={10} className="text-zinc-600" />
+            <p className="text-[11px] text-ink-muted flex items-center gap-1.5">
+              <Tag size={10} className="text-ink-faint" />
               {asset.assetTag}
             </p>
-            <p className="text-[11px] text-zinc-400 flex items-center gap-1.5">
-              <Boxes size={10} className="text-zinc-600" />
+            <p className="text-[11px] text-ink-muted flex items-center gap-1.5">
+              <Boxes size={10} className="text-ink-faint" />
               {asset.category}
             </p>
             <p className="text-[11px] flex items-center gap-1.5">
               <span className={`w-1.5 h-1.5 rounded-full ${cond.dot}`} />
               <span className={cond.color}>{asset.condition}</span>
             </p>
-            <p className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate">
-              <Building2 size={10} className="text-zinc-600 flex-shrink-0" />
+            <p className="text-[11px] text-ink-muted flex items-center gap-1.5 truncate">
+              <Building2 size={10} className="text-ink-faint flex-shrink-0" />
               <span className="truncate">{asset.location}</span>
             </p>
           </div>
@@ -367,32 +367,32 @@ const AllocateAssetModal = ({
       {step === "form" && (
         <>
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-line flex-shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
-                <Package size={18} className="text-blue-400" />
+              <div className="w-9 h-9 rounded-xl bg-info/15 flex items-center justify-center">
+                <Package size={18} className="text-info" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Allocate Asset</h2>
-                <p className="text-[11px] text-zinc-500">Assign an available asset to an employee</p>
+                <h2 className="text-sm font-bold text-ink">Allocate Asset</h2>
+                <p className="text-[11px] text-ink-subtle">Assign an available asset to an employee</p>
               </div>
             </div>
-            <button aria-label="Close" onClick={handleClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-              <X size={16} className="text-zinc-400" />
+            <button aria-label="Close" onClick={handleClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+              <X size={16} className="text-ink-muted" />
             </button>
           </div>
 
           {/* Body */}
           <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
             {loadError && (
-              <div role="alert" className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+              <div role="alert" className="flex items-center gap-2 bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-sm text-danger">
                 <AlertTriangle size={14} /> {loadError}
               </div>
             )}
 
             {fetching && (
-              <div className="flex items-center justify-center py-8 gap-2 text-zinc-500 text-sm">
-                <Loader2 size={18} className="animate-spin text-blue-400" />
+              <div className="flex items-center justify-center py-8 gap-2 text-ink-subtle text-sm">
+                <Loader2 size={18} className="animate-spin text-info" />
                 Loading assets & employees…
               </div>
             )}
@@ -413,18 +413,18 @@ const AllocateAssetModal = ({
                       setErrors((p) => ({ ...p, asset: "" }));
                     }}
                     renderSelected={(a) => (
-                      <span className="text-white font-medium truncate">{a.name}
-                        <span className="ml-2 text-zinc-500 font-normal text-xs">{a.assetTag}</span>
+                      <span className="text-ink font-medium truncate">{a.name}
+                        <span className="ml-2 text-ink-subtle font-normal text-xs">{a.assetTag}</span>
                       </span>
                     )}
                     renderItem={(a) => (
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0">
-                          <Package size={14} className="text-blue-400" />
+                        <div className="w-8 h-8 rounded-lg bg-info/15 flex items-center justify-center flex-shrink-0">
+                          <Package size={14} className="text-info" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{a.name}</p>
-                          <p className="text-[11px] text-zinc-500">{a.assetTag} · {a.category}</p>
+                          <p className="text-sm font-medium text-ink truncate">{a.name}</p>
+                          <p className="text-[11px] text-ink-subtle">{a.assetTag} · {a.category}</p>
                         </div>
                         <span className={`text-[10px] font-semibold ${conditionConfig[a.condition]?.color}`}>
                           {a.condition}
@@ -451,18 +451,18 @@ const AllocateAssetModal = ({
                       setErrors((p) => ({ ...p, employee: "" }));
                     }}
                     renderSelected={(e) => (
-                      <span className="text-white font-medium truncate">{e.name}
-                        <span className="ml-2 text-zinc-500 font-normal text-xs">{e.department}</span>
+                      <span className="text-ink font-medium truncate">{e.name}
+                        <span className="ml-2 text-ink-subtle font-normal text-xs">{e.department}</span>
                       </span>
                     )}
                     renderItem={(e) => (
                       <div className="flex items-center gap-2.5">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0 ${getAvatarColor(e.name)}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-ink flex-shrink-0 ${getAvatarColor(e.name)}`}>
                           {e.avatar}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white">{e.name}</p>
-                          <p className="text-[11px] text-zinc-500">{e.department} · {e.role}</p>
+                          <p className="text-sm font-medium text-ink">{e.name}</p>
+                          <p className="text-[11px] text-ink-subtle">{e.department} · {e.role}</p>
                         </div>
                       </div>
                     )}
@@ -484,11 +484,11 @@ const AllocateAssetModal = ({
                 {/* ROW 2: Dates */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-                      Issue Date <span className="text-red-400">*</span>
+                    <label className="block text-xs font-medium text-ink-muted mb-1.5">
+                      Issue Date <span className="text-danger">*</span>
                     </label>
                     <div className="relative">
-                      <Calendar size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                      <Calendar size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                       <input
                         type="date"
                         value={issueDate}
@@ -496,11 +496,11 @@ const AllocateAssetModal = ({
                           setIssueDate(e.target.value);
                           setErrors((p) => ({ ...p, issueDate: "" }));
                         }}
-                        className="w-full bg-[#0f111a] border border-zinc-700 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark]"
+                        className="w-full bg-canvas border border-line rounded-xl pl-9 pr-3 py-2.5 text-sm text-ink outline-none focus:border-info/60 transition-colors [color-scheme:dark]"
                       />
                     </div>
                     {errors.issueDate && (
-                      <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1">
+                      <p className="text-danger text-[11px] mt-1 flex items-center gap-1">
                         <AlertTriangle size={10} /> {errors.issueDate}
                       </p>
                     )}
@@ -508,8 +508,8 @@ const AllocateAssetModal = ({
 
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-medium text-zinc-400">Expected Return Date</label>
-                      <label className="flex items-center gap-1.5 text-[11px] text-zinc-500 cursor-pointer">
+                      <label className="text-xs font-medium text-ink-muted">Expected Return Date</label>
+                      <label className="flex items-center gap-1.5 text-[11px] text-ink-subtle cursor-pointer">
                         <input
                           type="checkbox"
                           checked={noReturnDate}
@@ -524,7 +524,7 @@ const AllocateAssetModal = ({
                       </label>
                     </div>
                     <div className="relative">
-                      <Clock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                      <Clock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                       <input
                         type="date"
                         value={returnDate}
@@ -534,12 +534,12 @@ const AllocateAssetModal = ({
                           setReturnDate(e.target.value);
                           setErrors((p) => ({ ...p, returnDate: "" }));
                         }}
-                        className="w-full bg-[#0f111a] border border-zinc-700 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors [color-scheme:dark] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="w-full bg-canvas border border-line rounded-xl pl-9 pr-3 py-2.5 text-sm text-ink outline-none focus:border-info/60 transition-colors [color-scheme:dark] disabled:opacity-40 disabled:cursor-not-allowed"
                       />
                     </div>
                     {daysUntilReturn !== null && !noReturnDate && returnDate && (
                       <p className={`text-[11px] mt-1 flex items-center gap-1
-                        ${daysUntilReturn < 7 ? "text-amber-400" : "text-zinc-500"}`}>
+                        ${daysUntilReturn < 7 ? "text-warning" : "text-ink-subtle"}`}>
                         <Clock size={10} />
                         {daysUntilReturn > 0
                           ? `Due in ${daysUntilReturn} days`
@@ -549,12 +549,12 @@ const AllocateAssetModal = ({
                       </p>
                     )}
                     {noReturnDate && (
-                      <p className="text-[11px] mt-1 text-zinc-600 flex items-center gap-1">
+                      <p className="text-[11px] mt-1 text-ink-faint flex items-center gap-1">
                         <Info size={10} /> Will be tracked as indefinite allocation
                       </p>
                     )}
                     {errors.returnDate && (
-                      <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1">
+                      <p className="text-danger text-[11px] mt-1 flex items-center gap-1">
                         <AlertTriangle size={10} /> {errors.returnDate}
                       </p>
                     )}
@@ -563,7 +563,7 @@ const AllocateAssetModal = ({
 
                 {/* ROW 3: Condition */}
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-2">
+                  <label className="block text-xs font-medium text-ink-muted mb-2">
                     Condition at Issue
                   </label>
                   <div className="flex flex-wrap gap-2">
@@ -576,8 +576,8 @@ const AllocateAssetModal = ({
                           onClick={() => setCondition(c)}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all
                             ${condition === c
-                              ? `bg-zinc-700/60 border-zinc-500 ${cfg.color}`
-                              : "border-zinc-800 text-zinc-600 hover:border-zinc-600 hover:text-zinc-300"}`}
+                              ? `bg-surface-3/60 border-line-strong ${cfg.color}`
+                              : "border-line text-ink-faint hover:border-line-strong hover:text-ink-soft"}`}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
                           {c}
@@ -589,37 +589,37 @@ const AllocateAssetModal = ({
 
                 {/* ROW 4: Remarks */}
                 <div>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                  <label className="block text-xs font-medium text-ink-muted mb-1.5">
                     Remarks / Notes
                   </label>
                   <div className="relative">
-                    <FileText size={14} className="absolute left-3.5 top-3 text-zinc-500" />
+                    <FileText size={14} className="absolute left-3.5 top-3 text-ink-subtle" />
                     <textarea
                       value={remarks}
                       onChange={(e) => setRemarks(e.target.value)}
                       placeholder="Any specific notes about this allocation (e.g., purpose, special instructions)…"
                       rows={3}
-                      className="w-full bg-[#0f111a] border border-zinc-700 rounded-xl pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/60 transition-colors resize-none"
+                      className="w-full bg-canvas border border-line rounded-xl pl-9 pr-3 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:border-info/60 transition-colors resize-none"
                     />
                   </div>
-                  <p className="text-[11px] text-zinc-600 mt-1 text-right">{remarks.length}/500</p>
+                  <p className="text-[11px] text-ink-faint mt-1 text-right">{remarks.length}/500</p>
                 </div>
 
                 {/* OVERDUE LOGIC NOTE */}
                 {!noReturnDate && (
-                  <div className="flex items-start gap-2.5 bg-zinc-800/40 border border-zinc-700/50 rounded-xl px-4 py-3">
-                    <Info size={13} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-zinc-400 leading-relaxed">
-                      <span className="text-white font-medium">Overdue tracking:</span> If the asset is not
+                  <div className="flex items-start gap-2.5 bg-surface-3/40 border border-line/50 rounded-xl px-4 py-3">
+                    <Info size={13} className="text-info flex-shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-ink-muted leading-relaxed">
+                      <span className="text-ink font-medium">Overdue tracking:</span> If the asset is not
                       returned by the Expected Return Date, it will automatically appear in the{" "}
-                      <span className="text-red-400 font-medium">Overdue Returns</span> KPI on the dashboard.
+                      <span className="text-danger font-medium">Overdue Returns</span> KPI on the dashboard.
                     </p>
                   </div>
                 )}
 
                 {/* Submit error */}
                 {errors.submit && (
-                  <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-2.5 text-sm text-red-400">
+                  <div className="flex items-center gap-2 bg-danger/10 border border-danger/30 rounded-xl px-4 py-2.5 text-sm text-danger">
                     <AlertTriangle size={14} /> {errors.submit}
                   </div>
                 )}
@@ -628,15 +628,15 @@ const AllocateAssetModal = ({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-zinc-800 flex items-center gap-3 flex-shrink-0">
+          <div className="px-6 py-4 border-t border-line flex items-center gap-3 flex-shrink-0">
             <button onClick={handleClose}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all">
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all">
               Cancel
             </button>
             <button
               onClick={handleSubmit}
               disabled={!selectedAsset || !selectedEmployee || fetching}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20"
             >
               Review Allocation <ArrowRight size={14} />
             </button>
@@ -647,18 +647,18 @@ const AllocateAssetModal = ({
       {/* ══ STEP: CONFIRM ══ */}
       {step === "confirm" && (
         <>
-          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-line flex-shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center">
-                <Shield size={18} className="text-amber-400" />
+              <div className="w-9 h-9 rounded-xl bg-warning/15 flex items-center justify-center">
+                <Shield size={18} className="text-warning" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Confirm Allocation</h2>
-                <p className="text-[11px] text-zinc-500">Review the details before submitting</p>
+                <h2 className="text-sm font-bold text-ink">Confirm Allocation</h2>
+                <p className="text-[11px] text-ink-subtle">Review the details before submitting</p>
               </div>
             </div>
-            <button onClick={() => setStep("form")} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-              <X size={16} className="text-zinc-400" />
+            <button onClick={() => setStep("form")} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+              <X size={16} className="text-ink-muted" />
             </button>
           </div>
 
@@ -672,33 +672,33 @@ const AllocateAssetModal = ({
               { label: "Condition", value: condition,                                                       icon: Tag      },
               { label: "Remarks",   value: remarks || "—",                                                  icon: FileText },
             ].map(({ label, value, icon: Icon }) => (
-              <div key={label} className="flex items-start gap-3 py-2 border-b border-zinc-800/50 last:border-0">
-                <Icon size={14} className="text-zinc-500 mt-0.5 flex-shrink-0" />
+              <div key={label} className="flex items-start gap-3 py-2 border-b border-line/50 last:border-0">
+                <Icon size={14} className="text-ink-subtle mt-0.5 flex-shrink-0" />
                 <div className="flex-1 grid grid-cols-2 gap-2">
-                  <span className="text-xs text-zinc-500">{label}</span>
-                  <span className="text-sm text-white font-medium">{value}</span>
+                  <span className="text-xs text-ink-subtle">{label}</span>
+                  <span className="text-sm text-ink font-medium">{value}</span>
                 </div>
               </div>
             ))}
 
-            <div className="bg-amber-950/30 border border-amber-500/25 rounded-xl px-4 py-3 flex items-center gap-2.5">
-              <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
-              <p className="text-xs text-amber-300">
+            <div className="bg-warning/8 border border-warning/25 rounded-xl px-4 py-3 flex items-center gap-2.5">
+              <AlertTriangle size={14} className="text-warning flex-shrink-0" />
+              <p className="text-xs text-warning">
                 This will change the asset status to <span className="font-bold">Allocated</span> and it
                 will no longer be available for others until returned.
               </p>
             </div>
           </div>
 
-          <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 flex-shrink-0">
+          <div className="px-6 py-4 border-t border-line flex gap-3 flex-shrink-0">
             <button onClick={() => setStep("form")}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all">
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all">
               Back & Edit
             </button>
             <button
               onClick={handleConfirm}
               disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60 shadow-lg shadow-emerald-600/20"
+              className="flex-1 py-2.5 rounded-xl bg-success hover:bg-success text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60 shadow-lg shadow-emerald-600/20"
             >
               {submitting
                 ? <><Loader2 size={14} className="animate-spin" /> Allocating…</>
@@ -715,9 +715,9 @@ const AllocateAssetModal = ({
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring" as const, damping: 14, stiffness: 200 }}
-            className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center"
+            className="w-20 h-20 rounded-full bg-success/20 flex items-center justify-center"
           >
-            <CheckCircle2 size={40} className="text-emerald-400" />
+            <CheckCircle2 size={40} className="text-success" />
           </motion.div>
 
           <motion.div
@@ -725,21 +725,21 @@ const AllocateAssetModal = ({
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
           >
-            <p className="text-xl font-bold text-white mb-1">Asset Allocated!</p>
-            <p className="text-zinc-400 text-sm">
-              <span className="text-blue-400 font-semibold">{selectedAsset?.name}</span> has been
+            <p className="text-xl font-bold text-ink mb-1">Asset Allocated!</p>
+            <p className="text-ink-muted text-sm">
+              <span className="text-info font-semibold">{selectedAsset?.name}</span> has been
               successfully assigned to{" "}
-              <span className="text-emerald-400 font-semibold">{selectedEmployee?.name}</span>.
+              <span className="text-success font-semibold">{selectedEmployee?.name}</span>.
             </p>
             {allocationId && (
-              <p className="text-zinc-600 text-xs mt-2">
-                Allocation ID: <span className="text-zinc-400 font-mono">{allocationId}</span>
+              <p className="text-ink-faint text-xs mt-2">
+                Allocation ID: <span className="text-ink-muted font-mono">{allocationId}</span>
               </p>
             )}
             {!noReturnDate && returnDate && (
-              <div className="mt-3 bg-[#0f111a] border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-zinc-400">
-                <Clock size={11} className="inline mr-1.5 text-amber-400" />
-                Expected return by <span className="text-white font-medium">{returnDate}</span>
+              <div className="mt-3 bg-canvas border border-line rounded-xl px-4 py-2.5 text-xs text-ink-muted">
+                <Clock size={11} className="inline mr-1.5 text-warning" />
+                Expected return by <span className="text-ink font-medium">{returnDate}</span>
                 {daysUntilReturn !== null && ` (${daysUntilReturn} days)`}
               </div>
             )}
@@ -761,13 +761,13 @@ const AllocateAssetModal = ({
                 setCondition("Good");
                 setStep("form");
               }}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all flex items-center justify-center gap-1.5"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all flex items-center justify-center gap-1.5"
             >
               <RefreshCw size={13} /> Allocate Another
             </button>
             <button
               onClick={() => { onSuccess(allocationId); handleClose(); }}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all"
             >
               Done
             </button>

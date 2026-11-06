@@ -193,28 +193,28 @@ const ReturnAssetModal = ({
           exit={{ scale: 0.93, opacity: 0, y: 24 }}
           transition={{ type: "spring", damping: 26, stiffness: 300 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-[#1a1d2e] border border-zinc-700/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+          className="bg-surface border border-line/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
         >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-line">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center">
-                <CheckCircle2 size={17} className="text-emerald-400" />
+              <div className="w-9 h-9 rounded-xl bg-success/15 flex items-center justify-center">
+                <CheckCircle2 size={17} className="text-success" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Return Asset</h2>
-                <p className="text-[11px] text-zinc-500">
+                <h2 className="text-sm font-bold text-ink">Return Asset</h2>
+                <p className="text-[11px] text-ink-subtle">
                   {asset.assetName} &middot; {asset.assetTag}
                 </p>
               </div>
             </div>
-            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-              <X size={15} className="text-zinc-400" />
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+              <X size={15} className="text-ink-muted" />
             </button>
           </div>
 
           <div className="p-5 space-y-5">
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wide">
+              <label className="block text-xs font-semibold text-ink-muted mb-2 uppercase tracking-wide">
                 Condition on return
               </label>
               <div className="flex flex-wrap gap-2">
@@ -224,8 +224,8 @@ const ReturnAssetModal = ({
                     onClick={() => setCondition(c.value)}
                     className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
                       condition === c.value
-                        ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
-                        : "border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+                        ? "bg-success/15 border-success/40 text-success"
+                        : "border-line text-ink-subtle hover:border-line-strong hover:text-ink-soft"
                     }`}
                   >
                     {c.label}
@@ -235,7 +235,7 @@ const ReturnAssetModal = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 mb-1.5 uppercase tracking-wide">
+              <label className="block text-xs font-semibold text-ink-muted mb-1.5 uppercase tracking-wide">
                 Check-in notes (optional)
               </label>
               <textarea
@@ -243,16 +243,16 @@ const ReturnAssetModal = ({
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 placeholder="Remarks about the asset's condition, missing accessories, damage…"
-                className="w-full bg-[#0f111a] border border-zinc-700/80 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-emerald-500/60 transition-all resize-none"
+                className="w-full bg-canvas border border-line/80 rounded-xl px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:border-success/60 transition-all resize-none"
               />
             </div>
           </div>
 
-          <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
+          <div className="px-5 py-4 border-t border-line flex gap-3">
             <button
               aria-label="Close"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all"
             >
               Cancel
             </button>
@@ -264,7 +264,7 @@ const ReturnAssetModal = ({
                 })
               }
               disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="flex-1 py-2.5 rounded-xl bg-success hover:bg-success text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {submitting ? (
                 <Loader2 size={14} className="animate-spin" />
@@ -356,48 +356,48 @@ const TransferAssetModal = ({
           exit={{ scale: 0.93, opacity: 0, y: 24 }}
           transition={{ type: "spring", damping: 26, stiffness: 300 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-[#1a1d2e] border border-zinc-700/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+          className="bg-surface border border-line/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
         >
-          <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-line">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
-                <ArrowRightLeft size={16} className="text-blue-400" />
+              <div className="w-9 h-9 rounded-xl bg-info/15 flex items-center justify-center">
+                <ArrowRightLeft size={16} className="text-info" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Transfer Asset</h2>
-                <p className="text-[11px] text-zinc-500">
+                <h2 className="text-sm font-bold text-ink">Transfer Asset</h2>
+                <p className="text-[11px] text-ink-subtle">
                   {asset.assetName} &middot; {asset.assetTag}
                 </p>
               </div>
             </div>
-            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-              <X size={15} className="text-zinc-400" />
+            <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+              <X size={15} className="text-ink-muted" />
             </button>
           </div>
 
           <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto">
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wide">
+              <label className="block text-xs font-semibold text-ink-muted mb-2 uppercase tracking-wide">
                 Transfer to
               </label>
               <div className="relative mb-2">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" />
                 <input
                   type="text"
                   placeholder="Search employees…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  className="w-full bg-[#0f111a] border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/60 transition-all"
+                  className="w-full bg-canvas border border-line/80 rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:border-info/60 transition-all"
                 />
               </div>
-              <div className="max-h-44 overflow-y-auto rounded-xl border border-zinc-800 divide-y divide-zinc-800/50">
+              <div className="max-h-44 overflow-y-auto rounded-xl border border-line divide-y divide-line/50">
                 {loadingEmps ? (
-                  <div className="py-6 flex items-center justify-center gap-2 text-zinc-500 text-sm">
-                    <Loader2 size={14} className="animate-spin text-blue-400" />
+                  <div className="py-6 flex items-center justify-center gap-2 text-ink-subtle text-sm">
+                    <Loader2 size={14} className="animate-spin text-info" />
                     Loading employees…
                   </div>
                 ) : filtered.length === 0 ? (
-                  <div className="py-6 text-center text-zinc-600 text-sm">
+                  <div className="py-6 text-center text-ink-faint text-sm">
                     {empError
                       ? empError
                       : employees.length === 0
@@ -411,21 +411,21 @@ const TransferAssetModal = ({
                       onClick={() => setSelected(e.id)}
                       className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors ${
                         selected === e.id
-                          ? "bg-blue-500/10"
-                          : "hover:bg-zinc-800/50"
+                          ? "bg-info/10"
+                          : "hover:bg-surface-3/50"
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-surface-3 flex items-center justify-center text-[10px] font-bold text-ink flex-shrink-0">
                         {initials(e.name)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">
+                        <p className="text-sm font-medium text-ink truncate">
                           {e.name}
                         </p>
-                        <p className="text-[11px] text-zinc-500 truncate">{e.email}</p>
+                        <p className="text-[11px] text-ink-subtle truncate">{e.email}</p>
                       </div>
                       {selected === e.id && (
-                        <Check size={14} className="text-blue-400 flex-shrink-0" />
+                        <Check size={14} className="text-info flex-shrink-0" />
                       )}
                     </button>
                   ))
@@ -434,7 +434,7 @@ const TransferAssetModal = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-400 mb-1.5 uppercase tracking-wide">
+              <label className="block text-xs font-semibold text-ink-muted mb-1.5 uppercase tracking-wide">
                 Reason (optional)
               </label>
               <textarea
@@ -442,23 +442,23 @@ const TransferAssetModal = ({
                 onChange={(e) => setReason(e.target.value)}
                 rows={2}
                 placeholder="Why is this asset being transferred?"
-                className="w-full bg-[#0f111a] border border-zinc-700/80 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/60 transition-all resize-none"
+                className="w-full bg-canvas border border-line/80 rounded-xl px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:border-info/60 transition-all resize-none"
               />
             </div>
           </div>
 
-          <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
+          <div className="px-5 py-4 border-t border-line flex gap-3">
             <button
               aria-label="Close"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-zinc-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
+              className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all"
             >
               Cancel
             </button>
             <button
               onClick={() => selected && onConfirm(selected, reason || undefined)}
               disabled={submitting || !selected}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {submitting ? (
                 <Loader2 size={14} className="animate-spin" />
@@ -690,17 +690,17 @@ export default function AllocationsTransfers({
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-red-950 border-red-500/40 text-red-300" : "bg-emerald-950 border-emerald-500/40 text-emerald-300"}`}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-danger/25 border-danger/40 text-danger" : "bg-success/25 border-success/40 text-success"}`}
           >{toast.type === "error" ? <X size={14} className="inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}{toast.msg}</motion.div>
         )}
       </AnimatePresence>
       {/* --- Page Header --- */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">
+          <h1 className="text-2xl font-bold text-ink tracking-tight">
             {isManager ? "Allocations & Transfers" : "My Allocated Assets"}
           </h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-ink-muted mt-1">
             {isManager
               ? "Manage asset assignments and resolve conflicts"
               : currentUserName
@@ -713,7 +713,7 @@ export default function AllocationsTransfers({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => setShowAllocate(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
+            className="flex items-center gap-2 bg-info hover:bg-info text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
           >
             <Plus size={18} />
             Allocate Asset
@@ -723,7 +723,7 @@ export default function AllocationsTransfers({
 
       {/* --- Filters & Search Toolbar --- */}
       <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-        <div className="flex p-1 bg-[#161925] border border-zinc-800/80 rounded-xl w-full md:w-auto">
+        <div className="flex p-1 bg-surface-2 border border-line/80 rounded-xl w-full md:w-auto">
           {(isManager
             ? ["All", "Allocated", "Overdue", "Transfer"]
             : ["All", "Allocated", "Overdue"]
@@ -733,8 +733,8 @@ export default function AllocationsTransfers({
               onClick={() => setActiveTab(tab)}
               className={`flex-1 md:flex-none px-6 py-2 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab
-                  ? "bg-zinc-800 text-white shadow-sm"
-                  : "text-gray-400 hover:text-gray-200 hover:bg-zinc-800/50"
+                  ? "bg-surface-3 text-ink shadow-sm"
+                  : "text-ink-muted hover:text-ink hover:bg-surface-3/50"
               }`}
             >
               {tab === "Transfer" ? "Pending Transfers" : tab}
@@ -744,13 +744,13 @@ export default function AllocationsTransfers({
 
         <div className="relative w-full md:w-72">
           <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle"
             size={16}
           />
           <input
             type="text"
             placeholder="Search assets or assignees..."
-            className="w-full bg-[#161925] border border-zinc-800/80 text-white text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600"
+            className="w-full bg-surface-2 border border-line/80 text-ink text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:border-info/50 focus:ring-1 focus:ring-info/50 transition-all placeholder:text-ink-faint"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -759,12 +759,12 @@ export default function AllocationsTransfers({
 
       {/* --- Error State --- */}
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-6 flex items-center gap-4 text-danger">
           <AlertCircle size={24} />
           <p>{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="ml-auto underline text-sm hover:text-red-300"
+            className="ml-auto underline text-sm hover:text-danger"
           >
             Retry
           </button>
@@ -777,16 +777,16 @@ export default function AllocationsTransfers({
           {[1, 2, 3].map((n) => (
             <div
               key={n}
-              className="bg-[#161925] border border-zinc-800 rounded-2xl p-6 h-64 animate-pulse flex flex-col justify-between"
+              className="bg-surface-2 border border-line rounded-2xl p-6 h-64 animate-pulse flex flex-col justify-between"
             >
               <div className="space-y-3">
-                <div className="h-6 bg-zinc-800 rounded w-1/2"></div>
-                <div className="h-4 bg-zinc-800 rounded w-1/3"></div>
+                <div className="h-6 bg-surface-3 rounded w-1/2"></div>
+                <div className="h-4 bg-surface-3 rounded w-1/3"></div>
               </div>
-              <div className="h-12 bg-[#0f111a] rounded-xl w-full mt-6"></div>
+              <div className="h-12 bg-canvas rounded-xl w-full mt-6"></div>
               <div className="flex gap-3 mt-4">
-                <div className="h-10 bg-zinc-800 rounded-lg w-full"></div>
-                <div className="h-10 bg-zinc-800 rounded-lg w-full"></div>
+                <div className="h-10 bg-surface-3 rounded-lg w-full"></div>
+                <div className="h-10 bg-surface-3 rounded-lg w-full"></div>
               </div>
             </div>
           ))}
@@ -806,7 +806,7 @@ export default function AllocationsTransfers({
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="col-span-full flex flex-col items-center justify-center py-20 text-gray-500"
+                className="col-span-full flex flex-col items-center justify-center py-20 text-ink-subtle"
               >
                 <Search size={48} className="mb-4 opacity-20" />
                 <p>No allocations found matching your criteria.</p>
@@ -817,41 +817,41 @@ export default function AllocationsTransfers({
                   key={item.id}
                   variants={cardVariants}
                   layout
-                  className={`relative overflow-hidden bg-[#161925] border rounded-2xl p-6 shadow-xl flex flex-col justify-between group ${
+                  className={`relative overflow-hidden bg-surface-2 border rounded-2xl p-6 shadow-xl flex flex-col justify-between group ${
                     item.status === "Overdue"
-                      ? "border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.05)]"
+                      ? "border-danger/30 shadow-[0_0_15px_rgba(239,68,68,0.05)]"
                       : item.status === "Transfer Pending"
-                      ? "border-amber-500/30"
-                      : "border-zinc-800/80 hover:border-zinc-700"
+                      ? "border-warning/30"
+                      : "border-line/80 hover:border-line"
                   } transition-colors`}
                 >
                   <div
                     className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-10 rounded-full pointer-events-none transition-colors ${
                       item.status === "Overdue"
-                        ? "bg-red-500"
+                        ? "bg-danger"
                         : item.status === "Transfer Pending"
-                        ? "bg-amber-500"
-                        : "bg-blue-500"
+                        ? "bg-warning"
+                        : "bg-info"
                     }`}
                   ></div>
 
                   <div>
                     <div className="flex justify-between items-start mb-4">
                       <div>
-                        <h3 className="text-lg font-bold text-gray-100 group-hover:text-blue-400 transition-colors">
+                        <h3 className="text-lg font-bold text-ink group-hover:text-info transition-colors">
                           {item.assetName}
                         </h3>
-                        <p className="text-xs text-zinc-500 font-mono mt-1">
+                        <p className="text-xs text-ink-subtle font-mono mt-1">
                           {item.assetTag}
                         </p>
                       </div>
                       <span
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
                           item.status === "Overdue"
-                            ? "bg-red-500/10 text-red-400 border-red-500/20"
+                            ? "bg-danger/10 text-danger border-danger/20"
                             : item.status === "Transfer Pending"
-                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                            : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                            ? "bg-warning/10 text-warning border-warning/20"
+                            : "bg-success/10 text-success border-success/20"
                         }`}
                       >
                         {item.status}
@@ -859,29 +859,29 @@ export default function AllocationsTransfers({
                     </div>
 
                     <div className="space-y-3 mt-6">
-                      <div className="flex items-center gap-3 bg-[#0f111a] p-3 rounded-xl border border-zinc-800/50">
-                        <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-bold text-gray-300">
+                      <div className="flex items-center gap-3 bg-canvas p-3 rounded-xl border border-line/50">
+                        <div className="w-10 h-10 rounded-full bg-surface-3 flex items-center justify-center text-xs font-bold text-ink-soft">
                           {item.avatar}
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-gray-200">
+                          <p className="text-sm font-medium text-ink">
                             {currentUserId && item.holderId === currentUserId
                               ? "You"
                               : item.assignee}
                           </p>
-                          <div className="flex items-center gap-1 text-xs text-zinc-500 mt-0.5">
+                          <div className="flex items-center gap-1 text-xs text-ink-subtle mt-0.5">
                             <User size={12} />
                             <span>{item.role}</span>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-gray-400 px-1">
+                      <div className="flex items-center gap-2 text-sm text-ink-muted px-1">
                         <Calendar
                           size={14}
                           className={
                             item.status === "Overdue"
-                              ? "text-red-400"
-                              : "text-gray-500"
+                              ? "text-danger"
+                              : "text-ink-subtle"
                           }
                         />
                         <span>
@@ -889,8 +889,8 @@ export default function AllocationsTransfers({
                           <strong
                             className={
                               item.status === "Overdue"
-                                ? "text-red-400"
-                                : "text-gray-300"
+                                ? "text-danger"
+                                : "text-ink-soft"
                             }
                           >
                             {item.returnDate}
@@ -900,11 +900,11 @@ export default function AllocationsTransfers({
                     </div>
                   </div>
 
-                  <div className="mt-6 pt-4 border-t border-zinc-800/50 flex gap-3">
+                  <div className="mt-6 pt-4 border-t border-line/50 flex gap-3">
                     {/* Returned — read-only */}
                     {item.status === "Returned" && (
-                      <div className="w-full py-2 px-3 rounded-lg bg-zinc-800/40 border border-zinc-700/50 text-center">
-                        <span className="text-xs text-zinc-500">Asset returned — no actions available</span>
+                      <div className="w-full py-2 px-3 rounded-lg bg-surface-3/40 border border-line/50 text-center">
+                        <span className="text-xs text-ink-subtle">Asset returned — no actions available</span>
                       </div>
                     )}
 
@@ -914,7 +914,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => handleApprove(item.id)}
-                          className="flex-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
+                          className="flex-1 bg-success/10 text-success border border-success/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "approve" ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={14} />}
                           Approve
@@ -922,7 +922,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => setRejectTarget(item)}
-                          className="flex-1 bg-red-500/10 text-red-400 border border-red-500/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
+                          className="flex-1 bg-danger/10 text-danger border border-danger/20 py-2 rounded-lg text-xs font-semibold flex justify-center gap-1 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "reject" ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={14} />}
                           Reject
@@ -932,8 +932,8 @@ export default function AllocationsTransfers({
 
                     {/* Transfer Pending — employee sees a read-only note */}
                     {!isManager && item.status === "Transfer Pending" && (
-                      <div className="w-full py-2 px-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-center">
-                        <span className="text-xs text-amber-400">Transfer pending manager approval</span>
+                      <div className="w-full py-2 px-3 rounded-lg bg-warning/10 border border-warning/20 text-center">
+                        <span className="text-xs text-warning">Transfer pending manager approval</span>
                       </div>
                     )}
 
@@ -943,7 +943,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => handleReturn(item)}
-                          className="flex-1 bg-[#0f111a] hover:bg-zinc-800 border border-zinc-800 text-gray-300 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                          className="flex-1 bg-canvas hover:bg-surface-3 border border-line text-ink-soft py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
                         >
                           {actionLoading[item.id] === "return" ? <Loader2 size={13} className="animate-spin" /> : null}
                           {isManager ? "Return" : "Initiate Return"}
@@ -951,7 +951,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => handleTransfer(item)}
-                          className="flex-1 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                          className="flex-1 bg-info/10 hover:bg-info/20 text-info py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "transfer" ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={14} />}
                           {isManager ? "Transfer" : "Request Transfer"}
@@ -964,7 +964,7 @@ export default function AllocationsTransfers({
                       <button
                         disabled={!!actionLoading[item.id]}
                         onClick={() => handlePing(item.id)}
-                        className="w-full bg-red-500/10 text-red-400 border border-red-500/20 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="w-full bg-danger/10 text-danger border border-danger/20 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                       >
                         {actionLoading[item.id] === "ping" ? <Loader2 size={13} className="animate-spin" /> : <Bell size={14} />}
                         Send Ping
@@ -975,7 +975,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => handleReturn(item)}
-                          className="flex-1 bg-[#0f111a] hover:bg-zinc-800 border border-zinc-800 text-gray-300 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                          className="flex-1 bg-canvas hover:bg-surface-3 border border-line text-ink-soft py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
                         >
                           {actionLoading[item.id] === "return" ? <Loader2 size={13} className="animate-spin" /> : null}
                           Initiate Return
@@ -983,7 +983,7 @@ export default function AllocationsTransfers({
                         <button
                           disabled={!!actionLoading[item.id]}
                           onClick={() => handleTransfer(item)}
-                          className="flex-1 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                          className="flex-1 bg-info/10 hover:bg-info/20 text-info py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           {actionLoading[item.id] === "transfer" ? <Loader2 size={13} className="animate-spin" /> : <ArrowRightLeft size={14} />}
                           Request Transfer

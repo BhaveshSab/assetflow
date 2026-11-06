@@ -26,13 +26,13 @@ interface LogEntry {
 }
 
 const actionColor = (action: string): string => {
-  if (action.includes("allocat")) return "bg-blue-500/20 text-blue-400 border-blue-500/30";
-  if (action.includes("maintenance")) return "bg-amber-500/20 text-amber-400 border-amber-500/30";
-  if (action.includes("transfer")) return "bg-purple-500/20 text-purple-400 border-purple-500/30";
+  if (action.includes("allocat")) return "bg-info/20 text-info border-info/30";
+  if (action.includes("maintenance")) return "bg-warning/20 text-warning border-warning/30";
+  if (action.includes("transfer")) return "bg-violet/20 text-violet border-violet/30";
   if (action.includes("booking")) return "bg-cyan-500/20 text-cyan-400 border-cyan-500/30";
-  if (action.includes("audit")) return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
-  if (action.includes("user")) return "bg-rose-500/20 text-rose-400 border-rose-500/30";
-  return "bg-zinc-700/40 text-zinc-300 border-zinc-600/40";
+  if (action.includes("audit")) return "bg-success/20 text-success border-success/30";
+  if (action.includes("user")) return "bg-danger/20 text-danger border-danger/30";
+  return "bg-surface-3/40 text-ink-soft border-line-strong/40";
 };
 
 const timeAgo = (iso: string): string => {
@@ -85,21 +85,21 @@ const DetailDrawer = ({ item, onClose }: { item: LogEntry | null; onClose: () =>
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 420, opacity: 0 }}
             transition={{ type: "spring" as const, stiffness: 320, damping: 32 }}
-            className="fixed top-0 right-0 h-full w-full max-w-md bg-[#161925] border-l border-zinc-700/70 shadow-2xl z-[100] flex flex-col"
+            className="fixed top-0 right-0 h-full w-full max-w-md bg-surface-2 border-l border-line/70 shadow-2xl z-[100] flex flex-col"
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 flex-shrink-0">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line flex-shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
-                  <FileJson size={16} className="text-blue-400" />
+                <div className="w-9 h-9 rounded-xl bg-info/15 flex items-center justify-center">
+                  <FileJson size={16} className="text-info" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold text-white">Activity Detail</h2>
-                  <p className="text-[11px] text-zinc-500">Full audit record</p>
+                  <h2 className="text-sm font-bold text-ink">Activity Detail</h2>
+                  <p className="text-[11px] text-ink-subtle">Full audit record</p>
                 </div>
               </div>
-              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors">
-                <X size={16} className="text-zinc-400" />
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors">
+                <X size={16} className="text-ink-muted" />
               </button>
             </div>
 
@@ -107,7 +107,7 @@ const DetailDrawer = ({ item, onClose }: { item: LogEntry | null; onClose: () =>
             <div className="flex-1 overflow-y-auto p-5 space-y-5">
               {/* Action */}
               <div>
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Action</p>
+                <p className="text-[10px] font-bold text-ink-subtle uppercase tracking-widest mb-1.5">Action</p>
                 <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${actionColor(item.action)}`}>
                   {item.action}
                 </span>
@@ -115,58 +115,58 @@ const DetailDrawer = ({ item, onClose }: { item: LogEntry | null; onClose: () =>
 
               {/* Actor + timestamp */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+                <div className="bg-canvas border border-line rounded-xl px-4 py-3">
+                  <p className="text-[10px] font-bold text-ink-subtle uppercase tracking-widest mb-1 flex items-center gap-1">
                     <User size={10} /> Actor
                   </p>
-                  <p className="text-sm font-semibold text-white">{item.actor?.name ?? "System"}</p>
+                  <p className="text-sm font-semibold text-ink">{item.actor?.name ?? "System"}</p>
                   {item.actor?.email && (
-                    <p className="text-[11px] text-zinc-500 truncate">{item.actor.email}</p>
+                    <p className="text-[11px] text-ink-subtle truncate">{item.actor.email}</p>
                   )}
                 </div>
-                <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1 flex items-center gap-1">
+                <div className="bg-canvas border border-line rounded-xl px-4 py-3">
+                  <p className="text-[10px] font-bold text-ink-subtle uppercase tracking-widest mb-1 flex items-center gap-1">
                     <Clock size={10} /> When
                   </p>
-                  <p className="text-sm font-semibold text-white">
+                  <p className="text-sm font-semibold text-ink">
                     {new Date(item.createdAt).toLocaleString()}
                   </p>
-                  <p className="text-[11px] text-zinc-500">{timeAgo(item.createdAt)}</p>
+                  <p className="text-[11px] text-ink-subtle">{timeAgo(item.createdAt)}</p>
                 </div>
               </div>
 
               {/* Entity */}
               <div>
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+                <p className="text-[10px] font-bold text-ink-subtle uppercase tracking-widest mb-1.5 flex items-center gap-1">
                   <Box size={10} /> Entity
                 </p>
-                <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3 space-y-1.5">
+                <div className="bg-canvas border border-line rounded-xl px-4 py-3 space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-500">Type</span>
-                    <span className="text-zinc-200 font-medium">{item.entityType ?? "System"}</span>
+                    <span className="text-ink-subtle">Type</span>
+                    <span className="text-ink font-medium">{item.entityType ?? "System"}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-500">ID</span>
-                    <span className="text-zinc-200 font-mono text-[11px]">{item.entityId ?? "—"}</span>
+                    <span className="text-ink-subtle">ID</span>
+                    <span className="text-ink font-mono text-[11px]">{item.entityId ?? "—"}</span>
                   </div>
                 </div>
               </div>
 
               {/* Metadata */}
               <div>
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+                <p className="text-[10px] font-bold text-ink-subtle uppercase tracking-widest mb-1.5 flex items-center gap-1">
                   <Fingerprint size={10} /> Metadata
                 </p>
                 {metaEntries.length === 0 ? (
-                  <div className="bg-[#0f111a] border border-zinc-800 rounded-xl px-4 py-3 text-xs text-zinc-600">
+                  <div className="bg-canvas border border-line rounded-xl px-4 py-3 text-xs text-ink-faint">
                     No additional metadata recorded
                   </div>
                 ) : (
-                  <div className="bg-[#0f111a] border border-zinc-800 rounded-xl overflow-hidden divide-y divide-zinc-800/60">
+                  <div className="bg-canvas border border-line rounded-xl overflow-hidden divide-y divide-line/60">
                     {metaEntries.map(([key, value]) => (
                       <div key={key} className="px-4 py-2.5">
-                        <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wide mb-0.5">{key}</p>
-                        <pre className="text-[11px] text-zinc-300 font-mono whitespace-pre-wrap break-all leading-relaxed">
+                        <p className="text-[10px] font-bold text-info uppercase tracking-wide mb-0.5">{key}</p>
+                        <pre className="text-[11px] text-ink-soft font-mono whitespace-pre-wrap break-all leading-relaxed">
                           {pretty(value)}
                         </pre>
                       </div>
@@ -222,36 +222,36 @@ export default function ActivityLogs() {
     <div className="w-full space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Activity Logs</h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Activity Logs</h1>
+          <p className="text-sm text-ink-muted mt-1">
             Immutable audit trail of every action across the system.
           </p>
         </div>
         <div className="relative w-full sm:w-72">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search actions, entities, actors…"
-            className="w-full bg-[#161925] border border-zinc-800 text-white text-sm rounded-xl pl-9 pr-4 py-2.5 outline-none focus:border-blue-500/50 placeholder:text-zinc-600"
+            className="w-full bg-surface-2 border border-line text-ink text-sm rounded-xl pl-9 pr-4 py-2.5 outline-none focus:border-info/50 placeholder:text-ink-faint"
           />
         </div>
       </div>
 
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-24 gap-2 text-gray-500">
-          <Loader2 size={22} className="animate-spin text-blue-400" />
+        <div className="flex items-center justify-center py-24 gap-2 text-ink-subtle">
+          <Loader2 size={22} className="animate-spin text-info" />
           <span className="text-sm">Loading activity logs…</span>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-gray-500">
+        <div className="flex flex-col items-center justify-center py-24 text-ink-subtle">
           <ActivityIcon size={40} className="opacity-20 mb-3" />
           <p className="text-sm">No activity found.</p>
         </div>
@@ -259,9 +259,9 @@ export default function ActivityLogs() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="bg-[#161925] border border-zinc-800/80 rounded-2xl overflow-hidden"
+          className="bg-surface-2 border border-line/80 rounded-2xl overflow-hidden"
         >
-          <div className="divide-y divide-zinc-800/60">
+          <div className="divide-y divide-line/60">
             {filtered.map((item, i) => (
               <motion.button
                 key={item.id}
@@ -269,24 +269,24 @@ export default function ActivityLogs() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(i * 0.02, 0.4) }}
                 onClick={() => setSelected(item)}
-                className="w-full px-5 py-3.5 flex items-center gap-4 hover:bg-zinc-800/30 transition-colors text-left group"
+                className="w-full px-5 py-3.5 flex items-center gap-4 hover:bg-surface-3/30 transition-colors text-left group"
               >
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border flex-shrink-0 ${actionColor(item.action)}`}>
                   {item.action}
                 </span>
-                <div className="flex-1 min-w-0 text-sm text-gray-300">
-                  <span className="text-zinc-500">{item.entityType ?? "System"}</span>
+                <div className="flex-1 min-w-0 text-sm text-ink-soft">
+                  <span className="text-ink-subtle">{item.entityType ?? "System"}</span>
                   {item.entityId && (
-                    <span className="text-zinc-600 font-mono text-xs"> #{item.entityId.slice(-6)}</span>
+                    <span className="text-ink-faint font-mono text-xs"> #{item.entityId.slice(-6)}</span>
                   )}
                 </div>
-                <span className="flex items-center gap-1.5 text-xs text-gray-500 flex-shrink-0">
+                <span className="flex items-center gap-1.5 text-xs text-ink-subtle flex-shrink-0">
                   <User size={11} /> {item.actor?.name ?? "System"}
                 </span>
-                <span className="flex items-center gap-1.5 text-xs text-gray-600 flex-shrink-0">
+                <span className="flex items-center gap-1.5 text-xs text-ink-faint flex-shrink-0">
                   <Clock size={11} /> {timeAgo(item.createdAt)}
                 </span>
-                <ChevronRight size={14} className="text-gray-700 group-hover:text-blue-400 transition-colors flex-shrink-0" />
+                <ChevronRight size={14} className="text-ink group-hover:text-info transition-colors flex-shrink-0" />
               </motion.button>
             ))}
           </div>

@@ -69,13 +69,13 @@ export function Field({
       <label
         htmlFor={fieldId}
         className={cn(
-          "block text-xs font-semibold text-zinc-400 mb-1.5 uppercase tracking-wide",
+          "block text-xs font-semibold text-ink-muted mb-1.5 uppercase tracking-wide",
           labelClassName,
         )}
       >
         {label}{" "}
         {required && (
-          <span className="text-red-400 normal-case" aria-hidden="true">
+          <span className="text-danger normal-case" aria-hidden="true">
             *
           </span>
         )}
@@ -85,7 +85,7 @@ export function Field({
       {child}
 
       {hint && !error && (
-        <p id={hintId} className="text-zinc-500 text-[11px] mt-1.5">
+        <p id={hintId} className="text-ink-subtle text-[11px] mt-1.5">
           {hint}
         </p>
       )}
@@ -94,7 +94,7 @@ export function Field({
         <p
           id={errorId}
           role="alert"
-          className="text-red-400 text-[11px] mt-1.5 flex items-center gap-1"
+          className="text-danger text-[11px] mt-1.5 flex items-center gap-1"
         >
           <span aria-hidden="true">⚠</span> {error}
         </p>

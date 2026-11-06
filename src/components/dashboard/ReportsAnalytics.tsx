@@ -98,9 +98,9 @@ function ChartTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
-    <div className="bg-[#161925] border border-zinc-800 p-3 rounded-lg shadow-xl">
-      <p className="text-gray-400 text-xs mb-1 font-semibold">{label}</p>
-      <p className="text-white font-bold text-sm">
+    <div className="bg-surface-2 border border-line p-3 rounded-lg shadow-xl">
+      <p className="text-ink-muted text-xs mb-1 font-semibold">{label}</p>
+      <p className="text-ink font-bold text-sm">
         {payload[0].value}
         {suffix}
       </p>
@@ -171,10 +171,10 @@ export default function ReportsAnalytics() {
       {/* --- Page Header --- */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">
+          <h1 className="text-2xl font-bold text-ink tracking-tight">
             Reports & Analytics
           </h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-ink-muted mt-1">
             Actionable insights into asset utilization and organizational
             efficiency.
           </p>
@@ -183,7 +183,7 @@ export default function ReportsAnalytics() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={handleExport}
-          className="flex items-center gap-2 bg-[#161925] border border-zinc-700 hover:bg-zinc-800 text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-lg transition-all"
+          className="flex items-center gap-2 bg-surface-2 border border-line hover:bg-surface-3 text-ink px-5 py-2.5 rounded-xl text-sm font-medium shadow-lg transition-all"
         >
           <Download size={18} />
           Export CSV Report
@@ -192,7 +192,7 @@ export default function ReportsAnalytics() {
 
       {/* --- Filters --- */}
       <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-        <div className="flex p-1 bg-[#161925] border border-zinc-800/80 rounded-xl w-full lg:w-auto overflow-x-auto">
+        <div className="flex p-1 bg-surface-2 border border-line/80 rounded-xl w-full lg:w-auto overflow-x-auto">
           {[
             "Last 30 Days",
             "Last 6 Months",
@@ -204,8 +204,8 @@ export default function ReportsAnalytics() {
               onClick={() => setTimeRange(range)}
               className={`whitespace-nowrap px-6 py-2 rounded-lg text-sm font-medium transition-all ${
                 timeRange === range
-                  ? "bg-zinc-800 text-white shadow-sm"
-                  : "text-gray-400 hover:text-gray-200 hover:bg-zinc-800/50"
+                  ? "bg-surface-3 text-ink shadow-sm"
+                  : "text-ink-muted hover:text-ink hover:bg-surface-3/50"
               }`}
             >
               {range}
@@ -216,7 +216,7 @@ export default function ReportsAnalytics() {
 
       {/* --- Error State --- */}
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
         </div>
@@ -229,17 +229,17 @@ export default function ReportsAnalytics() {
             {[1, 2, 3, 4].map((n) => (
               <div
                 key={n}
-                className="h-28 bg-[#161925] rounded-2xl border border-zinc-800 animate-pulse"
+                className="h-28 bg-surface-2 rounded-2xl border border-line animate-pulse"
               ></div>
             ))}
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="h-80 bg-[#161925] rounded-2xl border border-zinc-800 animate-pulse lg:col-span-2"></div>
-            <div className="h-80 bg-[#161925] rounded-2xl border border-zinc-800 animate-pulse"></div>
+            <div className="h-80 bg-surface-2 rounded-2xl border border-line animate-pulse lg:col-span-2"></div>
+            <div className="h-80 bg-surface-2 rounded-2xl border border-line animate-pulse"></div>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="h-80 bg-[#161925] rounded-2xl border border-zinc-800 animate-pulse"></div>
-            <div className="h-80 bg-[#161925] rounded-2xl border border-zinc-800 animate-pulse"></div>
+            <div className="h-80 bg-surface-2 rounded-2xl border border-line animate-pulse"></div>
+            <div className="h-80 bg-surface-2 rounded-2xl border border-line animate-pulse"></div>
           </div>
         </div>
       )}
@@ -256,55 +256,55 @@ export default function ReportsAnalytics() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
             >
-              <div className="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
-              <p className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
+              <div className="absolute -right-6 -top-6 w-24 h-24 bg-info/10 rounded-full blur-2xl group-hover:bg-info/20 transition-all"></div>
+              <p className="text-sm font-medium text-ink-muted uppercase tracking-wider mb-2">
                 Total Assets
               </p>
-              <h3 className="text-3xl font-bold text-white">
+              <h3 className="text-3xl font-bold text-ink">
                 {analyticsData.kpis.totalAssets}
               </h3>
             </motion.div>
 
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
             >
-              <div className="absolute -right-6 -top-6 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
-              <p className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
+              <div className="absolute -right-6 -top-6 w-24 h-24 bg-success/10 rounded-full blur-2xl group-hover:bg-success/20 transition-all"></div>
+              <p className="text-sm font-medium text-ink-muted uppercase tracking-wider mb-2">
                 Overall Utilization
               </p>
               <div className="flex items-end gap-2">
-                <h3 className="text-3xl font-bold text-emerald-400">
+                <h3 className="text-3xl font-bold text-success">
                   {analyticsData.kpis.utilizationRate}%
                 </h3>
-                <TrendingUp size={20} className="text-emerald-500 mb-1" />
+                <TrendingUp size={20} className="text-success mb-1" />
               </div>
             </motion.div>
 
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
             >
-              <div className="absolute -right-6 -top-6 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl group-hover:bg-amber-500/20 transition-all"></div>
-              <p className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
+              <div className="absolute -right-6 -top-6 w-24 h-24 bg-warning/10 rounded-full blur-2xl group-hover:bg-warning/20 transition-all"></div>
+              <p className="text-sm font-medium text-ink-muted uppercase tracking-wider mb-2">
                 Pending Maintenance
               </p>
-              <h3 className="text-3xl font-bold text-amber-400">
+              <h3 className="text-3xl font-bold text-warning">
                 {analyticsData.kpis.maintenancePending}
               </h3>
             </motion.div>
 
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl relative overflow-hidden group"
             >
-              <div className="absolute -right-6 -top-6 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-all"></div>
-              <p className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
+              <div className="absolute -right-6 -top-6 w-24 h-24 bg-violet/10 rounded-full blur-2xl group-hover:bg-violet/20 transition-all"></div>
+              <p className="text-sm font-medium text-ink-muted uppercase tracking-wider mb-2">
                 Active Bookings
               </p>
-              <h3 className="text-3xl font-bold text-purple-400">
+              <h3 className="text-3xl font-bold text-violet">
                 {analyticsData.kpis.activeBookings}
               </h3>
             </motion.div>
@@ -315,13 +315,13 @@ export default function ReportsAnalytics() {
             {/* Utilization Trend Area Chart */}
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl lg:col-span-2"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl lg:col-span-2"
             >
               <div className="flex items-center gap-2 mb-6">
-                <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
+                <div className="p-2 bg-info/10 text-info rounded-lg">
                   <Activity size={18} />
                 </div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-semibold text-ink">
                   Utilization Trend
                 </h3>
               </div>
@@ -339,8 +339,8 @@ export default function ReportsAnalytics() {
                         x2="0"
                         y2="1"
                       >
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid
@@ -352,19 +352,19 @@ export default function ReportsAnalytics() {
                       dataKey="month"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#9ca3af", fontSize: 12 }}
+                      tick={{ fill: "hsl(var(--chart-tick))", fontSize: 12 }}
                       dy={10}
                     />
                     <YAxis
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#9ca3af", fontSize: 12 }}
+                      tick={{ fill: "hsl(var(--chart-tick))", fontSize: 12 }}
                     />
                     <Tooltip content={<ChartTooltip suffix="%" />} />
                     <Area
                       type="monotone"
                       dataKey="rate"
-                      stroke="#3b82f6"
+                      stroke="hsl(var(--chart-1))"
                       strokeWidth={3}
                       fillOpacity={1}
                       fill="url(#colorRate)"
@@ -377,13 +377,13 @@ export default function ReportsAnalytics() {
             {/* Asset Status Donut Chart */}
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl"
             >
               <div className="flex items-center gap-2 mb-2">
-                <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                <div className="p-2 bg-success/10 text-success rounded-lg">
                   <PieChart size={18} />
                 </div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-semibold text-ink">
                   Status Breakdown
                 </h3>
               </div>
@@ -409,10 +409,10 @@ export default function ReportsAnalytics() {
                   </RechartsPie>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-2">
-                  <span className="text-2xl font-bold text-white">
+                  <span className="text-2xl font-bold text-ink">
                     {analyticsData.kpis.totalAssets}
                   </span>
-                  <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                  <span className="text-[10px] text-ink-subtle uppercase tracking-wider">
                     Assets
                   </span>
                 </div>
@@ -426,7 +426,7 @@ export default function ReportsAnalytics() {
                       className="w-3 h-3 rounded-full"
                       style={{ backgroundColor: stat.color }}
                     ></div>
-                    <span className="text-gray-400">{stat.name}</span>
+                    <span className="text-ink-muted">{stat.name}</span>
                   </div>
                 ))}
               </div>
@@ -438,13 +438,13 @@ export default function ReportsAnalytics() {
             {/* Department Allocations Bar Chart */}
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl"
             >
               <div className="flex items-center gap-2 mb-6">
-                <div className="p-2 bg-purple-500/10 text-purple-400 rounded-lg">
+                <div className="p-2 bg-violet/10 text-violet rounded-lg">
                   <BarChart2 size={18} />
                 </div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 className="text-lg font-semibold text-ink">
                   Department Allocations
                 </h3>
               </div>
@@ -465,14 +465,14 @@ export default function ReportsAnalytics() {
                       type="number"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#9ca3af", fontSize: 12 }}
+                      tick={{ fill: "hsl(var(--chart-tick))", fontSize: 12 }}
                     />
                     <YAxis
                       dataKey="dept"
                       type="category"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#d1d5db", fontSize: 12 }}
+                      tick={{ fill: "hsl(var(--ink-soft))", fontSize: 12 }}
                     />
                     <Tooltip
                       content={<ChartTooltip />}
@@ -492,18 +492,18 @@ export default function ReportsAnalytics() {
             {/* Booking Heatmap (Custom Grid) */}
             <motion.div
               variants={itemVariants}
-              className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-6 shadow-xl flex flex-col"
+              className="bg-surface-2 border border-line/80 rounded-2xl p-6 shadow-xl flex flex-col"
             >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
-                  <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
+                  <div className="p-2 bg-warning/10 text-warning rounded-lg">
                     <Calendar size={18} />
                   </div>
-                  <h3 className="text-lg font-semibold text-white">
+                  <h3 className="text-lg font-semibold text-ink">
                     Resource Booking Heatmap
                   </h3>
                 </div>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-ink-subtle">
                   Peak Usage Windows
                 </span>
               </div>
@@ -511,11 +511,11 @@ export default function ReportsAnalytics() {
               <div className="flex-1 flex flex-col justify-center">
                 <div className="flex">
                   {/* Y-axis Labels (Days) */}
-                  <div className="flex flex-col justify-between pr-4 py-2 border-r border-zinc-800">
+                  <div className="flex flex-col justify-between pr-4 py-2 border-r border-line">
                     {["Mon", "Tue", "Wed", "Thu", "Fri"].map((day) => (
                       <span
                         key={day}
-                        className="text-xs text-gray-400 font-medium"
+                        className="text-xs text-ink-muted font-medium"
                       >
                         {day}
                       </span>
@@ -535,7 +535,7 @@ export default function ReportsAnalytics() {
                             <div
                               key={hIdx}
                               title={`${hourData.day} ${hourData.hour}: Activity Level ${hourData.intensity}`}
-                              className="w-full aspect-square rounded-sm bg-blue-500 transition-opacity hover:opacity-100 cursor-crosshair"
+                              className="w-full aspect-square rounded-sm bg-info transition-opacity hover:opacity-100 cursor-crosshair"
                               style={{ opacity: opacity }}
                             ></div>
                           );
@@ -548,7 +548,7 @@ export default function ReportsAnalytics() {
                 {/* X-axis Labels (Hours) */}
                 <div className="flex justify-between pl-12 pr-1 mt-3">
                   {["9A", "11A", "1P", "3P", "5P"].map((time) => (
-                    <span key={time} className="text-[10px] text-gray-500">
+                    <span key={time} className="text-[10px] text-ink-subtle">
                       {time}
                     </span>
                   ))}

@@ -18,9 +18,9 @@ function RouteFallback() {
     <div
       role="status"
       aria-live="polite"
-      className="min-h-screen bg-zinc-950 flex items-center justify-center gap-2 text-zinc-400 text-sm"
+      className="min-h-screen bg-canvas flex items-center justify-center gap-2 text-ink-muted text-sm"
     >
-      <Loader2 size={18} className="animate-spin text-blue-400" aria-hidden="true" />
+      <Loader2 size={18} className="animate-spin text-info" aria-hidden="true" />
       Loading AssetFlow…
     </div>
   );

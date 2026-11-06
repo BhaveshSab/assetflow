@@ -12,6 +12,34 @@ export default {
     },
     extend: {
       colors: {
+        /*
+         * The theme tokens. Every value is a CSS variable, so a class like
+         * `bg-surface` renders the light value under `:root` and the dark one
+         * under `.dark` — no `dark:` variants anywhere in the components.
+         * `<alpha-value>` keeps `/40`-style opacity working.
+         */
+        canvas: "hsl(var(--canvas) / <alpha-value>)",
+        surface: {
+          DEFAULT: "hsl(var(--surface) / <alpha-value>)",
+          2: "hsl(var(--surface-2) / <alpha-value>)",
+          3: "hsl(var(--surface-3) / <alpha-value>)",
+        },
+        line: {
+          DEFAULT: "hsl(var(--line) / <alpha-value>)",
+          strong: "hsl(var(--line-strong) / <alpha-value>)",
+        },
+        ink: {
+          DEFAULT: "hsl(var(--ink) / <alpha-value>)",
+          soft: "hsl(var(--ink-soft) / <alpha-value>)",
+          muted: "hsl(var(--ink-muted) / <alpha-value>)",
+          subtle: "hsl(var(--ink-subtle) / <alpha-value>)",
+          faint: "hsl(var(--ink-faint) / <alpha-value>)",
+        },
+        success: "hsl(var(--success) / <alpha-value>)",
+        warning: "hsl(var(--warning) / <alpha-value>)",
+        info: "hsl(var(--info) / <alpha-value>)",
+        danger: "hsl(var(--danger) / <alpha-value>)",
+        violet: "hsl(var(--violet) / <alpha-value>)",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

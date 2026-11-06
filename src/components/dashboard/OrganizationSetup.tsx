@@ -154,15 +154,15 @@ const employeeService = {
 const ROLES = ["Employee", "Department Head", "Asset Manager", "Admin"] as const;
 
 const roleConfig: Record<string, { label: string; color: string; dot: string; icon: LucideIcon; description: string }> = {
-  Admin:             { label: "Admin",         color: "bg-purple-500/20 text-purple-300 border-purple-500/30", dot: "bg-purple-400", icon: Crown,       description: "Full system access" },
-  "Asset Manager":   { label: "Asset Manager", color: "bg-blue-500/20 text-blue-300 border-blue-500/30",       dot: "bg-blue-400",   icon: ShieldCheck, description: "Manages assets & approvals" },
-  "Department Head": { label: "Dept. Head",    color: "bg-amber-500/20 text-amber-300 border-amber-500/30",   dot: "bg-amber-400",  icon: Briefcase,   description: "Manages department assets" },
-  Employee:          { label: "Employee",      color: "bg-zinc-700/60 text-zinc-300 border-zinc-600/40",      dot: "bg-zinc-400",   icon: User,        description: "Standard access" },
+  Admin:             { label: "Admin",         color: "bg-violet/20 text-violet border-violet/30", dot: "bg-violet", icon: Crown,       description: "Full system access" },
+  "Asset Manager":   { label: "Asset Manager", color: "bg-info/20 text-info border-info/30",       dot: "bg-info",   icon: ShieldCheck, description: "Manages assets & approvals" },
+  "Department Head": { label: "Dept. Head",    color: "bg-warning/20 text-warning border-warning/30",   dot: "bg-warning",  icon: Briefcase,   description: "Manages department assets" },
+  Employee:          { label: "Employee",      color: "bg-surface-3/60 text-ink-soft border-line-strong/40",      dot: "bg-ink-subtle",   icon: User,        description: "Standard access" },
 };
 
 const avatarColors = [
-  "bg-blue-600", "bg-purple-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600",
-  "bg-cyan-600", "bg-indigo-600", "bg-pink-600", "bg-teal-600", "bg-orange-600",
+  "bg-info", "bg-violet", "bg-success", "bg-warning", "bg-danger",
+  "bg-cyan-600", "bg-info", "bg-violet", "bg-success", "bg-warning",
 ];
 const getAvatarColor = (id: string | number) =>
   avatarColors[String(id).charCodeAt(0) % avatarColors.length];
@@ -193,8 +193,8 @@ const RoleBadge = ({ role }: { role: string }) => {
 
 const StatusPill = ({ status }: { status: string }) => (
   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border
-    ${status === "Active" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-zinc-700/40 text-zinc-400 border-zinc-600/30"}`}>
-    <span className={`w-1.5 h-1.5 rounded-full ${status === "Active" ? "bg-emerald-400" : "bg-zinc-500"}`} />
+    ${status === "Active" ? "bg-success/15 text-success border-success/30" : "bg-surface-3/40 text-ink-muted border-line-strong/30"}`}>
+    <span className={`w-1.5 h-1.5 rounded-full ${status === "Active" ? "bg-success" : "bg-ink-subtle"}`} />
     {status}
   </span>
 );
@@ -205,7 +205,7 @@ const EmployeeToast = ({ toast }: { toast: { msg: string; type: string } | null 
       <motion.div
         initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
         className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-xl text-sm font-medium shadow-2xl border flex items-center gap-2
-          ${toast.type === "error" ? "bg-red-950 border-red-500/40 text-red-300" : toast.type === "warning" ? "bg-amber-950 border-amber-500/40 text-amber-300" : "bg-emerald-950 border-emerald-500/40 text-emerald-300"}`}
+          ${toast.type === "error" ? "bg-danger/25 border-danger/40 text-danger" : toast.type === "warning" ? "bg-warning/25 border-warning/40 text-warning" : "bg-success/25 border-success/40 text-success"}`}
       >
         {toast.type === "error" ? <XCircle size={15} /> : toast.type === "warning" ? <AlertCircle size={15} /> : <CheckCircle2 size={15} />}
         {toast.msg}
@@ -255,8 +255,8 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
   };
 
   const inputCls = (field: string) =>
-    `w-full bg-[#0f111a] border rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-gray-600 outline-none transition-all
-    ${errors[field] ? "border-red-500/60 focus:border-red-500" : "border-zinc-700 focus:border-blue-500/60"}`;
+    `w-full bg-canvas border rounded-xl px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none transition-all
+    ${errors[field] ? "border-danger/60 focus:border-danger" : "border-line focus:border-info/60"}`;
 
   return (
     <AnimatePresence>
@@ -265,56 +265,56 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
           <motion.div initial={{ scale: 0.92, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.92, opacity: 0, y: 20 }} transition={{ type: "spring" as const, damping: 25, stiffness: 300 }}
-            onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+            onClick={(e) => e.stopPropagation()} className="bg-surface border border-line rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-line">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center"><User size={17} className="text-blue-400" /></div>
+                <div className="w-9 h-9 rounded-xl bg-info/15 flex items-center justify-center"><User size={17} className="text-info" /></div>
                 <div>
-                  <h2 className="text-sm font-bold text-white">{isEdit ? "Edit Employee" : "Add New Employee"}</h2>
-                  <p className="text-[11px] text-gray-500">{isEdit ? "Update employee details" : "Signup creates Employee only"}</p>
+                  <h2 className="text-sm font-bold text-ink">{isEdit ? "Edit Employee" : "Add New Employee"}</h2>
+                  <p className="text-[11px] text-ink-subtle">{isEdit ? "Update employee details" : "Signup creates Employee only"}</p>
                 </div>
               </div>
-              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-700/50 transition-colors"><X size={16} className="text-gray-400" /></button>
+              <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-3/50 transition-colors"><X size={16} className="text-ink-muted" /></button>
             </div>
             <div className="p-6 flex flex-col gap-4">
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">Full Name *</label>
+                <label className="block text-xs font-medium text-ink-muted mb-1.5">Full Name *</label>
                 <div className="relative">
-                  <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input className={`${inputCls("name")} pl-9`} placeholder="e.g. Priya Sharma" value={form.name} onChange={(e) => set("name", e.target.value)} />
                 </div>
-                {errors.name && <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.name}</p>}
+                {errors.name && <p className="text-danger text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.name}</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">Work Email *</label>
+                <label className="block text-xs font-medium text-ink-muted mb-1.5">Work Email *</label>
                 <div className="relative">
-                  <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <input className={`${inputCls("email")} pl-9`} type="email" placeholder="priya@company.com" value={form.email} onChange={(e) => set("email", e.target.value)} disabled={isEdit} />
                 </div>
-                {errors.email && <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.email}</p>}
-                {isEdit && <p className="text-[11px] text-gray-600 mt-1">Email cannot be changed after creation.</p>}
+                {errors.email && <p className="text-danger text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.email}</p>}
+                {isEdit && <p className="text-[11px] text-ink-faint mt-1">Email cannot be changed after creation.</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">Department *</label>
+                <label className="block text-xs font-medium text-ink-muted mb-1.5">Department *</label>
                 <div className="relative">
-                  <Building2 size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <Building2 size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
                   <select className={`${inputCls("department")} pl-9 appearance-none cursor-pointer`} value={form.department} onChange={(e) => set("department", e.target.value)}>
                     <option value="">Select department</option>
                     {departments.map((d) => (<option key={d} value={d}>{d}</option>))}
                   </select>
-                  <ChevronDown size={14} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                  <ChevronDown size={14} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
                 </div>
-                {errors.department && <p className="text-red-400 text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.department}</p>}
+                {errors.department && <p className="text-danger text-[11px] mt-1 flex items-center gap-1"><AlertCircle size={10} />{errors.department}</p>}
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">Role *</label>
+                <label className="block text-xs font-medium text-ink-muted mb-1.5">Role *</label>
                 <div className="grid grid-cols-2 gap-2">
                   {ROLES.map((r) => {
                     const cfg = roleConfig[r]; const RoleIcon = cfg.icon;
                     return (
                       <button key={r} type="button" onClick={() => set("role", r)}
                         className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition-all text-xs font-medium
-                          ${form.role === r ? `${cfg.color} border-opacity-60` : "border-zinc-700 text-gray-500 hover:border-zinc-500 hover:text-gray-300"}`}>
+                          ${form.role === r ? `${cfg.color} border-opacity-60` : "border-line text-ink-subtle hover:border-line-strong hover:text-ink-soft"}`}>
                         <RoleIcon size={13} />
                         <div><p className="font-semibold">{cfg.label}</p><p className="text-[10px] opacity-70">{cfg.description}</p></div>
                       </button>
@@ -323,28 +323,28 @@ const EmployeeModal = ({ open, onClose, onSave, editingEmployee, departments, sa
                 </div>
                 {form.role === "Admin" && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
-                    className="mt-2 flex items-start gap-2 bg-purple-950/40 border border-purple-500/30 rounded-lg px-3 py-2">
-                    <ShieldAlert size={13} className="text-purple-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-purple-300">Admin role grants full system access. Assign with caution.</p>
+                    className="mt-2 flex items-start gap-2 bg-violet/10 border border-violet/30 rounded-lg px-3 py-2">
+                    <ShieldAlert size={13} className="text-violet flex-shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-violet">Admin role grants full system access. Assign with caution.</p>
                   </motion.div>
                 )}
               </div>
-              <div className="flex items-center justify-between bg-[#0f111a] border border-zinc-700 rounded-xl px-4 py-3">
+              <div className="flex items-center justify-between bg-canvas border border-line rounded-xl px-4 py-3">
                 <div>
-                  <p className="text-sm font-medium text-white">Account Status</p>
-                  <p className="text-xs text-gray-500">{form.status === "Active" ? "Employee can log in" : "Account is suspended"}</p>
+                  <p className="text-sm font-medium text-ink">Account Status</p>
+                  <p className="text-xs text-ink-subtle">{form.status === "Active" ? "Employee can log in" : "Account is suspended"}</p>
                 </div>
                 <button type="button" onClick={() => set("status", form.status === "Active" ? "Inactive" : "Active")}
-                  className={`relative w-11 h-6 rounded-full transition-all duration-300 focus:outline-none ${form.status === "Active" ? "bg-emerald-500" : "bg-zinc-600"}`}>
+                  className={`relative w-11 h-6 rounded-full transition-all duration-300 focus:outline-none ${form.status === "Active" ? "bg-success" : "bg-line-strong"}`}>
                   <motion.span animate={{ x: form.status === "Active" ? 20 : 2 }} transition={{ type: "spring" as const, stiffness: 400, damping: 25 }}
                     className="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow-md" />
                 </button>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-zinc-800 flex gap-3">
-              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all">Cancel</button>
+            <div className="px-6 py-4 border-t border-line flex gap-3">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all">Cancel</button>
               <button onClick={handleSubmit} disabled={saving}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+                className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60">
                 {saving ? (<><Loader2 size={14} className="animate-spin" /> Saving...</>) : (<><Check size={14} /> {isEdit ? "Update Employee" : "Add Employee"}</>)}
               </button>
             </div>
@@ -367,10 +367,10 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
           <motion.div initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
-            onClick={(e) => e.stopPropagation()} className="bg-[#1a1d2e] border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
-              <div><h2 className="text-sm font-bold text-white">Change Role</h2><p className="text-[11px] text-gray-500">{employee.name}</p></div>
-              <button aria-label="Close" onClick={onClose}><X size={15} className="text-gray-400 hover:text-white" /></button>
+            onClick={(e) => e.stopPropagation()} className="bg-surface border border-line rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-line flex items-center justify-between">
+              <div><h2 className="text-sm font-bold text-ink">Change Role</h2><p className="text-[11px] text-ink-subtle">{employee.name}</p></div>
+              <button aria-label="Close" onClick={onClose}><X size={15} className="text-ink-muted hover:text-ink" /></button>
             </div>
             <div className="p-5 flex flex-col gap-2">
               {ROLES.map((r) => {
@@ -378,18 +378,18 @@ const PromoteModal = ({ open, employee, onClose, onPromote, saving }: {
                 return (
                   <button key={r} onClick={() => setSelectedRole(r)}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all
-                      ${selectedRole === r ? `${cfg.color}` : "border-zinc-700 text-gray-400 hover:border-zinc-500 hover:text-white"}`}>
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${selectedRole === r ? "" : "bg-zinc-800"}`}><RoleIcon size={15} /></div>
+                      ${selectedRole === r ? `${cfg.color}` : "border-line text-ink-muted hover:border-line-strong hover:text-ink"}`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${selectedRole === r ? "" : "bg-surface-3"}`}><RoleIcon size={15} /></div>
                     <div><p className="text-sm font-semibold">{r}</p><p className="text-[11px] opacity-70">{cfg.description}</p></div>
                     {selectedRole === r && <Check size={14} className="ml-auto" />}
                   </button>
                 );
               })}
             </div>
-            <div className="px-5 py-4 border-t border-zinc-800 flex gap-3">
-              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 transition-all">Cancel</button>
+            <div className="px-5 py-4 border-t border-line flex gap-3">
+              <button aria-label="Close" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong transition-all">Cancel</button>
               <button onClick={() => onPromote(employee.id, selectedRole)} disabled={saving || selectedRole === employee.role}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                className="flex-1 py-2.5 rounded-xl bg-info hover:bg-info text-white text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                 {saving ? "Updating..." : "Update Role"}
               </button>
@@ -524,7 +524,7 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
 
       {/* Load error banner */}
       {loadError && (
-        <div role="alert" className="flex items-center gap-2.5 bg-red-950/40 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-400">
+        <div role="alert" className="flex items-center gap-2.5 bg-danger/10 border border-danger/30 rounded-xl px-4 py-3 text-sm text-danger">
           <AlertCircle size={15} className="flex-shrink-0" /> {loadError} — check that the backend is running.
         </div>
       )}
@@ -537,15 +537,15 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       {/* Stats Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: "Total", value: stats.total, color: "text-white" },
-          { label: "Active", value: stats.active, color: "text-emerald-400" },
-          { label: "Admins", value: stats.admins, color: "text-purple-400" },
-          { label: "Managers", value: stats.managers, color: "text-blue-400" },
-          { label: "Dept. Heads", value: stats.heads, color: "text-amber-400" },
+          { label: "Total", value: stats.total, color: "text-ink" },
+          { label: "Active", value: stats.active, color: "text-success" },
+          { label: "Admins", value: stats.admins, color: "text-violet" },
+          { label: "Managers", value: stats.managers, color: "text-info" },
+          { label: "Dept. Heads", value: stats.heads, color: "text-warning" },
         ].map((s) => (
-          <div key={s.label} className="bg-[#161925] border border-zinc-800 rounded-xl px-4 py-3 text-center">
+          <div key={s.label} className="bg-surface-2 border border-line rounded-xl px-4 py-3 text-center">
             <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-[11px] text-gray-500 mt-0.5">{s.label}</p>
+            <p className="text-[11px] text-ink-subtle mt-0.5">{s.label}</p>
           </div>
         ))}
       </div>
@@ -553,39 +553,39 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" />
+          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, email or department..."
-            className="w-full bg-[#161925] border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-gray-600 outline-none focus:border-blue-500/50 transition-colors" />
-          {search && (<button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={13} className="text-gray-500 hover:text-white" /></button>)}
+            className="w-full bg-surface-2 border border-line rounded-xl pl-9 pr-4 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:border-info/50 transition-colors" />
+          {search && (<button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={13} className="text-ink-subtle hover:text-ink" /></button>)}
         </div>
         <div className="flex gap-2 flex-wrap">
           <div className="relative">
             <select value={filterRole} onChange={(e) => setFilterRole(e.target.value)}
-              className="bg-[#161925] border border-zinc-800 rounded-xl pl-3 pr-8 py-2.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors appearance-none cursor-pointer">
+              className="bg-surface-2 border border-line rounded-xl pl-3 pr-8 py-2.5 text-sm text-ink-soft outline-none focus:border-info/50 transition-colors appearance-none cursor-pointer">
               <option value="All">All Roles</option>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
           </div>
           <div className="relative">
             <select value={filterDept} onChange={(e) => setFilterDept(e.target.value)}
-              className="bg-[#161925] border border-zinc-800 rounded-xl pl-3 pr-8 py-2.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors appearance-none cursor-pointer">
+              className="bg-surface-2 border border-line rounded-xl pl-3 pr-8 py-2.5 text-sm text-ink-soft outline-none focus:border-info/50 transition-colors appearance-none cursor-pointer">
               <option value="All">All Departments</option>
               {departments.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
-            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
           </div>
           <div className="relative">
             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-[#161925] border border-zinc-800 rounded-xl pl-3 pr-8 py-2.5 text-sm text-gray-300 outline-none focus:border-blue-500/50 transition-colors appearance-none cursor-pointer">
+              className="bg-surface-2 border border-line rounded-xl pl-3 pr-8 py-2.5 text-sm text-ink-soft outline-none focus:border-info/50 transition-colors appearance-none cursor-pointer">
               <option value="All">All Statuses</option>
               <option value="Active">Active</option>
               <option value="Inactive">Inactive</option>
             </select>
-            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none" />
           </div>
           <button onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20">
+            className="flex items-center gap-2 px-4 py-2.5 bg-info hover:bg-info text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20">
             <Plus size={15} /> Add Employee
           </button>
         </div>
@@ -593,36 +593,36 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
 
       {/* Results count */}
       {!loading && (
-        <p className="text-xs text-gray-500">
-          Showing <span className="text-white font-medium">{filtered.length}</span> of <span className="text-white font-medium">{employees.length}</span> employees
+        <p className="text-xs text-ink-subtle">
+          Showing <span className="text-ink font-medium">{filtered.length}</span> of <span className="text-ink font-medium">{employees.length}</span> employees
           {(search || filterRole !== "All" || filterDept !== "All" || filterStatus !== "All") && (
             <button onClick={() => { setSearch(""); setFilterRole("All"); setFilterDept("All"); setFilterStatus("All"); }}
-              className="ml-2 text-blue-400 hover:text-blue-300 hover:underline">Clear filters</button>
+              className="ml-2 text-info hover:text-info hover:underline">Clear filters</button>
           )}
         </p>
       )}
 
       {/* Table */}
-      <div className="bg-[#161925] border border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-surface-2 border border-line rounded-2xl overflow-hidden">
         {loading && (
-          <div className="py-16 flex flex-col items-center gap-3 text-gray-500">
-            <Loader2 size={28} className="animate-spin text-blue-400" />
+          <div className="py-16 flex flex-col items-center gap-3 text-ink-subtle">
+            <Loader2 size={28} className="animate-spin text-info" />
             <p className="text-sm">Loading employee directory...</p>
           </div>
         )}
         {!loading && filtered.length === 0 && (
-          <div className="py-16 flex flex-col items-center gap-3 text-gray-500">
+          <div className="py-16 flex flex-col items-center gap-3 text-ink-subtle">
             <Users size={36} className="opacity-25" />
-            <p className="text-sm font-medium text-gray-400">No employees found</p>
+            <p className="text-sm font-medium text-ink-muted">No employees found</p>
             <p className="text-xs">Try adjusting your search or filters</p>
-            <button onClick={openAdd} className="mt-2 flex items-center gap-1.5 text-sm text-blue-400 hover:underline"><Plus size={14} /> Add the first employee</button>
+            <button onClick={openAdd} className="mt-2 flex items-center gap-1.5 text-sm text-info hover:underline"><Plus size={14} /> Add the first employee</button>
           </div>
         )}
         {!loading && filtered.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-xs text-gray-500 uppercase tracking-wide">
+                <tr className="border-b border-line text-xs text-ink-subtle uppercase tracking-wide">
                   <th className="px-5 py-3.5 text-left font-medium">Employee</th>
                   <th className="px-4 py-3.5 text-left font-medium">Department</th>
                   <th className="px-4 py-3.5 text-left font-medium">Role</th>
@@ -631,33 +631,33 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
                   <th className="px-4 py-3.5 text-right font-medium">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60">
+              <tbody className="divide-y divide-line/60">
                 <AnimatePresence>
                   {filtered.map((emp, i) => (
                     <motion.tr key={emp.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -20 }}
-                      transition={{ delay: i * 0.03 }} className="hover:bg-zinc-800/30 transition-colors group">
+                      transition={{ delay: i * 0.03 }} className="hover:bg-surface-3/30 transition-colors group">
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-3">
-                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold text-white flex-shrink-0 ${getAvatarColor(emp.id)}`}>{emp.avatar}</div>
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold text-ink flex-shrink-0 ${getAvatarColor(emp.id)}`}>{emp.avatar}</div>
                           <div>
-                            <p className="font-semibold text-white leading-tight">{emp.name}</p>
-                            <p className="text-[11px] text-gray-500 flex items-center gap-1 mt-0.5"><Mail size={9} /> {emp.email}</p>
+                            <p className="font-semibold text-ink leading-tight">{emp.name}</p>
+                            <p className="text-[11px] text-ink-subtle flex items-center gap-1 mt-0.5"><Mail size={9} /> {emp.email}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5"><span className="flex items-center gap-1.5 text-gray-300 text-xs"><Building2 size={12} className="text-gray-600" />{emp.department}</span></td>
+                      <td className="px-4 py-3.5"><span className="flex items-center gap-1.5 text-ink-soft text-xs"><Building2 size={12} className="text-ink-faint" />{emp.department}</span></td>
                       <td className="px-4 py-3.5"><button onClick={() => openPromote(emp)} title="Click to change role" className="hover:scale-105 transition-transform"><RoleBadge role={emp.role} /></button></td>
                       <td className="px-4 py-3.5"><StatusPill status={emp.status} /></td>
-                      <td className="px-4 py-3.5 text-xs text-gray-500 hidden lg:table-cell">{emp.joinedOn}</td>
+                      <td className="px-4 py-3.5 text-xs text-ink-subtle hidden lg:table-cell">{emp.joinedOn}</td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-1">
                           <button onClick={() => handleToggleStatus(emp)} title={emp.status === "Active" ? "Suspend" : "Reactivate"}
-                            className={`p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 ${emp.status === "Active" ? "hover:bg-amber-500/15 hover:text-amber-400 text-gray-500" : "hover:bg-emerald-500/15 hover:text-emerald-400 text-gray-500"}`}>
+                            className={`p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 ${emp.status === "Active" ? "hover:bg-warning/15 hover:text-warning text-ink-subtle" : "hover:bg-success/15 hover:text-success text-ink-subtle"}`}>
                             {emp.status === "Active" ? <UserX size={14} /> : <UserCheck size={14} />}
                           </button>
-                          <button onClick={() => openEdit(emp)} title="Edit" className="p-1.5 rounded-lg text-gray-500 hover:bg-blue-500/15 hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"><Edit2 size={14} /></button>
-                          <button onClick={() => openPromote(emp)} title="Change role" className="p-1.5 rounded-lg text-gray-500 hover:bg-purple-500/15 hover:text-purple-400 transition-all opacity-0 group-hover:opacity-100"><Shield size={14} /></button>
-                          <button onClick={() => handleDelete(emp)} title="Delete" className="p-1.5 rounded-lg text-gray-500 hover:bg-red-500/15 hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>
+                          <button onClick={() => openEdit(emp)} title="Edit" className="p-1.5 rounded-lg text-ink-subtle hover:bg-info/15 hover:text-info transition-all opacity-0 group-hover:opacity-100"><Edit2 size={14} /></button>
+                          <button onClick={() => openPromote(emp)} title="Change role" className="p-1.5 rounded-lg text-ink-subtle hover:bg-violet/15 hover:text-violet transition-all opacity-0 group-hover:opacity-100"><Shield size={14} /></button>
+                          <button onClick={() => handleDelete(emp)} title="Delete" className="p-1.5 rounded-lg text-ink-subtle hover:bg-danger/15 hover:text-danger transition-all opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>
                         </div>
                       </td>
                     </motion.tr>
@@ -671,14 +671,14 @@ const EmployeeDirectory = ({ departments }: { departments: string[] }) => {
 
       {/* RBAC Info */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-        className="flex items-start gap-3 bg-blue-950/30 border border-blue-500/20 rounded-2xl px-5 py-3">
-        <ShieldCheck size={15} className="text-blue-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-blue-300/80 leading-relaxed">
-          <span className="font-semibold text-blue-300">Role Assignment Policy:</span>{" "}
-          Employees self-register with the <span className="text-white font-medium">Employee</span> role only.
-          Only an <span className="text-purple-300 font-medium">Admin</span> can promote users to{" "}
-          <span className="text-amber-300 font-medium">Department Head</span> or{" "}
-          <span className="text-blue-300 font-medium">Asset Manager</span> here in the Employee Directory.
+        className="flex items-start gap-3 bg-info/8 border border-info/20 rounded-2xl px-5 py-3">
+        <ShieldCheck size={15} className="text-info flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-info/80 leading-relaxed">
+          <span className="font-semibold text-info">Role Assignment Policy:</span>{" "}
+          Employees self-register with the <span className="text-ink font-medium">Employee</span> role only.
+          Only an <span className="text-violet font-medium">Admin</span> can promote users to{" "}
+          <span className="text-warning font-medium">Department Head</span> or{" "}
+          <span className="text-info font-medium">Asset Manager</span> here in the Employee Directory.
           Click any role badge in the table to promote.
         </p>
       </motion.div>
@@ -837,16 +837,16 @@ export default function OrganizationSetup() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="bg-blue-600/20 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider border border-blue-500/20">Admin Only</span>
+            <span className="bg-info/20 text-info text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider border border-info/20">Admin Only</span>
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Organization Setup</h1>
-          <p className="text-sm text-gray-400 mt-1">Manage organizational structure and asset classifications.</p>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Organization Setup</h1>
+          <p className="text-sm text-ink-muted mt-1">Manage organizational structure and asset classifications.</p>
         </div>
         {activeTab !== "Employees" && (
         <motion.button
           whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
           onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
+          className="flex items-center gap-2 bg-info hover:bg-info text-white px-5 py-2.5 rounded-xl text-sm font-medium shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
         >
           <Plus size={18} />
           {activeTab === "Departments" ? "New Department" : "New Category"}
@@ -855,10 +855,10 @@ export default function OrganizationSetup() {
       </div>
 
       {/* Tabs */}
-      <div className="flex p-1 bg-[#161925] border border-zinc-800/80 rounded-xl w-full overflow-x-auto">
+      <div className="flex p-1 bg-surface-2 border border-line/80 rounded-xl w-full overflow-x-auto">
         {([{ id: "Departments" as TabName, icon: Building2, label: "Departments" }, { id: "Categories" as TabName, icon: Layers, label: "Asset Categories" }, { id: "Employees" as TabName, icon: Contact, label: "Employee Directory" }]).map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-1 flex items-center justify-center gap-2 whitespace-nowrap px-6 py-3 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id ? "bg-zinc-800 text-white shadow-sm" : "text-gray-400 hover:text-gray-200 hover:bg-zinc-800/50"}`}>
-            <tab.icon size={16} className={activeTab === tab.id ? "text-blue-400" : "text-gray-500"} />
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-1 flex items-center justify-center gap-2 whitespace-nowrap px-6 py-3 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id ? "bg-surface-3 text-ink shadow-sm" : "text-ink-muted hover:text-ink hover:bg-surface-3/50"}`}>
+            <tab.icon size={16} className={activeTab === tab.id ? "text-info" : "text-ink-subtle"} />
             {tab.label}
           </button>
         ))}
@@ -866,7 +866,7 @@ export default function OrganizationSetup() {
 
       {/* Error Banner */}
       {(error && isDept) || (errorCategories && !isDept) ? (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
           <AlertCircle size={20} />
           <p className="text-sm">{isDept ? error : errorCategories}</p>
         </div>
@@ -877,52 +877,52 @@ export default function OrganizationSetup() {
       {/* ========================================== */}
       {activeTab === "Departments" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-          <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-[#161925] border border-zinc-800/80 rounded-2xl p-4 shadow-xl">
+          <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-surface-2 border border-line/80 rounded-2xl p-4 shadow-xl">
             <div className="relative w-full md:w-96">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-              <input type="text" placeholder="Search departments or heads..." className="w-full bg-[#0f111a] border border-zinc-800 text-white text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" size={18} />
+              <input type="text" placeholder="Search departments or heads..." className="w-full bg-canvas border border-line text-ink text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
           </div>
 
-          <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl shadow-xl overflow-hidden">
+          <div className="bg-surface-2 border border-line/80 rounded-2xl shadow-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-[#161925]/50">
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Department Name</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Department Head</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Hierarchy</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Employees</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+                  <tr className="border-b border-line bg-surface-2/50">
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Department Name</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Department Head</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Hierarchy</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider text-center">Employees</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Status</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-line/50">
                   {isLoading && !error && Array.from({ length: 4 }).map((_, idx) => (
                     <tr key={`sk-${idx}`} className="animate-pulse">
-                      <td className="py-4 px-6"><div className="h-5 bg-zinc-800 rounded w-32" /></td>
-                      <td className="py-4 px-6"><div className="h-4 bg-zinc-800 rounded w-24" /></td>
-                      <td className="py-4 px-6"><div className="h-4 bg-zinc-800 rounded w-28" /></td>
-                      <td className="py-4 px-6"><div className="h-4 bg-zinc-800 rounded w-8 mx-auto" /></td>
-                      <td className="py-4 px-6"><div className="h-6 bg-zinc-800 rounded-full w-16" /></td>
-                      <td className="py-4 px-6 text-right"><div className="h-6 w-6 bg-zinc-800 rounded-lg ml-auto" /></td>
+                      <td className="py-4 px-6"><div className="h-5 bg-surface-3 rounded w-32" /></td>
+                      <td className="py-4 px-6"><div className="h-4 bg-surface-3 rounded w-24" /></td>
+                      <td className="py-4 px-6"><div className="h-4 bg-surface-3 rounded w-28" /></td>
+                      <td className="py-4 px-6"><div className="h-4 bg-surface-3 rounded w-8 mx-auto" /></td>
+                      <td className="py-4 px-6"><div className="h-6 bg-surface-3 rounded-full w-16" /></td>
+                      <td className="py-4 px-6 text-right"><div className="h-6 w-6 bg-surface-3 rounded-lg ml-auto" /></td>
                     </tr>
                   ))}
                   {!isLoading && !error && (
                     <AnimatePresence>
                       {filteredDepartments.map((dept) => (
-                        <motion.tr key={dept.id} variants={itemVariants} initial="hidden" animate="show" exit="hidden" layout className="hover:bg-zinc-800/30 transition-colors group">
-                          <td className="py-4 px-6"><p className="text-sm font-semibold text-gray-200 group-hover:text-blue-400 transition-colors">{dept.name}</p><p className="text-xs text-zinc-500 font-mono mt-0.5">{dept.id}</p></td>
-                          <td className="py-4 px-6">{dept.headEmail ? (<div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-blue-900 border border-blue-700 flex items-center justify-center text-xs font-bold text-blue-200">{dept.head.charAt(0)}</div><div><p className="text-sm font-medium text-gray-200">{dept.head}</p><p className="text-[10px] text-zinc-500">{dept.headEmail}</p></div></div>) : (<span className="text-sm text-gray-500 italic">Unassigned</span>)}</td>
-                          <td className="py-4 px-6">{dept.parent ? (<div className="flex items-center gap-2 text-sm text-gray-400"><Network size={14} className="text-zinc-500" />{dept.parent}</div>) : (<span className="text-sm text-gray-600">- Top Level -</span>)}</td>
-                          <td className="py-4 px-6 text-center"><div className="inline-flex items-center gap-1.5 bg-[#0f111a] border border-zinc-800 px-3 py-1 rounded-lg text-sm text-gray-300"><Users size={14} className="text-zinc-500" />{dept.employeeCount}</div></td>
+                        <motion.tr key={dept.id} variants={itemVariants} initial="hidden" animate="show" exit="hidden" layout className="hover:bg-surface-3/30 transition-colors group">
+                          <td className="py-4 px-6"><p className="text-sm font-semibold text-ink group-hover:text-info transition-colors">{dept.name}</p><p className="text-xs text-ink-subtle font-mono mt-0.5">{dept.id}</p></td>
+                          <td className="py-4 px-6">{dept.headEmail ? (<div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-info/25 border border-info flex items-center justify-center text-xs font-bold text-info">{dept.head.charAt(0)}</div><div><p className="text-sm font-medium text-ink">{dept.head}</p><p className="text-[10px] text-ink-subtle">{dept.headEmail}</p></div></div>) : (<span className="text-sm text-ink-subtle italic">Unassigned</span>)}</td>
+                          <td className="py-4 px-6">{dept.parent ? (<div className="flex items-center gap-2 text-sm text-ink-muted"><Network size={14} className="text-ink-subtle" />{dept.parent}</div>) : (<span className="text-sm text-ink-faint">- Top Level -</span>)}</td>
+                          <td className="py-4 px-6 text-center"><div className="inline-flex items-center gap-1.5 bg-canvas border border-line px-3 py-1 rounded-lg text-sm text-ink-soft"><Users size={14} className="text-ink-subtle" />{dept.employeeCount}</div></td>
                           <td className="py-4 px-6">
-                            <button onClick={() => handleToggleStatus(dept)} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors ${dept.status === "Active" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700"}`}>{dept.status === "Active" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{dept.status}</button>
+                            <button onClick={() => handleToggleStatus(dept)} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors ${dept.status === "Active" ? "bg-success/10 text-success border-success/20 hover:bg-success/20" : "bg-surface-3 text-ink-muted border-line hover:bg-surface-3"}`}>{dept.status === "Active" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{dept.status}</button>
                           </td>
                           <td className="py-4 px-6 text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => handleOpenModal(dept)} className="text-gray-500 hover:text-blue-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" title="Edit"><Edit2 size={16} /></button>
-                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="More actions" disabled>
+                              <button onClick={() => handleOpenModal(dept)} className="text-ink-subtle hover:text-info p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Edit"><Edit2 size={16} /></button>
+                              <button className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors" aria-label="More actions" disabled>
                               <MoreVertical size={18} /></button>
                             </div>
                           </td>
@@ -942,54 +942,54 @@ export default function OrganizationSetup() {
       {/* ========================================== */}
       {activeTab === "Categories" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-          <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-[#161925] border border-zinc-800/80 rounded-2xl p-4 shadow-xl">
+          <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-surface-2 border border-line/80 rounded-2xl p-4 shadow-xl">
             <div className="relative w-full md:w-96">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-              <input type="text" placeholder="Search categories..." className="w-full bg-[#0f111a] border border-zinc-800 text-white text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" value={searchTermCategories} onChange={(e) => setSearchTermCategories(e.target.value)} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle" size={18} />
+              <input type="text" placeholder="Search categories..." className="w-full bg-canvas border border-line text-ink text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" value={searchTermCategories} onChange={(e) => setSearchTermCategories(e.target.value)} />
             </div>
           </div>
 
-          <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl shadow-xl overflow-hidden">
+          <div className="bg-surface-2 border border-line/80 rounded-2xl shadow-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-[#161925]/50">
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Category Details</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider w-1/3">Custom Fields</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Total Assets</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                    <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Actions</th>
+                  <tr className="border-b border-line bg-surface-2/50">
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Category Details</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider w-1/3">Custom Fields</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider text-center">Total Assets</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">Status</th>
+                    <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-800/50">
+                <tbody className="divide-y divide-line/50">
                   {isLoadingCategories && !errorCategories && Array.from({ length: 4 }).map((_, idx) => (
                     <tr key={`csk-${idx}`} className="animate-pulse">
-                      <td className="py-4 px-6"><div className="h-5 bg-zinc-800 rounded w-32 mb-2" /><div className="h-3 bg-zinc-800 rounded w-48" /></td>
-                      <td className="py-4 px-6 flex gap-2"><div className="h-6 w-20 bg-zinc-800 rounded-full" /><div className="h-6 w-24 bg-zinc-800 rounded-full" /></td>
-                      <td className="py-4 px-6"><div className="h-4 bg-zinc-800 rounded w-8 mx-auto" /></td>
-                      <td className="py-4 px-6"><div className="h-6 bg-zinc-800 rounded-full w-16" /></td>
-                      <td className="py-4 px-6 text-right"><div className="h-6 w-6 bg-zinc-800 rounded-lg ml-auto" /></td>
+                      <td className="py-4 px-6"><div className="h-5 bg-surface-3 rounded w-32 mb-2" /><div className="h-3 bg-surface-3 rounded w-48" /></td>
+                      <td className="py-4 px-6 flex gap-2"><div className="h-6 w-20 bg-surface-3 rounded-full" /><div className="h-6 w-24 bg-surface-3 rounded-full" /></td>
+                      <td className="py-4 px-6"><div className="h-4 bg-surface-3 rounded w-8 mx-auto" /></td>
+                      <td className="py-4 px-6"><div className="h-6 bg-surface-3 rounded-full w-16" /></td>
+                      <td className="py-4 px-6 text-right"><div className="h-6 w-6 bg-surface-3 rounded-lg ml-auto" /></td>
                     </tr>
                   ))}
                   {!isLoadingCategories && !errorCategories && (
                     <AnimatePresence>
                       {filteredCategories.map((cat) => (
-                        <motion.tr key={cat.id} variants={itemVariants} initial="hidden" animate="show" exit="hidden" layout className="hover:bg-zinc-800/30 transition-colors group">
+                        <motion.tr key={cat.id} variants={itemVariants} initial="hidden" animate="show" exit="hidden" layout className="hover:bg-surface-3/30 transition-colors group">
                           <td className="py-4 px-6">
                             <div className="flex items-start gap-3">
-                              <div className="mt-1 p-2 bg-zinc-800/50 rounded-lg text-gray-400 group-hover:text-blue-400 group-hover:bg-blue-500/10 transition-colors"><Layers size={18} /></div>
-                              <div><p className="text-sm font-semibold text-gray-200 group-hover:text-blue-400 transition-colors">{cat.name}</p><p className="text-xs text-zinc-500 mt-1 max-w-xs leading-relaxed">{cat.description}</p><p className="text-[10px] text-zinc-600 font-mono mt-1">{cat.id}</p></div>
+                              <div className="mt-1 p-2 bg-surface-3/50 rounded-lg text-ink-muted group-hover:text-info group-hover:bg-info/10 transition-colors"><Layers size={18} /></div>
+                              <div><p className="text-sm font-semibold text-ink group-hover:text-info transition-colors">{cat.name}</p><p className="text-xs text-ink-subtle mt-1 max-w-xs leading-relaxed">{cat.description}</p><p className="text-[10px] text-ink-faint font-mono mt-1">{cat.id}</p></div>
                             </div>
                           </td>
-                          <td className="py-4 px-6">{cat.customFields?.length > 0 ? (<div className="flex flex-wrap gap-2">{cat.customFields.map((f, i) => (<span key={i} className="inline-flex items-center gap-1 bg-[#0f111a] border border-zinc-700 px-2.5 py-1 rounded-md text-[11px] text-gray-300"><Tag size={10} className="text-zinc-500" />{f}</span>))}</div>) : (<span className="text-xs text-zinc-600 italic">No custom fields</span>)}</td>
-                          <td className="py-4 px-6 text-center"><div className="inline-flex items-center gap-1.5 bg-[#0f111a] border border-zinc-800 px-3 py-1 rounded-lg text-sm text-gray-300"><Box size={14} className="text-zinc-500" />{cat.assetCount}</div></td>
+                          <td className="py-4 px-6">{cat.customFields?.length > 0 ? (<div className="flex flex-wrap gap-2">{cat.customFields.map((f, i) => (<span key={i} className="inline-flex items-center gap-1 bg-canvas border border-line px-2.5 py-1 rounded-md text-[11px] text-ink-soft"><Tag size={10} className="text-ink-subtle" />{f}</span>))}</div>) : (<span className="text-xs text-ink-faint italic">No custom fields</span>)}</td>
+                          <td className="py-4 px-6 text-center"><div className="inline-flex items-center gap-1.5 bg-canvas border border-line px-3 py-1 rounded-lg text-sm text-ink-soft"><Box size={14} className="text-ink-subtle" />{cat.assetCount}</div></td>
                           <td className="py-4 px-6">
-                            <button onClick={() => handleToggleStatus(cat)} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors ${cat.status === "Active" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20" : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700"}`}>{cat.status === "Active" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{cat.status}</button>
+                            <button onClick={() => handleToggleStatus(cat)} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer transition-colors ${cat.status === "Active" ? "bg-success/10 text-success border-success/20 hover:bg-success/20" : "bg-surface-3 text-ink-muted border-line hover:bg-surface-3"}`}>{cat.status === "Active" ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{cat.status}</button>
                           </td>
                           <td className="py-4 px-6 text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => handleOpenModal(cat)} className="text-gray-500 hover:text-blue-400 p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" title="Edit"><Edit2 size={16} /></button>
-                              <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" title="Configure"><Settings2 size={18} /></button>
+                              <button onClick={() => handleOpenModal(cat)} className="text-ink-subtle hover:text-info p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Edit"><Edit2 size={16} /></button>
+                              <button className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Configure"><Settings2 size={18} /></button>
                             </div>
                           </td>
                         </motion.tr>
@@ -1016,32 +1016,32 @@ export default function OrganizationSetup() {
       <AnimatePresence>
         {isModalOpen && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => !isSaving && setIsModalOpen(false)}>
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} transition={{ type: "spring" as const, stiffness: 300, damping: 24 }} className="bg-[#161925] border border-zinc-800 p-6 rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} transition={{ type: "spring" as const, stiffness: 300, damping: 24 }} className="bg-surface-2 border border-line p-6 rounded-2xl w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-lg font-bold text-white">{editingItem ? "Edit" : "Create"} {isDept ? "Department" : "Category"}</h2>
-                <button onClick={() => !isSaving && setIsModalOpen(false)} className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18} /></button>
+                <h2 className="text-lg font-bold text-ink">{editingItem ? "Edit" : "Create"} {isDept ? "Department" : "Category"}</h2>
+                <button onClick={() => !isSaving && setIsModalOpen(false)} className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors"><X size={18} /></button>
               </div>
 
               <div className="space-y-4">
                 {/* Name */}
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{isDept ? "Department Name" : "Category Name"}</label>
-                  <input className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" placeholder={isDept ? "e.g. Engineering" : "e.g. Electronics"} value={isDept ? deptForm.name : catForm.name} onChange={(e) => isDept ? setDeptForm({ ...deptForm, name: e.target.value }) : setCatForm({ ...catForm, name: e.target.value })} />
+                  <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">{isDept ? "Department Name" : "Category Name"}</label>
+                  <input className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" placeholder={isDept ? "e.g. Engineering" : "e.g. Electronics"} value={isDept ? deptForm.name : catForm.name} onChange={(e) => isDept ? setDeptForm({ ...deptForm, name: e.target.value }) : setCatForm({ ...catForm, name: e.target.value })} />
                 </div>
 
                 {/* Department-specific: Head */}
                 {isDept && (
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Department Head</label>
-                    <input className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" placeholder="e.g. John Doe" value={deptForm.head} onChange={(e) => setDeptForm({ ...deptForm, head: e.target.value })} />
+                    <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">Department Head</label>
+                    <input className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" placeholder="e.g. John Doe" value={deptForm.head} onChange={(e) => setDeptForm({ ...deptForm, head: e.target.value })} />
                   </div>
                 )}
 
                 {/* Department-specific: Parent */}
                 {isDept && (
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Parent Department</label>
-                    <select className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" value={deptForm.parent} onChange={(e) => setDeptForm({ ...deptForm, parent: e.target.value })}>
+                    <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">Parent Department</label>
+                    <select className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all" value={deptForm.parent} onChange={(e) => setDeptForm({ ...deptForm, parent: e.target.value })}>
                       <option value="">No Parent (Top Level)</option>
                       {departments.filter((d) => d.id !== editingItem?.id).map((d) => (<option key={d.id} value={d.name}>{d.name}</option>))}
                     </select>
@@ -1051,23 +1051,23 @@ export default function OrganizationSetup() {
                 {/* Category-specific: Description */}
                 {!isDept && (
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Description</label>
-                    <input className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" placeholder="Brief description..." value={catForm.description} onChange={(e) => setCatForm({ ...catForm, description: e.target.value })} />
+                    <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">Description</label>
+                    <input className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" placeholder="Brief description..." value={catForm.description} onChange={(e) => setCatForm({ ...catForm, description: e.target.value })} />
                   </div>
                 )}
 
                 {/* Category-specific: Custom Fields */}
                 {!isDept && (
                   <div>
-                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Custom Fields (comma-separated)</label>
-                    <input className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600" placeholder="e.g. Warranty, Serial No, Condition" value={catForm.customFields} onChange={(e) => setCatForm({ ...catForm, customFields: e.target.value })} />
+                    <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">Custom Fields (comma-separated)</label>
+                    <input className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint" placeholder="e.g. Warranty, Serial No, Condition" value={catForm.customFields} onChange={(e) => setCatForm({ ...catForm, customFields: e.target.value })} />
                   </div>
                 )}
 
                 {/* Status */}
                 <div>
-                  <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Status</label>
-                  <select className="w-full bg-[#0f111a] border border-zinc-700 text-white text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" value={isDept ? deptForm.status : catForm.status} onChange={(e) => isDept ? setDeptForm({ ...deptForm, status: e.target.value }) : setCatForm({ ...catForm, status: e.target.value })}>
+                  <label className="block text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">Status</label>
+                  <select className="w-full bg-canvas border border-line text-ink text-sm p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-info/50 transition-all" value={isDept ? deptForm.status : catForm.status} onChange={(e) => isDept ? setDeptForm({ ...deptForm, status: e.target.value }) : setCatForm({ ...catForm, status: e.target.value })}>
                     <option value="Active">Active</option>
                     <option value="Inactive">Inactive</option>
                   </select>
@@ -1078,7 +1078,7 @@ export default function OrganizationSetup() {
                   whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
                   onClick={handleSave}
                   disabled={isSaving || (isDept ? !deptForm.name.trim() : !catForm.name.trim())}
-                  className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isSaving || (isDept ? !deptForm.name.trim() : !catForm.name.trim()) ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]"}`}
+                  className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${isSaving || (isDept ? !deptForm.name.trim() : !catForm.name.trim()) ? "bg-surface-3 text-ink-subtle cursor-not-allowed" : "bg-info hover:bg-info text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]"}`}
                 >
                   {isSaving && <Loader2 size={16} className="animate-spin" />}
                   {isSaving ? "Saving..." : editingItem ? "Save Changes" : `Create ${isDept ? "Department" : "Category"}`}
