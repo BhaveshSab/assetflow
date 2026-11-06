@@ -10,7 +10,7 @@ Vercel) and talking to the NestJS API under `/api`.
 | **Tests** | 67 Vitest tests in 9 files (unit + component, jsdom) |
 | **Lint** | ESLint 9 · `react-hooks` · `react-refresh` · `typescript-eslint` |
 | **First load** | **143 kB gzipped** (React 49, Motion 41, vendor 28, app 8, icons 7, CSS 9); the **96 kB gzipped** Recharts chunk is fetched only when a chart is drawn |
-| **Screens** | 10 navigation screens + 3 role dashboards (admin / manager / employee) = 12 lazily-loaded views + 2 auth routes |
+| **Screens** | 12 lazily-loaded views — 9 navigation screens + 3 role dashboards (admin / manager / employee) — reached from 10 sidebar entries, plus 2 auth routes |
 | **Theme** | light and dark, from CSS variables; the choice is remembered and follows the OS until it is made |
 
 ---
