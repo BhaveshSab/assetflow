@@ -41,10 +41,10 @@ const itemVariants = {
 };
 
 const statusStyles: Record<string, string> = {
-  Available: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  Allocated: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  "Under Maintenance": "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  Lost: "bg-red-500/10 text-red-400 border-red-500/20",
+  Available: "bg-success/10 text-success border-success/20",
+  Allocated: "bg-info/10 text-info border-info/20",
+  "Under Maintenance": "bg-warning/10 text-warning border-warning/20",
+  Lost: "bg-danger/10 text-danger border-danger/20",
 };
 
 // Helper to map backend category strings to icons
@@ -121,17 +121,17 @@ export default function AssetDirectory() {
       <AnimatePresence>
         {toast && (
           <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
-            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-red-950 border-red-500/40 text-red-300" : "bg-emerald-950 border-emerald-500/40 text-emerald-300"}`}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-danger/25 border-danger/40 text-danger" : "bg-success/25 border-success/40 text-success"}`}
           >{toast.type === "error" ? <X size={14} className="inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}{toast.msg}</motion.div>
         )}
       </AnimatePresence>
       {/* --- Page Header --- */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">
+          <h1 className="text-2xl font-bold text-ink tracking-tight">
             Asset Directory
           </h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-ink-muted mt-1">
             Manage and track all organizational assets
           </p>
         </div>
@@ -139,7 +139,7 @@ export default function AssetDirectory() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => setShowRegister(true)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-blue-900/20 transition-colors"
+          className="flex items-center gap-2 bg-info hover:bg-info text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-blue-900/20 transition-colors"
         >
           <Plus size={16} />
           Register New Asset
@@ -147,30 +147,30 @@ export default function AssetDirectory() {
       </div>
 
       {/* --- Toolbar --- */}
-      <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row gap-4 justify-between items-center relative overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="bg-surface-2 border border-line/80 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row gap-4 justify-between items-center relative overflow-hidden">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-info/5 rounded-full blur-3xl pointer-events-none"></div>
 
         <div className="relative w-full md:w-96">
           <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-subtle"
             size={18}
           />
           <input
             type="text"
             placeholder="Search by Asset Tag, Name, or Category..."
-            className="w-full bg-[#0f111a] border border-zinc-800 text-white text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-zinc-600"
+            className="w-full bg-canvas border border-line text-ink text-sm rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-info/50 transition-all placeholder:text-ink-faint"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
 
         <div className="flex w-full md:w-auto gap-3">
-          <button className="flex items-center gap-2 bg-[#0f111a] border border-zinc-800 hover:border-zinc-700 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
-            <Filter size={16} className="text-gray-400" />
+          <button className="flex items-center gap-2 bg-canvas border border-line hover:border-line text-ink-soft px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
+            <Filter size={16} className="text-ink-muted" />
             Category
           </button>
-          <button className="flex items-center gap-2 bg-[#0f111a] border border-zinc-800 hover:border-zinc-700 text-gray-300 px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
-            <Filter size={16} className="text-gray-400" />
+          <button className="flex items-center gap-2 bg-canvas border border-line hover:border-line text-ink-soft px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
+            <Filter size={16} className="text-ink-muted" />
             Status
           </button>
         </div>
@@ -178,12 +178,12 @@ export default function AssetDirectory() {
 
       {/* --- Error State --- */}
       {error && (
-        <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-4 text-red-400">
+        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="ml-auto underline text-sm hover:text-red-300"
+            className="ml-auto underline text-sm hover:text-danger"
           >
             Retry Fetch
           </button>
@@ -191,30 +191,30 @@ export default function AssetDirectory() {
       )}
 
       {/* --- Data Table --- */}
-      <div className="bg-[#161925] border border-zinc-800/80 rounded-2xl shadow-xl overflow-hidden">
+      <div className="bg-surface-2 border border-line/80 rounded-2xl shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-zinc-800 bg-[#161925]/50">
-                <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+              <tr className="border-b border-line bg-surface-2/50">
+                <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">
                   Asset Info
                 </th>
-                <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">
                   Category
                 </th>
-                <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">
                   Location
                 </th>
-                <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider">
                   Status
                 </th>
-                <th className="py-4 px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">
+                <th className="py-4 px-6 text-xs font-semibold text-ink-muted uppercase tracking-wider text-right">
                   Actions
                 </th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-zinc-800/50">
+            <tbody className="divide-y divide-line/50">
               {/* --- Skeleton Loading State --- */}
               {isLoading &&
                 !error &&
@@ -222,24 +222,24 @@ export default function AssetDirectory() {
                   <tr key={`skeleton-${idx}`} className="animate-pulse">
                     <td className="py-4 px-6">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-zinc-800 rounded-lg"></div>
+                        <div className="w-10 h-10 bg-surface-3 rounded-lg"></div>
                         <div className="space-y-2">
-                          <div className="h-4 bg-zinc-800 rounded w-32"></div>
-                          <div className="h-3 bg-zinc-800 rounded w-20"></div>
+                          <div className="h-4 bg-surface-3 rounded w-32"></div>
+                          <div className="h-3 bg-surface-3 rounded w-20"></div>
                         </div>
                       </div>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="h-4 bg-zinc-800 rounded w-24"></div>
+                      <div className="h-4 bg-surface-3 rounded w-24"></div>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="h-4 bg-zinc-800 rounded w-28"></div>
+                      <div className="h-4 bg-surface-3 rounded w-28"></div>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="h-6 bg-zinc-800 rounded-full w-20"></div>
+                      <div className="h-6 bg-surface-3 rounded-full w-20"></div>
                     </td>
                     <td className="py-4 px-6 text-right">
-                      <div className="h-6 w-6 bg-zinc-800 rounded-lg ml-auto"></div>
+                      <div className="h-6 w-6 bg-surface-3 rounded-lg ml-auto"></div>
                     </td>
                   </tr>
                 ))}
@@ -251,7 +251,7 @@ export default function AssetDirectory() {
                 variants={containerVariants}
                 initial="hidden"
                 animate="show"
-                className="divide-y divide-zinc-800/50"
+                className="divide-y divide-line/50"
               >
                 <AnimatePresence>
                   {filteredAssets.length === 0 ? (
@@ -259,7 +259,7 @@ export default function AssetDirectory() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                     >
-                      <td colSpan={5} className="py-12 text-center text-gray-500">
+                      <td colSpan={5} className="py-12 text-center text-ink-subtle">
                         <Box size={40} className="mx-auto mb-3 opacity-20" />
                         No assets found. Try adjusting your search.
                       </td>
@@ -270,30 +270,30 @@ export default function AssetDirectory() {
                         key={asset.id || asset.assetTag}
                         variants={itemVariants}
                         layout
-                        className="hover:bg-zinc-800/30 transition-colors group"
+                        className="hover:bg-surface-3/30 transition-colors group"
                       >
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-3">
-                            <div className="p-2 bg-zinc-800/50 rounded-lg text-gray-400 group-hover:text-blue-400 group-hover:bg-blue-500/10 transition-colors">
+                            <div className="p-2 bg-surface-3/50 rounded-lg text-ink-muted group-hover:text-info group-hover:bg-info/10 transition-colors">
                               {getCategoryIcon(asset.category)}
                             </div>
                             <div>
-                              <p className="text-sm font-semibold text-gray-200">
+                              <p className="text-sm font-semibold text-ink">
                                 {asset.name}
                               </p>
-                              <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                              <p className="text-xs text-ink-subtle font-mono mt-0.5">
                                 {asset.assetTag}
                               </p>
                             </div>
                           </div>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-400">
+                          <span className="text-sm text-ink-muted">
                             {asset.category}
                           </span>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-400">
+                          <span className="text-sm text-ink-muted">
                             {asset.location || "Unassigned"}
                           </span>
                         </td>
@@ -301,7 +301,7 @@ export default function AssetDirectory() {
                           <span
                             className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${
                               statusStyles[asset.status] ||
-                              "bg-gray-500/10 text-gray-400 border-gray-500/20"
+                              "bg-ink-subtle/10 text-ink-muted border-line-strong/20"
                             }`}
                           >
                             {asset.status || "Unknown"}
@@ -319,12 +319,12 @@ export default function AssetDirectory() {
                                   } as ModalAsset);
                                   setShowAllocate(true);
                                 }}
-                                className="px-2.5 py-1 text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/30 transition-colors"
+                                className="px-2.5 py-1 text-xs bg-info/20 text-info border border-info/30 rounded-lg hover:bg-info/30 transition-colors"
                               >
                                 Allocate
                               </button>
                             )}
-                            <button className="text-gray-500 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors" aria-label="More actions" disabled>
+                            <button className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors" aria-label="More actions" disabled>
                               <MoreVertical size={18} />
                             </button>
                           </div>

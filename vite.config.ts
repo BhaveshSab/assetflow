@@ -26,11 +26,52 @@ export default defineConfig({
      */
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          charts: ["recharts"],
-          motion: ["framer-motion"],
-          icons: ["lucide-react"],
+        /*
+         * Chunks are assigned by path, not by package name.
+         *
+         * The package form (`charts: ["recharts"]`) looks precise but is not:
+         * Rollup put recharts' *dependencies* — `clsx`, which the shell's
+         * `cn()` helper needs — into the charts chunk too. The entry then had
+         * a static import of the charts chunk, so Vite emitted
+         * `<link rel="modulepreload">` for all 412 kB of Recharts and the
+         * "charts load on demand" claim was quietly false: they loaded on
+         * every first paint. Assigning by module path keeps the charting
+         * library in a file that only a lazily-imported view asks for.
+         */
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("recharts") ||
+            id.includes("d3-") ||
+            id.includes("victory-vendor") ||
+            id.includes("react-smooth") ||
+            id.includes("decimal.js-light")
+          ) {
+            return "charts";
+          }
+          /*
+           * Radix is only reachable from the lazily-loaded views (the dialog
+           * and the switch), so it gets its own file: whatever sits in the
+           * shared `vendor` chunk is downloaded with the sign-in page, and
+           * the sign-in page has no dialog on it.
+           */
+          if (id.includes("@radix-ui")) return "ui";
+          // Framer Motion 12 ships its engine in `motion-dom`/`motion-utils`;
+          // matching only the package name leaves ~90 kB of it in `vendor`.
+          if (
+            id.includes("framer-motion") ||
+            id.includes("motion-dom") ||
+            id.includes("motion-utils")
+          ) {
+            return "motion";
+          }
+          if (id.includes("lucide-react")) return "icons";
+          if (
+            /node_modules\/(react|react-dom|react-router|react-router-dom|scheduler)\//.test(id)
+          ) {
+            return "react";
+          }
+          return "vendor";
         },
       },
     },

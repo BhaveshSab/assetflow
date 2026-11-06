@@ -36,7 +36,7 @@ export default function DashboardLayout({
   sidebarProps,
 }: DashboardLayoutProps) {
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-950">
+    <div className="flex h-screen overflow-hidden bg-canvas">
       {/*
         The skip link: the first thing in the tab order. Without it a keyboard
         user has to tab through the whole navigation on every page load
@@ -44,7 +44,7 @@ export default function DashboardLayout({
       */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-[400] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-zinc-900"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-[400] focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink"
       >
         Skip to the main content
       </a>

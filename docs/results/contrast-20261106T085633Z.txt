@@ -1,0 +1,57 @@
+AssetFlow — theme contrast audit (both themes)
+Captured: 2026-11-06T08:56:33Z (UTC)
+
+WHY
+  docs/ACCESSIBILITY.md claims WCAG 2.1 AA contrast. That is arithmetic, not
+  an opinion: the tokens are parsed out of src/index.css and measured here.
+
+COMMAND
+  python3 scripts/contrast-audit.py
+
+READING IT
+  4.5:1 = AA for normal text; 3.0:1 = AA for large text and for the boundary
+  of a form control (WCAG 1.4.11). Both themes are checked against both the
+  page background (canvas) and a card (surface).
+
+--------------------------------------------------------------
+
+AssetFlow — theme contrast audit
+source: src/index.css
+
+--- light ---
+  ink          on surface      17.90:1  min 4.5  PASS
+  ink          on canvas       16.51:1  min 4.5  PASS
+  ink-soft     on surface      10.21:1  min 4.5  PASS
+  ink-muted    on surface       5.92:1  min 4.5  PASS
+  ink-subtle   on surface       5.45:1  min 4.5  PASS
+  ink-subtle   on canvas        5.02:1  min 4.5  PASS
+  ink-faint    on surface       4.89:1  min 4.5  PASS
+  ink-faint    on canvas        4.51:1  min 4.5  PASS
+  success      on surface       5.07:1  min 4.5  PASS
+  warning      on surface       4.97:1  min 4.5  PASS
+  info         on surface       7.10:1  min 4.5  PASS
+  danger       on surface       6.24:1  min 4.5  PASS
+  violet       on surface       8.36:1  min 4.5  PASS
+  primary      on surface       5.20:1  min 4.5  PASS
+  input        on surface       3.81:1  min 3.0  PASS
+  input        on canvas        3.51:1  min 3.0  PASS
+
+--- dark ---
+  ink          on surface      15.89:1  min 4.5  PASS
+  ink          on canvas       17.93:1  min 4.5  PASS
+  ink-soft     on surface      11.36:1  min 4.5  PASS
+  ink-muted    on surface       6.54:1  min 4.5  PASS
+  ink-subtle   on surface       5.25:1  min 4.5  PASS
+  ink-subtle   on canvas        5.92:1  min 4.5  PASS
+  ink-faint    on surface       4.57:1  min 4.5  PASS
+  ink-faint    on canvas        5.15:1  min 4.5  PASS
+  success      on surface       8.26:1  min 4.5  PASS
+  warning      on surface       8.40:1  min 4.5  PASS
+  info         on surface       6.62:1  min 4.5  PASS
+  danger       on surface       5.06:1  min 4.5  PASS
+  violet       on surface       5.57:1  min 4.5  PASS
+  primary      on surface       4.60:1  min 4.5  PASS
+  input        on surface       3.47:1  min 3.0  PASS
+  input        on canvas        3.91:1  min 3.0  PASS
+
+All 32 pairs meet their minimum.

@@ -32,7 +32,7 @@ Section 508 is satisfied by WCAG 2.0 AA conformance, which is a subset of the
 | **1.1.1 Non-text content** | Every icon is `aria-hidden` when it sits next to a text label; every icon-only button has a name (`aria-label`). The avatar is a `div` with the initials hidden from the screen reader and the full name given as text. | `src/components/dashboard/TopHeader.tsx`, `Sidebar.tsx`, the close buttons in `src/components/ui/dialog.tsx` |
 | **1.3.1 Info and relationships** | Form controls have a real `<label for>`; the tables use `<th scope>`; the page has `header` / `nav` / `main` landmarks; the navigation is a `nav` with a name. | `src/components/ui/field.tsx`, `DashboardLayout.tsx`, `Sidebar.tsx` |
 | **1.3.2 Meaningful sequence** | The DOM order is the visual order; the sidebar comes before the content in the tab order and the skip link jumps over it. | `DashboardLayout.tsx` |
-| **1.4.3 Contrast (minimum)** | Text in the dashboard is `zinc-300`/`zinc-400` on `#0f111a`–`#1a1d2e` (≥ 7:1 for the body text, ≥ 4.5:1 for the secondary text). Status colours are always paired with a word, never colour alone. | `src/index.css`, the status badges |
+| **1.4.3 Contrast (minimum)** | Text is drawn from five ink tokens, and **every text pair meets 4.5:1 in both themes** — measured, not eyeballed: 16.5–17.9:1 for body text, 5.0–5.9:1 for the quietest (`ink-subtle`), 4.5–4.9:1 for `ink-faint`. The six status colours measure 4.6–8.4:1. Status colours are always paired with a word, never colour alone. | `src/index.css` (the `:root` / `.dark` token blocks), `scripts/contrast-audit.py`, [`results/contrast-*.txt`](./results) |
 | **1.4.10 Reflow** | Layouts are single-column up to 640 px, the tables scroll horizontally inside their card instead of pushing the page, and no content needs a horizontal scroll of the page itself. | the `sm:` / `md:` / `lg:` breakpoints |
 | **1.4.4 Resize text** | Sizes are in `rem`/`em` through Tailwind, so a 200% browser zoom reflows instead of clipping. Fields are 16 px on a phone so iOS does not zoom the page. | `src/index.css` |
 
@@ -40,7 +40,7 @@ Section 508 is satisfied by WCAG 2.0 AA conformance, which is a subset of the
 
 | Criterion | What the app does | Where |
 |---|---|---|
-| **2.1.1 Keyboard** | Every action is reachable and operable from the keyboard: the dialogs trap the focus, the combobox has arrow keys / Home / End / Enter / Escape, the drawer opens with the menu button and closes with Escape. | `src/components/ui/dialog.tsx`, `search-dropdown.tsx` |
+| **2.1.1 Keyboard** | Every action is reachable and operable from the keyboard: the dialogs trap the focus, the combobox has arrow keys / Home / End / Enter / Escape, the drawer opens with the menu button and closes with Escape, and the light/dark switch is a real `<button>` that Tab reaches and Enter or Space flips. | `src/components/ui/dialog.tsx`, `search-dropdown.tsx`, `theme-toggle.tsx` |
 | **2.1.2 No keyboard trap** | The focus cannot leave a dialog while it is open (that is intended) and Escape always closes it — so the trap is escapable. | `dialog.tsx` (8 tests) |
 | **2.4.1 Bypass blocks** | A skip link is the first element in the tab order and moves the focus to `<main id="main-content" tabindex="-1">`. | `DashboardLayout.tsx` |
 | **2.4.3 Focus order** | The focus moves into a dialog when it opens, cycles inside it, and **returns to the element that opened it** when it closes. | `dialog.tsx`, proven in `dialog.spec.tsx` |
@@ -60,7 +60,7 @@ Section 508 is satisfied by WCAG 2.0 AA conformance, which is a subset of the
 
 | Criterion | What the app does | Where |
 |---|---|---|
-| **4.1.2 Name, Role, Value** | Dialogs are `role="dialog"` + `aria-modal="true"` + a name; the combobox is `role="combobox"` with `aria-expanded` / `aria-controls` / `aria-activedescendant`; its list is `role="listbox"` of `role="option"` with `aria-selected`. | `dialog.tsx`, `search-dropdown.tsx` |
+| **4.1.2 Name, Role, Value** | Dialogs are `role="dialog"` + `aria-modal="true"` + a name; the combobox is `role="combobox"` with `aria-expanded` / `aria-controls` / `aria-activedescendant`; its list is `role="listbox"` of `role="option"` with `aria-selected`; the theme switch is a button with `aria-pressed` whose name states the action ("Switch to dark theme") rather than the current colour. | `dialog.tsx`, `search-dropdown.tsx`, `theme-toggle.tsx` |
 | **4.1.3 Status messages** | Errors and the "N results" of a search are `role="alert"` / `role="status"` + `aria-live`, so they are announced without stealing the focus. | 12 error banners + the combobox |
 
 ### 2.5 Other things that make it usable
@@ -103,10 +103,39 @@ Section 508 is satisfied by WCAG 2.0 AA conformance, which is a subset of the
 |---|---|---|
 | **No axe / Lighthouse a11y audit recorded** | A rule-based scan finds what a person misses (a contrast pair, a duplicate id, a missing `scope`). | `@axe-core/playwright` on the four main routes, in CI. |
 | **No screen-reader session on record** | Attributes can be right while the experience is still confusing. | One NVDA + Firefox and one VoiceOver + Safari pass, recorded as a checklist in this file. |
-| **The 24 charts are not described** | A chart is a picture; a screen-reader user gets nothing from a `<svg>`. | `role="img"` with an `aria-label` summarising the series, plus the same numbers in a `<table>` behind a "View as table" toggle. |
+| **The 8 charts are not described** | A chart is a picture; a screen-reader user gets nothing from a `<svg>`. | `role="img"` with an `aria-label` summarising the series, plus the same numbers in a `<table>` behind a "View as table" toggle. |
 | **The toasts disappear after 3 s** | Someone reading slowly, or using a screen reader, may miss it. | `role="status"` (already) + a "dismiss" button and a longer timeout. |
-| **16 `react-hooks/set-state-in-effect` warnings** | Each view sets `loading` and fetches in an effect. It works, but React's newer guidance prefers a data library. | Move the fetches to TanStack Query (or `useSyncExternalStore`) — a refactor of the 13 data views, tracked in `docs/DECISIONS.md`. |
-| **Colour contrast is by token, not by measurement** | The palette was chosen to pass; it has not been measured element by element. | A contrast check of the eight tokens with a tool, recorded here. |
+| **16 `react-hooks/set-state-in-effect` warnings** | Each view sets `loading` and fetches in an effect. It works, but React's newer guidance prefers a data library. | Move the fetches to TanStack Query (or `useSyncExternalStore`) — a refactor of the 12 data views, tracked in `docs/DECISIONS.md`. |
+| **Some inline borders are below 3:1** | Text contrast is measured and passes everywhere (§3a), but the *boundary* of a form control needs 3:1 (WCAG 1.4.11), and the fields written inline in the views use the decorative `border-line` hairline (1.5:1 light / 1.8:1 dark). The shared `Input`/`Field` primitives and the native controls use `--input`, which measures 3.5–3.9:1. | Replace `border-line` with `border-input` on the inline `<input>`/`<select>`/`<textarea>` elements in the views — mechanical, ~40 sites, no design change. |
+
+---
+
+## 3a. The measured contrast
+
+`python3 scripts/contrast-audit.py` parses the tokens out of `src/index.css` and
+measures every pair that occurs on screen, in both themes. The transcript of the
+last run is in [`results/contrast-*.txt`](./results); the script exits non-zero
+if a pair drops below its minimum, so a colour edit cannot quietly break this.
+
+| Pair | Light | Dark | Minimum |
+|---|---|---|---|
+| `ink` on `surface` (body text) | 17.90:1 | 15.89:1 | 4.5 |
+| `ink` on `canvas` (page) | 16.51:1 | 17.93:1 | 4.5 |
+| `ink-soft` on `surface` | 10.21:1 | 11.36:1 | 4.5 |
+| `ink-muted` on `surface` (secondary text) | 5.92:1 | 6.54:1 | 4.5 |
+| `ink-subtle` on `surface` (labels, meta) | 5.45:1 | 5.25:1 | 4.5 |
+| `ink-faint` on `surface` (timestamps) | 4.89:1 | 4.57:1 | 4.5 |
+| `success` / `warning` / `info` / `danger` / `violet` on `surface` | 5.0–8.4:1 | 5.1–8.4:1 | 4.5 |
+| `input` boundary on `surface` | 3.47:1 | 3.47:1 | 3.0 |
+
+Two consequences worth stating plainly:
+
+* the **dark** theme is not just "the old colours": `ink-subtle` and `ink-faint`
+  were `zinc-500`/`zinc-600`, which measured **3.4:1 and 2.2:1** on the card
+  background — below AA. They are now 5.25:1 and 4.57:1. The same edit was made
+  in both themes, so the fix is not a light-mode-only afterthought.
+* the numbers are reproducible: the script reads the CSS, so it cannot drift
+  away from what the browser renders.
 
 ---
 
@@ -118,7 +147,8 @@ Section 508 is satisfied by WCAG 2.0 AA conformance, which is a subset of the
    user on this app.
 3. **One recorded screen-reader pass**, with the findings listed here.
 4. **The toast** keeps its message until it is dismissed.
-5. **A measured contrast table** for the eight colour tokens.
+5. ~~A measured contrast table~~ — **done** (§3a, `scripts/contrast-audit.py`).
+6. **`border-input` on the inline fields** — the remaining 1.4.11 gap above.
 
 ---
 

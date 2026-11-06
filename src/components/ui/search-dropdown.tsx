@@ -144,9 +144,9 @@ export function SearchDropdown<T>({
     <div ref={ref} className="relative">
       <label
         htmlFor={triggerId}
-        className="block text-xs font-medium text-zinc-400 mb-1.5"
+        className="block text-xs font-medium text-ink-muted mb-1.5"
       >
-        {label} {required && <span className="text-red-400" aria-hidden="true">*</span>}
+        {label} {required && <span className="text-danger" aria-hidden="true">*</span>}
         {required && <span className="sr-only"> (required)</span>}
       </label>
 
@@ -167,21 +167,21 @@ export function SearchDropdown<T>({
         onKeyDown={onTriggerKeyDown}
         className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-left transition-all
           ${error
-            ? "border-red-500/60 bg-red-950/20"
+            ? "border-danger/60 bg-danger/5"
             : open
-            ? "border-blue-500/60 bg-[#0f111a]"
-            : "border-zinc-700 bg-[#0f111a] hover:border-zinc-600"}`}
+            ? "border-info/60 bg-canvas"
+            : "border-line bg-canvas hover:border-line-strong"}`}
       >
-        <Icon size={15} className="text-zinc-500 flex-shrink-0" aria-hidden="true" />
+        <Icon size={15} className="text-ink-subtle flex-shrink-0" aria-hidden="true" />
         <div className="flex-1 min-w-0 text-sm">
           {selected ? renderSelected(selected) : (
-            <span className="text-zinc-600">{placeholder}</span>
+            <span className="text-ink-faint">{placeholder}</span>
           )}
         </div>
         <ChevronDown
           size={14}
           aria-hidden="true"
-          className={`text-zinc-500 flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`text-ink-subtle flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
 
@@ -193,14 +193,14 @@ export function SearchDropdown<T>({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.97 }}
             transition={{ duration: 0.15 }}
-            className="absolute z-50 top-full mt-1.5 w-full bg-[#1a1d2e] border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
+            className="absolute z-50 top-full mt-1.5 w-full bg-surface border border-line rounded-xl shadow-2xl overflow-hidden"
           >
-            <div className="p-2 border-b border-zinc-800">
+            <div className="p-2 border-b border-line">
               <div className="relative">
                 <Search
                   size={13}
                   aria-hidden="true"
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle"
                 />
                 <input
                   ref={inputRef}
@@ -216,7 +216,7 @@ export function SearchDropdown<T>({
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={onInputKeyDown}
                   placeholder={`Search ${label.toLowerCase()}…`}
-                  className="w-full bg-[#0f111a] border border-zinc-700 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder:text-zinc-600 outline-none focus:border-blue-500/50"
+                  className="w-full bg-canvas border border-line rounded-lg pl-8 pr-3 py-2 text-xs text-ink placeholder:text-ink-faint outline-none focus:border-info/50"
                 />
               </div>
             </div>
@@ -230,10 +230,10 @@ export function SearchDropdown<T>({
               id={listId}
               role="listbox"
               aria-label={label}
-              className="max-h-52 overflow-y-auto divide-y divide-zinc-800/50"
+              className="max-h-52 overflow-y-auto divide-y divide-line/50"
             >
               {filtered.length === 0 ? (
-                <div className="py-6 text-center text-xs text-zinc-500">No results found</div>
+                <div className="py-6 text-center text-xs text-ink-subtle">No results found</div>
               ) : (
                 filtered.map((item, i) => (
                   <button
@@ -245,7 +245,7 @@ export function SearchDropdown<T>({
                     onMouseEnter={() => setActiveIndex(i)}
                     onClick={() => choose(item)}
                     className={`w-full text-left px-3.5 py-2.5 transition-colors text-sm ${
-                      i === activeIndex ? "bg-zinc-700/50" : "hover:bg-zinc-700/40"
+                      i === activeIndex ? "bg-surface-3/50" : "hover:bg-surface-3/40"
                     }`}
                   >
                     {renderItem(item)}
@@ -258,7 +258,7 @@ export function SearchDropdown<T>({
       </AnimatePresence>
 
       {error && (
-        <p id={errorId} role="alert" className="text-red-400 text-[11px] mt-1 flex items-center gap-1">
+        <p id={errorId} role="alert" className="text-danger text-[11px] mt-1 flex items-center gap-1">
           <AlertTriangle size={10} aria-hidden="true" /> {error}
         </p>
       )}

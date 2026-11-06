@@ -224,7 +224,7 @@ export function Dialog({
             transition={{ type: "spring", damping: 26, stiffness: 300 }}
             onClick={(event) => event.stopPropagation()}
             className={cn(
-              "bg-[#1a1d2e] border border-zinc-700/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col",
+              "bg-surface border border-line/80 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col",
               panelClassName,
             )}
             data-testid={testId}
@@ -232,7 +232,7 @@ export function Dialog({
             {!titleHidden && (
               <h2
                 id={titleId}
-                className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-10 focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-zinc-900"
+                className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-10 focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink"
               >
                 {title}
               </h2>
@@ -247,7 +247,7 @@ export function Dialog({
             {children}
 
             {footer && (
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 border-t border-zinc-700/60 px-6 py-4">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 border-t border-line/60 px-6 py-4">
                 {footer}
               </div>
             )}
@@ -302,7 +302,7 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl border border-zinc-700 text-gray-400 text-sm hover:border-zinc-500 hover:text-white transition-all"
+            className="flex-1 py-2.5 rounded-xl border border-line text-ink-muted text-sm hover:border-line-strong hover:text-ink transition-all"
           >
             {cancelLabel}
           </button>
@@ -313,8 +313,8 @@ export function ConfirmDialog({
             className={cn(
               "flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-60",
               destructive
-                ? "bg-red-500/90 text-white hover:bg-red-500"
-                : "bg-blue-600 text-white hover:bg-blue-500",
+                ? "bg-danger/90 text-white hover:bg-danger"
+                : "bg-info text-white hover:bg-info",
             )}
           >
             {busy ? "Working…" : confirmLabel}
@@ -325,17 +325,17 @@ export function ConfirmDialog({
       <div className="px-6 py-8">
         <div
           className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${
-            destructive ? "bg-red-500/20" : "bg-amber-500/20"
+            destructive ? "bg-danger/20" : "bg-warning/20"
           }`}
           aria-hidden="true"
         >
           {destructive ? (
-            <AlertTriangle size={22} className="text-red-400" />
+            <AlertTriangle size={22} className="text-danger" />
           ) : (
-            <AlertCircle size={22} className="text-amber-400" />
+            <AlertCircle size={22} className="text-warning" />
           )}
         </div>
-        <p id={messageId} className="text-sm text-gray-400">
+        <p id={messageId} className="text-sm text-ink-muted">
           {message}
         </p>
       </div>
@@ -356,7 +356,7 @@ export function DialogCloseButton({
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"
+      className="p-2 rounded-lg text-ink-subtle hover:text-ink hover:bg-surface-3 transition-colors"
     >
       <X size={18} />
     </button>

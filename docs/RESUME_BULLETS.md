@@ -74,25 +74,43 @@ Recharts, Framer Motion, Vitest, ESLint
    combobox pattern (listbox of options, arrow keys, Home/End, Enter, Escape,
    a live count of the results): **7 tests** drive it with the keyboard only.
 
-3. **Cut the first load by 60 % without removing a feature** — the app was one
-   1,089 kB file (294 kB gzipped) that carried all eleven screens plus Recharts
-   and Framer Motion; it is now **376 kB (120 kB gzipped)** for the first
-   screen, one 8–48 kB file per screen loaded on demand, and the 412 kB of
-   Recharts only fetched when a chart is drawn.
+3. **Cut the first load by more than half without removing a feature** — the
+   app was one 1,089 kB file (294 kB gzipped) that carried every screen plus
+   Recharts and Framer Motion; it is now **143 kB gzipped** for the first
+   screen, one 4–10 kB file per view loaded on demand, and the **96 kB
+   gzipped** charts chunk only fetched when a chart is drawn. The last step was
+   not `React.lazy`: the chunk list named packages, so Rollup had put recharts'
+   own dependency (`clsx`, which the shell needs) inside the charts chunk, the
+   entry imported it, and every visitor downloaded **118 kB gzipped of charting
+   library before the sign-in page painted** — first load fell from 247 kB to
+   143 kB gzipped once chunks were assigned by module path.
 
-4. **Stopped the dashboard from lying to itself** — a slow request used to
+4. **Turned one hard-coded palette into a real light/dark theme** — the app was
+   built against a single dark palette: ~2,300 colour utilities (`zinc`/`gray`
+   shades, 282 arbitrary navy hexes) and a `.dark` block in the CSS that
+   nothing ever switched on. The colours are now 12 tokens read from CSS
+   variables, so both themes are one table each and no element carries a
+   `dark:` variant; the switch remembers the choice, follows the operating
+   system until the visitor picks one, paints before the bundle is fetched (no
+   white flash) and is keyboard-operable with `aria-pressed`. Every text pair
+   then measures **≥ 4.5:1 in both themes** — verified by
+   `scripts/contrast-audit.py`, which parses the CSS and fails the build if a
+   colour drops below AA — including two dark-theme colours that were
+   **3.4:1 and 2.2:1** before.
+
+5. **Stopped the dashboard from lying to itself** — a slow request used to
    overlap the next poll, so the older answer could win and the table jumped
    back; a hidden tab kept polling forever. One `usePolling` hook now guards
    the in-flight request, pauses while the tab is hidden and refreshes on
    return — **6 tests** with a fake clock.
 
-5. **Removed every escape hatch the type system allowed** — 39 `any`s replaced
+6. **Removed every escape hatch the type system allowed** — 39 `any`s replaced
    by typed API records read through helpers that always return the right
    type, so a renamed field is a compile error instead of a blank column; and
    the frontend finally has a lint gate (ESLint 9 + the React hooks rules) in
    CI, which found 57 problems on the first run — 41 fixed, 16 documented.
 
-6. **Made failure a designed state, not a blank page** — an error boundary with
+7. **Made failure a designed state, not a blank page** — an error boundary with
    a retry, a 401 that clears the session and returns the user to the page
    they were on (with an open-redirect check), four destructive actions that
    ask first, and named messages for timeouts, an unreachable API and a
@@ -101,11 +119,13 @@ Recharts, Framer Motion, Vitest, ESLint
 ### If there is room for only two
 
 Take **#1** (the accessible dialog — it is the one a design-systems interviewer
-will probe) and **#3** (the measured 60 % first-load cut).
+will probe) and **#4** (the themed palette: it is the only bullet where a
+"feature" also produced a measurement — 4.5:1 in both themes, checked by a
+script).
 
 ### Say it like this, in a minute
 
-> The app has eleven screens and three roles. The two things I am proudest of
+> The app has ten navigation screens and three roles. The two things I am proudest of
 > are not features: the overlays were plain divs, so I rebuilt them as one
 > dialog component with a focus trap, Escape and a focus restore, and put
 > eight tests on it; and the bundle was one 1.1 MB file, so I split the views
