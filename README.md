@@ -662,6 +662,7 @@ host, and every claim with its evidence is in
 [AWS setup](docs/AWS_SETUP.md) ·
 [interview Q&A](docs/INTERVIEW_QA.md) ·
 [resume evidence](docs/RESUME_EVIDENCE.md) ·
+[resume audit](docs/RESUME_AUDIT.md) ·
 [learning log](docs/LEARNING_LOG.md)
 
 > **What this does not cover** — on purpose, and documented in
