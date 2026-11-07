@@ -186,6 +186,107 @@ curl -fsS https://<host>/api/auth/config
   another client id; retry from the page. The API deliberately does not echo
   the verification error.
 
+## First administrator {#first-administrator}
+
+**Symptom:** a fresh deployment has no administrator, so nobody can approve
+assets, change a role or open Organisation Setup.
+
+Signing up can only ever create an `EMPLOYEE` — by design, because a public
+endpoint that grants `ADMIN` is a hole, not a feature. The first admin is
+therefore created in three steps, on the server, once:
+
+1. **Sign up normally** in the app with the address that should own the
+   deployment. Note the exact spelling.
+2. **Set the variable and restart the API.**
+
+   ```bash
+   # Vercel: Project → Settings → Environment Variables → add for Production
+   BOOTSTRAP_ADMIN_EMAIL="you@your-domain.example"
+   ```
+
+   ```bash
+   # Self-hosted: infra/.env, then recreate the API container
+   echo 'BOOTSTRAP_ADMIN_EMAIL="you@your-domain.example"' >> infra/.env
+   docker compose -f infra/docker-compose.yml up -d api
+   docker compose -f infra/docker-compose.yml logs --tail 20 api | grep -i bootstrap
+   # → Promoted you@your-domain.example to ADMIN (bootstrap). Remove BOOTSTRAP_ADMIN_EMAIL…
+   ```
+
+3. **Remove the variable and redeploy.** It has done its job.
+
+What the promotion will and will not do:
+
+| Situation | What happens |
+|---|---|
+| An **active** admin already exists | nothing; the log says so |
+| The address has **no account** | nothing is created; the log asks you to sign up first |
+| The account is `INACTIVE` | nothing; reactivate it (as an admin) or use another address |
+| The account exists and is active, no admin exists | promoted to `ADMIN` + an activity-log row with `source: "bootstrap"` + a notification |
+
+**One-off promotion at any other time** (local development, or a second admin
+before the first has signed in):
+
+```bash
+cd backend
+npm run promote -- someone@example.com ADMIN          # ADMIN | ASSET_MANAGER | DEPARTMENT_HEAD | EMPLOYEE
+```
+
+It refuses to demote the last active administrator, refuses an unknown address
+(it never creates users) and writes an activity-log row with `source: "cli"`.
+
+> **Never run `npm run seed` against a deployed database.** It creates
+> `admin@assetflow.com` with the published password `password123`. The script
+> refuses to run when `NODE_ENV=production` for exactly that reason.
+
+## Nobody can sign in / the reset mail does not arrive
+
+**Symptom:** "Forgot password?" says a link is on its way and nothing arrives.
+
+The API answers `202` for every address, so a missing mail is the *expected*
+answer when the address has no account, when the account is deactivated, and
+when it is a Google-only account (there is no password to reset).
+
+```bash
+# 1. Did the API actually send anything?
+#    MAIL_TRANSPORT=dev → the message is a file, not an e-mail:
+ls -lt backend/var/mail | head            # self-hosted: /opt/assetflow/backend/var/mail
+docker compose -f infra/docker-compose.yml logs --tail 50 api | grep -i 'reset mail'
+
+# 2. Was a reset mail configured at all?
+docker compose -f infra/docker-compose.yml exec api printenv | grep -E 'MAIL_|SMTP_URL|FRONTEND_URL'
+#    MAIL_TRANSPORT=dev → nothing is ever sent: set MAIL_TRANSPORT=smtp + SMTP_URL
+#    (the API refuses to boot with MAIL_TRANSPORT=smtp and no SMTP_URL)
+
+# 3. Does the link point at the right host?
+#    FRONTEND_URL must be the browser origin, no trailing slash:
+#    FRONTEND_URL="https://assetflow.vercel.app"
+```
+
+The link is single-use and expires after 30 minutes; requesting a new one
+invalidates the previous one, so **always open the newest e-mail**.
+
+**Locked out of the only admin account:** the reset link restores access. If
+the mailbox is gone too, promote another existing account:
+
+```bash
+cd backend && npm run promote -- someone@example.com ADMIN
+```
+
+## Rotate a leaked credential
+
+```bash
+# 1. The password: sign in as the user → /profile → Change password.
+#    That bumps tokenVersion, so every session open before it is signed out.
+
+# 2. Everything else on that account: /profile → Sign out everywhere
+#    (POST /api/auth/logout-everywhere).
+curl -X POST https://<host>/api/auth/logout-everywhere -H "Authorization: Bearer <token>"
+
+# 3. A leaked SEED account on a database you care about:
+psql "$DATABASE_URL" -c "UPDATE \"User\" SET status='INACTIVE' WHERE email='admin@assetflow.com';"
+#    (do this only after a real admin exists — see "First administrator" above)
+```
+
 ## Renew the TLS certificate
 
 ```bash

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -66,6 +66,10 @@ export default function AssetDirectory() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  // The two filter controls used to be buttons that did nothing at all. They
+  // are now <select>s bound to real state, and the list below respects them.
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [showAllocate, setShowAllocate] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [preSelectedAsset, setPreSelectedAsset] = useState<ModalAsset | null>(null);
@@ -102,13 +106,29 @@ export default function AssetDirectory() {
   // ==========================================
   // FILTERING LOGIC
   // ==========================================
+  // Only the categories and statuses that actually occur, so the menu never
+  // offers a choice that would empty the table.
+  const categories = useMemo(
+    () =>
+      Array.from(new Set(assets.map((a) => a.category).filter(Boolean))).sort(),
+    [assets],
+  );
+  const statuses = useMemo(
+    () =>
+      Array.from(new Set(assets.map((a) => a.status).filter(Boolean))).sort(),
+    [assets],
+  );
+
   const filteredAssets = assets.filter((asset) => {
     const searchLower = searchTerm.toLowerCase();
-    return (
+    const matchesSearch =
       asset.name?.toLowerCase().includes(searchLower) ||
       asset.assetTag?.toLowerCase().includes(searchLower) ||
-      asset.category?.toLowerCase().includes(searchLower)
-    );
+      asset.category?.toLowerCase().includes(searchLower);
+    const matchesCategory =
+      categoryFilter === "all" || asset.category === categoryFilter;
+    const matchesStatus = statusFilter === "all" || asset.status === statusFilter;
+    return Boolean(matchesSearch && matchesCategory && matchesStatus);
   });
 
   return (
@@ -165,14 +185,52 @@ export default function AssetDirectory() {
         </div>
 
         <div className="flex w-full md:w-auto gap-3">
-          <button className="flex items-center gap-2 bg-canvas border border-line hover:border-line text-ink-soft px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
-            <Filter size={16} className="text-ink-muted" />
-            Category
-          </button>
-          <button className="flex items-center gap-2 bg-canvas border border-line hover:border-line text-ink-soft px-4 py-2.5 rounded-xl text-sm font-medium transition-all w-full md:w-auto justify-center">
-            <Filter size={16} className="text-ink-muted" />
-            Status
-          </button>
+          <div className="relative w-full md:w-auto">
+            <Filter
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
+              aria-hidden="true"
+            />
+            <label htmlFor="filter-category" className="sr-only">
+              Filter by category
+            </label>
+            <select
+              id="filter-category"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="w-full appearance-none bg-canvas border border-line text-ink-soft pl-9 pr-8 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-info/50 md:w-auto"
+            >
+              <option value="all">All categories</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="relative w-full md:w-auto">
+            <Filter
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
+              aria-hidden="true"
+            />
+            <label htmlFor="filter-status" className="sr-only">
+              Filter by status
+            </label>
+            <select
+              id="filter-status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full appearance-none bg-canvas border border-line text-ink-soft pl-9 pr-8 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-info/50 md:w-auto"
+            >
+              <option value="all">All statuses</option>
+              {statuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

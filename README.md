@@ -52,7 +52,7 @@ It covers the complete lifecycle:
 
 | # | Module | What you get |
 |---|--------|--------------|
-| 1 | **Authentication** | Sign-up (always an Employee), email/password sign-in, **Sign in with Google** (verified ID token, account linking), JWT sessions, deactivation-aware guards |
+| 1 | **Authentication** | Sign-up (always an Employee), email/password sign-in, **Sign in with Google** (verified ID token, account linking), JWT sessions, deactivation-aware guards, **self-service password reset** (single-use, hashed, 30-minute link) and **token revocation** on every credential change |
 | 2 | **Dashboards** | Role-specific KPI dashboards (Admin / Manager / Employee) with live charts |
 | 3 | **Organisation setup** | Departments (with hierarchy + head), asset categories (with custom fields), employee directory |
 | 4 | **Asset directory** | Auto-tagged assets (`AF-0001`), search, filters, full history per asset |
@@ -79,6 +79,8 @@ It covers the complete lifecycle:
 | Organisation setup | `OrganizationSetup` | `/api/org/departments`, `/api/org/categories`, `/api/org/employees` |
 | Notifications | `NotificationBell` | `GET /api/notifications`, `/api/notifications/:id/read`, `/read-all`, `/ping` |
 | Activity log | `ActivityLogs` | `GET /api/activity` |
+| My account | `/profile` (route) | `GET/PATCH /api/auth/me`, `POST /api/auth/change-password`, `/api/auth/logout-everywhere` |
+| Forgot / reset password | `/forgot-password`, `/reset-password` (routes) | `POST /api/auth/forgot-password`, `/api/auth/reset-password` |
 
 Two things cut across every screen: **light/dark theming** (a token per
 colour, a switch in the header and on both auth screens, saved per browser and
@@ -178,7 +180,7 @@ npm run dev                   # http://localhost:5173
 ### 3️⃣ Sign in
 
 ```bash
-npm run seed                  # creates these accounts (password: password123)
+npm run seed                  # demo data — see the warning below
 ```
 
 | Email | Role | Sees |
@@ -190,6 +192,14 @@ npm run seed                  # creates these accounts (password: password123)
 
 > The SPA talks to the **real** API — a wrong password (or an account that has
 > been deactivated) is rejected, there is no offline demo mode.
+>
+> ⚠️ **The seed is demo data, not a deployment step.** All of those accounts
+> share the published password `password123`, and one of them is an Admin. The
+> script therefore refuses to run when `NODE_ENV=production` (override with
+> `SEED_ALLOW_PRODUCTION=1` for a throw-away environment). A real deployment
+> gets its first administrator from `BOOTSTRAP_ADMIN_EMAIL` — see
+> [docs/RUNBOOK.md](docs/RUNBOOK.md#first-administrator) — and that admin should
+> change the password on `/profile` straight after signing in.
 
 ### 4️⃣ Sign in with Google (optional)
 
@@ -284,8 +294,14 @@ All backend variables are **validated at boot**
 | `CORS_ORIGINS` | string | `http://localhost:5173,http://localhost:5174` | no | Comma-separated list of allowed browser origins (no trailing slash). |
 | `THROTTLE_TTL` | number (ms) | `60000` | no | Window of the global per-IP rate limiter. |
 | `THROTTLE_LIMIT` | number | `300` | no | Requests per IP per window across **all** routes. |
-| `AUTH_THROTTLE_TTL` | number (ms) | `900000` | no | Window of the sign-in brute-force limiter. |
-| `AUTH_THROTTLE_LIMIT` | number | `10` | no | Failed sign-ins per account+IP before the account is blocked. |
+| `AUTH_THROTTLE_TTL` | number (ms) | `900000` | no | Window of the auth attempt limiter (sign-in, sign-up, forgot/reset/change password). |
+| `AUTH_THROTTLE_LIMIT` | number | `10` | no | Attempts per key per window. Each flow has its own key (`login:<email>\|<ip>`, `signup:<ip>`, `reset:<email>\|<ip>`, `reset-token:<ip>`, `change:<userId>`), so one cannot exhaust another. |
+| `FRONTEND_URL` | string | `http://localhost:5173` | **yes in production** | Absolute origin of the SPA. The password-reset link is built as `${FRONTEND_URL}/reset-password?token=…`; a wrong value produces a working token in a link nobody can open. |
+| `MAIL_TRANSPORT` | `dev` \| `smtp` | `dev` | no | `dev` writes every message to `MAIL_DIR` and logs one line (nothing leaves the machine). `smtp` sends for real and **requires** `SMTP_URL` — the API refuses to boot without it. |
+| `SMTP_URL` | string | — | when `MAIL_TRANSPORT=smtp` | `smtps://user:password@smtp.host:465`. |
+| `MAIL_FROM` | string | `AssetFlow <no-reply@assetflow.local>` | no | Envelope sender used by the SMTP transport. |
+| `MAIL_DIR` | string | `var/mail` | no | Where the `dev` transport writes its messages (relative to `backend/`). |
+| `BOOTSTRAP_ADMIN_EMAIL` | string | — | no | **One-shot.** At boot, if the database has no active administrator, the account with this address (it must already exist) is promoted to `ADMIN`. Never creates a user. Remove it once it has run — see [docs/RUNBOOK.md](docs/RUNBOOK.md#first-administrator). |
 | `REDIS_URL` | string | — | no | `redis://[:password@]host:6379` — when it is set, the rate-limit counters (and the failed-sign-in counters) are **shared** by every instance and survive a restart. Without it they live in the process. |
 | `METRICS_ENABLED` | boolean | `false` | no | Exposes `GET /api/metrics` (the Prometheus endpoint). Keep it off on a public deployment — the self-hosted stack turns it on and lets only the internal Nginx reach it. |
 
@@ -339,7 +355,7 @@ curl http://localhost:4000/api/health
 # Sign in
 curl -X POST http://localhost:4000/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@assetflow.com","password":"password123"}'
+  -d '{"email":"admin@assetflow.com","password":"password123"}'   # seeded demo account
 
 # Use the token
 curl http://localhost:4000/api/assets \
@@ -390,7 +406,7 @@ The authoritative contract — parameters, status codes and role rules — is in
 
 ## 🧪 Testing
 
-The project ships with **256 automated checks** that run against a **real
+The project ships with **319 automated checks** that run against a **real
 PostgreSQL** (embedded via [PGlite](https://pglite.dev), Postgres compiled to
 WebAssembly) — no Docker, no cloud database, no network required.
 
@@ -412,12 +428,12 @@ npm test
 
 | Suite | Command | What it covers |
 |-------|---------|----------------|
-| Backend unit | `cd backend && npm run test:unit` | **72 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation, brute-force throttle, auth service, Google ID-token verification/linking, database-driver selection, the Redis-backed rate limiter |
-| Backend e2e | `cd backend && npm run test:e2e` | **117 checks** (1 skipped at the default wide-open limit) — auth & RBAC, Google availability, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, rate limiting, health, observability |
-| Frontend | `npm test` | **67 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials, and the theme (saved choice beats the OS, the OS is followed when nothing is saved, the class is applied, a blocked storage does not throw, the switch is keyboard-operable) |
+| Backend unit | `cd backend && npm run test:unit` | **84 checks** — password hashing (incl. the 72-byte bcrypt truncation), environment validation (incl. the mail transport and the bootstrap variable), the auth attempt limiter, auth service, Google ID-token verification/linking, reset-token generation/hashing/expiry, database-driver selection, the Redis-backed rate limiter |
+| Backend e2e | `cd backend && npm run test:e2e` | **143 checks** (142 passing, 1 skipped at the default wide-open limit) — auth & RBAC, Google availability, **password reset / change / profile / sign-out-everywhere / first-admin bootstrap**, assets, allocations & transfers, bookings, maintenance, audits, reports, org setup, notifications, row-level scoping, rate limiting, health, observability |
+| Frontend | `npm test` | **92 checks** — the API client (incl. the 401 handling), the auth client, the accessible dialog (focus trap, Escape, restore), the combobox (arrow keys, Enter, Escape), the polling hook, the error boundary, avatar initials, the theme (saved choice beats the OS, the OS is followed when nothing is saved, the class is applied, a blocked storage does not throw, the switch is keyboard-operable), the sign-in card (the reset link, the honest Google button, the 8-character rule), and the three account screens (forgot → mailed link → reset → profile) |
 | Rate limit (evidence) | `cd backend && THROTTLE_LIMIT=300 npm run test:e2e -- rate-limit` | the 429 boundary at the production ceiling: 300 x `200`, then request #301 is `429` with `Retry-After: 60`, while a second user behind the same IP is unaffected — transcript in [`docs/results/`](docs/results/) |
 | Lint (backend) | `cd backend && npm run lint` | ESLint + Prettier over `src/` **and** `test/` — must be clean |
-| Lint (frontend) | `npm run lint` | ESLint 9 + the React hooks rules over `src/` — 0 errors (16 advisory warnings, listed in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)) |
+| Lint (frontend) | `npm run lint` | ESLint 9 + the React hooks rules over `src/` — 0 errors (17 advisory warnings, listed in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)) |
 
 What the e2e suite proves, among other things:
 
@@ -446,6 +462,11 @@ What the e2e suite proves, among other things:
 | User enumeration | unknown e-mail and wrong password return the *same* message, and the same bcrypt work is performed in both cases |
 | E-mail identity | addresses are normalised (trimmed + lower-cased) and compared case-insensitively — `A@x.com` and `a@x.com` are one account |
 | Sessions | stateless JWTs; every request re-reads the user, so a deactivation or role change takes effect **immediately** |
+| Token revocation | each token carries the account's `tokenVersion`; changing the password, resetting it or pressing "sign out everywhere" increments the column and every older token is rejected on its next request — no session table, works across instances |
+| Password reset | 256-bit CSPRNG token, only its SHA-256 hash is stored, single-use (a replay is a `400`), 30-minute expiry, and issuing a new link deletes the previous one. `POST /auth/forgot-password` answers the same `202` for every address, so it cannot be used to find out who has an account |
+| Reset mail | the reset link goes to `FRONTEND_URL` only; `MAIL_TRANSPORT=dev` writes to disk instead of sending, so a fresh clone never mails a real person by accident |
+| Account creation | signup and the Google path can only ever create an `EMPLOYEE`; the first admin comes from a server-side `BOOTSTRAP_ADMIN_EMAIL` promotion that never creates users, or from `npm run promote` |
+| Demo data | the seed refuses to run with `NODE_ENV=production`, because it creates a known-password admin |
 | Google sign-in | the ID token is verified server-side (signature, issuer, audience, expiry) and the email must be verified by Google; the browser cannot assert an identity. The client id is public; no client secret exists. |
 | Authorisation | `JwtAuthGuard` + `RolesGuard` on every route, plus department scoping inside the services |
 | Brute force | per-account + per-IP sign-in limiter (`429`), plus a global per-IP throttle on every route |
@@ -499,6 +520,10 @@ one for the SPA (repository root) and one for the API (`backend/`).
    | `GOOGLE_CLIENT_ID` | optional — the public client id from Google Cloud Console (see below) |
    | `CORS_ORIGINS` | fill in after step 2, then redeploy |
    | `NODE_ENV` | `production` |
+   | `FRONTEND_URL` | `https://<frontend-project>.vercel.app` — the reset link points here |
+   | `MAIL_TRANSPORT` | `smtp` if you want reset e-mails delivered; leave it unset and the API writes them to `var/mail` instead |
+   | `SMTP_URL` / `MAIL_FROM` | only with `MAIL_TRANSPORT=smtp` |
+   | `BOOTSTRAP_ADMIN_EMAIL` | only for the first boot, then **delete it** |
 
    Do **not** set `PORT` — Vercel manages it.
 5. Deploy and confirm the API answers on **both** paths:
@@ -543,9 +568,18 @@ The frontend needs no rebuild — it asks the API for the id at runtime.
 
 ### 4. Verify
 
-Open the frontend URL, sign in as `admin@assetflow.com` / `password123` and
-confirm the dashboard loads live data. If requests fail, check the API
-project's runtime logs.
+Open the frontend URL and sign up. Then, to get an administrator:
+
+1. set `BOOTSTRAP_ADMIN_EMAIL` on the **API** project to the address you just
+   signed up with and redeploy;
+2. the boot log says `Promoted <address> to ADMIN (bootstrap)`;
+3. remove the variable and redeploy again — it has done its job;
+4. sign in, open `/profile`, and set a password you have not used elsewhere.
+
+Confirm the dashboard loads live data. If requests fail, check the API
+project's runtime logs. Password reset needs `FRONTEND_URL` (where the link
+points) and, for real mail, `MAIL_TRANSPORT=smtp` + `SMTP_URL` — without them
+the API writes each message to `backend/var/mail` instead of sending it.
 
 > **Neon connectivity:** `PrismaService` inspects `DATABASE_URL` and picks the
 > driver itself — a **direct** `*.neon.tech` host is routed through

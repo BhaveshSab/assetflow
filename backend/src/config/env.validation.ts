@@ -47,6 +47,26 @@ export type AppEnv = {
   REDIS_URL?: string;
   /** Whether `GET /api/metrics` is enabled. */
   METRICS_ENABLED: boolean;
+  /**
+   * Where the browser app lives — used to build the password-reset link
+   * (`${FRONTEND_URL}/reset-password?token=…`). A wrong value produces a
+   * working token in a link nobody can open, so it is required in production.
+   */
+  FRONTEND_URL: string;
+  /** `dev` (default) writes mail to disk; `smtp` sends it for real. */
+  MAIL_TRANSPORT: 'dev' | 'smtp';
+  /** Envelope sender for the SMTP transport. */
+  MAIL_FROM?: string;
+  /** `smtps://user:pass@host:465` — mandatory when MAIL_TRANSPORT is smtp. */
+  SMTP_URL?: string;
+  /**
+   * Bootstrap the first administrator on boot.
+   *
+   * Honoured only when the named account already exists, is ACTIVE, is not
+   * already an ADMIN **and** the database currently has no active admin.
+   * It never creates a user, so the value alone cannot open a back door.
+   */
+  BOOTSTRAP_ADMIN_EMAIL?: string;
 };
 
 const DEFAULTS = {
@@ -61,6 +81,8 @@ const DEFAULTS = {
   AUTH_THROTTLE_TTL: 15 * 60_000,
   AUTH_THROTTLE_LIMIT: 10,
   METRICS_ENABLED: false,
+  FRONTEND_URL: 'http://localhost:5173',
+  MAIL_TRANSPORT: 'dev' as const,
 } as const;
 
 /** Minimal secret that must NOT be used outside local development. */
@@ -163,6 +185,44 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
   // with the Google Identity Services ID-token flow.
   const googleClientId = asString(raw.GOOGLE_CLIENT_ID).trim();
 
+  // Where the reset link points. Must be an absolute http(s) URL: a relative
+  // value would produce a link that only works on the machine that made it.
+  const frontendUrl =
+    asString(raw.FRONTEND_URL).trim() || DEFAULTS.FRONTEND_URL;
+  if (!/^https?:\/\/[^\s]+$/i.test(frontendUrl)) {
+    throw new Error(
+      `FRONTEND_URL must be an absolute http(s) URL (received "${frontendUrl}").`,
+    );
+  }
+
+  // Mail. The dev transport is the default; the smtp transport is only valid
+  // with a connection string, because a reset flow that cannot send is worse
+  // than a server that refuses to start.
+  const mailTransportRaw =
+    asString(raw.MAIL_TRANSPORT).trim().toLowerCase() ||
+    DEFAULTS.MAIL_TRANSPORT;
+  if (mailTransportRaw !== 'dev' && mailTransportRaw !== 'smtp') {
+    throw new Error(
+      `MAIL_TRANSPORT must be "dev" or "smtp" (received "${mailTransportRaw}").`,
+    );
+  }
+  const mailTransport: 'dev' | 'smtp' = mailTransportRaw;
+  const smtpUrl = asString(raw.SMTP_URL).trim();
+  if (mailTransport === 'smtp') {
+    if (!smtpUrl) {
+      throw new Error(
+        'SMTP_URL is required when MAIL_TRANSPORT=smtp (e.g. smtps://user:pass@smtp.example.com:465).',
+      );
+    }
+    if (!/^smtps?:\/\//i.test(smtpUrl)) {
+      throw new Error('SMTP_URL must be an smtp:// or smtps:// URL.');
+    }
+  }
+  const mailFrom = asString(raw.MAIL_FROM).trim();
+  const bootstrapAdminEmail = asString(raw.BOOTSTRAP_ADMIN_EMAIL)
+    .trim()
+    .toLowerCase();
+
   return {
     NODE_ENV: nodeEnv,
     DATABASE_URL: databaseUrl,
@@ -216,6 +276,13 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
     ),
     ...(redisUrl ? { REDIS_URL: redisUrl } : {}),
     METRICS_ENABLED: metricsEnabled,
+    FRONTEND_URL: frontendUrl,
+    MAIL_TRANSPORT: mailTransport,
+    ...(mailFrom ? { MAIL_FROM: mailFrom } : {}),
+    ...(smtpUrl ? { SMTP_URL: smtpUrl } : {}),
+    ...(bootstrapAdminEmail
+      ? { BOOTSTRAP_ADMIN_EMAIL: bootstrapAdminEmail }
+      : {}),
   };
 }
 

@@ -4,17 +4,18 @@ import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
 import { RedisService } from '../common/redis/redis.service';
+import { AdminBootstrapService } from './admin-bootstrap.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import {
-  InMemoryLoginAttemptStore,
-  RedisLoginAttemptStore,
-} from './login-throttle.store';
+  InMemoryAuthAttemptStore,
+  RedisAuthAttemptStore,
+} from './auth-throttle.store';
 import {
-  LOGIN_ATTEMPT_STORE,
-  LoginThrottleService,
-} from './login-throttle.service';
+  AUTH_ATTEMPT_STORE,
+  AuthThrottleService,
+} from './auth-throttle.service';
 
 @Module({
   imports: [
@@ -37,16 +38,18 @@ import {
   providers: [
     AuthService,
     JwtStrategy,
-    LoginThrottleService,
+    // Promotes the first administrator at boot (see admin-bootstrap.service).
+    AdminBootstrapService,
+    AuthThrottleService,
     {
       // The sign-in counters live in Redis when `REDIS_URL` is configured
       // (shared by every instance, survives a restart); otherwise they stay
       // in the process, exactly as before.
-      provide: LOGIN_ATTEMPT_STORE,
+      provide: AUTH_ATTEMPT_STORE,
       useFactory: (redis: RedisService) =>
         redis.enabled
-          ? new RedisLoginAttemptStore(redis)
-          : new InMemoryLoginAttemptStore(),
+          ? new RedisAuthAttemptStore(redis)
+          : new InMemoryAuthAttemptStore(),
       inject: [RedisService],
     },
   ],

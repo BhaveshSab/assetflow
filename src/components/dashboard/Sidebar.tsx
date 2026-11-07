@@ -317,7 +317,17 @@ const Sidebar = ({ user, onSignOut, activePage, onNavigate, badges = {} }: Sideb
                     <p className="text-xs font-semibold text-ink truncate">{user.name}</p>
                     <p className="text-[10px] text-ink-subtle truncate">{user.email}</p>
                   </div>
-                  <button className="relative p-1 rounded-lg hover:bg-surface-3 transition-colors flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("activity")}
+                    aria-label={
+                      (badges.notifications ?? 0) > 0
+                        ? `Open the activity log (${badges.notifications} unread notifications)`
+                        : "Open the activity log"
+                    }
+                    title="Notifications are recorded in the activity log"
+                    className="relative p-1 rounded-lg hover:bg-surface-3 transition-colors flex-shrink-0"
+                  >
                     <Bell size={13} className="text-ink-muted" />
                     {(badges.notifications ?? 0) > 0 && (
                       <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-danger rounded-full text-[8px] text-white font-bold flex items-center justify-center">

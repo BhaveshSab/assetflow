@@ -10,6 +10,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { ActivityModule } from './activity/activity.module';
+import { MailModule } from './mail/mail.module';
 import { AllocationsModule } from './allocations/allocations.module';
 import { AssetsModule } from './assets/assets.module';
 import { AuditsModule } from './audits/audits.module';
@@ -70,6 +71,8 @@ import { ReportsModule } from './reports/reports.module';
     }),
     // Cross-cutting, @Global — available to every feature module.
     ActivityModule,
+    // Outgoing mail (password reset). Global so AuthService can inject it.
+    MailModule,
     NotificationsModule,
     AuthModule,
     // Feature modules.

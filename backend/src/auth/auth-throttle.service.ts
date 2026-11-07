@@ -1,8 +1,8 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import type { LoginAttemptStore } from './login-throttle.store';
-import { InMemoryLoginAttemptStore } from './login-throttle.store';
+import type { AuthAttemptStore } from './auth-throttle.store';
+import { InMemoryAuthAttemptStore } from './auth-throttle.store';
 
 /** 429 — Nest has no dedicated class for it, so build one explicitly. */
 export class TooManyRequestsException extends HttpException {
@@ -12,26 +12,33 @@ export class TooManyRequestsException extends HttpException {
 }
 
 /** Injection token for the store that keeps the failed-sign-in counters. */
-export const LOGIN_ATTEMPT_STORE = 'LOGIN_ATTEMPT_STORE';
+export const AUTH_ATTEMPT_STORE = 'AUTH_ATTEMPT_STORE';
 
 /**
- * Per-account brute-force protection for the sign-in endpoint.
+ * The attempt counter behind every unauthenticated auth endpoint.
  *
- * Keeps a sliding window of failed attempts per `email + ip` key and blocks
- * further attempts once the limit is reached. A successful sign-in clears the
- * counter.
+ * It started as brute-force protection for sign-in and now backs three keys,
+ * each namespaced so the flows cannot spend each other's budget:
  *
- * The counters live in a {@link LoginAttemptStore}: the in-process map by
+ *   `login:<email>|<ip>`     failed sign-ins — a success clears the counter
+ *   `signup:<ip>`            account creation — 10 per window per address
+ *   `reset:<email>|<ip>`     password-reset mails — 10 per window per pair
+ *
+ * The limits come from `AUTH_THROTTLE_LIMIT` / `AUTH_THROTTLE_TTL` (10 per
+ * 15 minutes by default) and are read on every call, so a deployment can tune
+ * them without a rebuild and a test can lower them to observe a real 429.
+ *
+ * The counters live in an {@link AuthAttemptStore}: the in-process map by
  * default, Redis when `REDIS_URL` is configured. The Redis store is what
  * makes the protection meaningful behind several instances or after a
- * restart — see `login-throttle.store.ts`.
+ * restart — see `auth-throttle.store.ts`.
  */
 @Injectable()
-export class LoginThrottleService {
+export class AuthThrottleService {
   constructor(
     private readonly config: ConfigService,
-    @Inject(LOGIN_ATTEMPT_STORE)
-    private readonly store: LoginAttemptStore = new InMemoryLoginAttemptStore(),
+    @Inject(AUTH_ATTEMPT_STORE)
+    private readonly store: AuthAttemptStore = new InMemoryAuthAttemptStore(),
   ) {}
 
   /** Which store is in use (`memory` or `redis`). */
@@ -39,14 +46,39 @@ export class LoginThrottleService {
     return this.store.kind;
   }
 
-  /** Throws 429 when the key is currently blocked. */
-  async assertNotBlocked(key: string): Promise<void> {
+  /**
+   * Throws 429 when the key is currently blocked.
+   *
+   * `message` names the action that was attempted ("sign-up", "reset
+   * request", …); the remaining wait is appended so the caller knows whether
+   * to retry in a moment or in a quarter of an hour.
+   */
+  async assertNotBlocked(
+    key: string,
+    message = 'Too many attempts',
+  ): Promise<void> {
     const blockedForMs = await this.store.isBlocked(key);
     if (blockedForMs <= 0) return;
 
     const seconds = Math.ceil(blockedForMs / 1000);
     throw new TooManyRequestsException(
-      `Too many failed sign-in attempts. Please try again in ${seconds} second(s).`,
+      `${message}. Please try again in ${seconds} second(s).`,
+    );
+  }
+
+  /**
+   * Count one attempt against the key.
+   *
+   * Used for actions that are not "failures" but must still be rationed —
+   * creating an account, or asking for a reset mail. Deliberately *not*
+   * cleared on success: a caller who succeeds ten times has still made ten
+   * requests.
+   */
+  async recordAttempt(key: string): Promise<void> {
+    await this.store.recordFailure(
+      key,
+      this.maxFailures(),
+      this.limitWindowMs(),
     );
   }
 

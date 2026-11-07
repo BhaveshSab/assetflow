@@ -209,7 +209,15 @@ const QuickAction = ({ icon: Icon, label, desc, color, bg, onClick, delay }: {
   </motion.button>
 );
 
-const NotificationPanel = ({ activity, onClose }: { activity: ActivityItem[]; onClose: () => void }) => (
+const NotificationPanel = ({
+  activity,
+  onClose,
+  onViewAll,
+}: {
+  activity: ActivityItem[];
+  onClose: () => void;
+  onViewAll: () => void;
+}) => (
   <motion.div
     initial={{ opacity: 0, y: -10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }}
     exit={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -233,7 +241,13 @@ const NotificationPanel = ({ activity, onClose }: { activity: ActivityItem[]; on
       ))}
     </div>
     <div className="px-4 py-2 border-t border-line">
-      <button className="text-xs text-info hover:text-info transition-colors">View all notifications</button>
+      <button
+        type="button"
+        onClick={onViewAll}
+        className="text-xs text-info hover:text-info transition-colors"
+      >
+        View all notifications
+      </button>
     </div>
   </motion.div>
 );
@@ -369,7 +383,16 @@ export default function AdminDashboard({ onNavigate, onSignOut }: AdminDashboard
               )}
             </button>
             <AnimatePresence>
-              {showNotif && <NotificationPanel activity={activity} onClose={() => setShowNotif(false)} />}
+              {showNotif && (
+                <NotificationPanel
+                  activity={activity}
+                  onClose={() => setShowNotif(false)}
+                  onViewAll={() => {
+                    setShowNotif(false);
+                    onNavigate("activity");
+                  }}
+                />
+              )}
             </AnimatePresence>
           </div>
 

@@ -6,12 +6,24 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import AuthLayout from "@/pages/AuthLayout";
 import AuthPage from "@/pages/AuthPage";
 
+
 /*
  * The dashboard is a separate file: a visitor who only opens the sign-in
  * page does not download the charts, the tables and the eight views behind
  * it.
  */
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
+/*
+ * The account screens are lazy too: someone who is signing in should not
+ * download the profile form, and vice versa.
+ */
+const ProfilePage = lazy(() => import("@/pages/ProfilePage"));
+/*
+ * The reset flow is two more screens that the sign-in page does not need:
+ * only a visitor who forgot their password ever loads them.
+ */
+const ForgotPasswordPage = lazy(() => import("@/pages/ForgotPasswordPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"));
 
 function RouteFallback() {
   return (
@@ -36,7 +48,36 @@ export default function App() {
           <Route element={<AuthLayout />}>
             <Route path="/signin" element={<AuthPage mode="signin" />} />
             <Route path="/signup" element={<AuthPage mode="signup" />} />
+            {/* The two halves of the reset flow. They live in the auth layout
+                (same background, same theme switch) because they are visited
+                by someone who is *not* signed in. */}
+            <Route
+              path="/forgot-password"
+              element={
+                <Suspense fallback={<RouteFallback />}>
+                  <ForgotPasswordPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/reset-password"
+              element={
+                <Suspense fallback={<RouteFallback />}>
+                  <ResetPasswordPage />
+                </Suspense>
+              }
+            />
           </Route>
+
+          {/* The account page needs a session, like the dashboard. */}
+          <Route
+            path="/profile"
+            element={
+              <Suspense fallback={<RouteFallback />}>
+                <ProfilePage />
+              </Suspense>
+            }
+          />
 
           <Route
             path="/Dashboard"

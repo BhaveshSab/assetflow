@@ -167,6 +167,8 @@ export default function Dashboard() {
       name: session.user.name,
       email: session.user.email,
       role,
+      // Set on /profile; the header and the sidebar both show it.
+      avatar: session.user.avatarUrl ?? undefined,
     },
     onSignOut: handleSignOut,
     activePage,
