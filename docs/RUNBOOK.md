@@ -39,6 +39,52 @@ IMAGE=ghcr.io/bhaveshsab/assetflow-api:latest infra/scripts/deploy.sh
 
 ---
 
+## The browser says "blocked by CORS" {#cors-blocked}
+
+**Symptom:** the page loads, the sign-in button does nothing, and the console
+shows
+
+```
+Access to fetch at 'https://API/api/auth/login' from origin 'https://SPA'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is
+present on the requested resource.
+```
+
+The SPA and the API are two different sites, so the API has to name the SPA's
+origin in `CORS_ORIGINS` before a browser is allowed to read the answer.
+
+**1. What does the API think the list is?** Ask the deployment, not the
+dashboard — an environment variable that is set but was never redeployed is
+not in the running function.
+
+- **Vercel:** Project → **Logs** → *Runtime Logs*, open the page and reload it.
+  The refused origin is now logged with the list that was in effect:
+  `Blocked cross-origin request from https://… . CORS_ORIGINS in this deployment is: …`
+- **Docker/Compose:** `docker compose logs api | grep -i cors`
+
+**2. Compare it with the address bar.** The value must be exactly what the
+browser shows before the path — `https://app.example.com`, no trailing slash,
+no path, and `https` if the site is served over https. `http://` ≠ `https://`,
+`www.` ≠ apex, and every environment (Production, Preview) has its own copy.
+
+**3. Fix it and redeploy.** Add the origin (comma-separated, no spaces needed —
+they are trimmed) and **redeploy**; a saved variable does not reach a running
+deployment.
+
+```bash
+# Docker
+CORS_ORIGINS="https://app.example.com,http://localhost:5173"
+docker compose up -d --force-recreate api
+```
+
+**4. Still blocked?** If `/api/health` answers a JSON `503` with a `startupError`,
+the problem is the environment, not CORS — see [API down](#api-down). If the
+API never starts at all, the 503 body is still readable now: the serverless
+entrypoint sends `Access-Control-Allow-Origin` with its own error responses, so
+the browser console shows the reason instead of a CORS message.
+
+---
+
 ## Many 5xx errors {#many-5xx-errors}
 
 ```bash

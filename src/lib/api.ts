@@ -71,8 +71,15 @@ async function request<T>(
     if ((err as Error)?.name === "AbortError") {
       throw new Error("The request timed out. Please try again.");
     }
+    // A CORS refusal and an API that is simply down both surface here as a
+    // bare "Failed to fetch" — the browser hides everything about the reply.
+    // Naming both possibilities turns a dead sign-in button into something the
+    // person reading the screen can act on.
+    const page =
+      typeof window === "undefined" ? "this page" : window.location.origin;
     throw new Error(
-      `Could not reach the AssetFlow API at ${BASE_URL}. Is the backend running?`,
+      `Could not reach the AssetFlow API at ${BASE_URL}. ` +
+        `It may be offline, or it may not allow ${page} to call it.`,
     );
   } finally {
     clearTimeout(timer);

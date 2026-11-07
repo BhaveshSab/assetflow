@@ -1,5 +1,8 @@
 import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
+
+import { isOriginAllowed, parseOrigins } from './common/http/cors';
 
 /**
  * App-wide configuration shared by every entrypoint.
@@ -33,14 +36,36 @@ export function configureApp(app: INestApplication) {
     instance.set('trust proxy', 1);
   }
 
-  // Allow the React dev server (and any configured origins) to call the API.
-  const origins = (
-    process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://localhost:5174'
-  )
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-  app.enableCors({ origin: origins, credentials: true });
+  // Allow the deployed SPA (and the dev servers, and anything else listed in
+  // CORS_ORIGINS) to call the API.
+  //
+  // The list is passed as an array, which `cors` matches entry by entry by
+  // exact string — the same comparison `parseOrigins` normalises for. (The
+  // callback form works too, but it answers a refused origin by calling
+  // `next()` with no headers at all, losing the `Vary: Origin` that keeps a
+  // cache from serving one origin's answer to another.)
+  const origins = parseOrigins();
+  const corsLogger = new Logger('CORS');
+
+  // Registered before the CORS middleware, because a refused origin is
+  // otherwise silent on the server side: the browser says "blocked by CORS"
+  // and the log says nothing at all, which is impossible to debug from outside.
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    const origin = req.headers.origin;
+    if (origin && !isOriginAllowed(origin, origins)) {
+      corsLogger.warn(
+        `Blocked cross-origin request from ${origin}. ` +
+          `CORS_ORIGINS in this deployment is: ${origins.join(', ')}. ` +
+          `Add that origin to CORS_ORIGINS and redeploy the API.`,
+      );
+    }
+    next();
+  });
+
+  app.enableCors({
+    credentials: true,
+    origin: origins.includes('*') ? true : origins,
+  });
 
   // Validate + strip unknown fields on every incoming DTO automatically.
   app.useGlobalPipes(

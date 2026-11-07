@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import type { Request, Response } from 'express';
 
 import { AppModule } from './app.module';
+import { corsHeadersFor, parseOrigins } from './common/http/cors';
 import { normalizeUrl } from './common/http/normalize-url';
 import { JsonLogger } from './common/logging/json-logger';
 import { configureApp } from './configure-app';
@@ -46,6 +47,15 @@ export default async function handler(req: Request, res: Response) {
 
     if (!res.headersSent) {
       res.statusCode = 503;
+      // The browser must be allowed to read this body, otherwise a boot
+      // failure looks exactly like a CORS block ("no
+      // 'Access-Control-Allow-Origin' header") and the reason below never
+      // reaches the person looking at the page.
+      for (const [name, value] of Object.entries(
+        corsHeadersFor(req.headers.origin, parseOrigins()),
+      )) {
+        res.setHeader(name, value);
+      }
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
