@@ -619,11 +619,11 @@ export default function AllocationsTransfers({
     setActionLoading((p) => ({ ...p, [transferTarget.id]: "transfer" }));
     const res = await allocationApi.transferAsset(transferTarget._assetId, toUserId, reason);
     if (res.success) {
-      setAllocations((prev) =>
-        prev.map((a) =>
-          a.id === transferTarget.id ? { ...a, status: "Transfer Pending" } : a,
-        ),
-      );
+      // Re-read instead of flipping the allocation card's label: that card
+      // carries the ALLOCATION id, and the row the manager has to approve is a
+      // transfer with its own id. Relabelling left Approve/Reject sending the
+      // allocation id, which answered "Transfer request not found".
+      void loadAllocations();
       setTransferTarget(null);
       showToast("Transfer request submitted — pending approval");
     } else {
