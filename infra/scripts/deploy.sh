@@ -39,26 +39,91 @@ PREVIOUS_IMAGE_FILE="${PREVIOUS_IMAGE_FILE:-${XDG_STATE_HOME:-$HOME/.local/state
 
 say "=== deploying ${IMAGE} ==="
 
+# The image running right now is what a failed deploy rolls back to. Read it
+# first, before anything can remove it.
+CURRENT=""
+PREVIOUS=""
+if [ "$DRY_RUN" != true ]; then
+    mkdir -p "$(dirname "$PREVIOUS_IMAGE_FILE")"
+    CURRENT="$(compose ps -q api 2>/dev/null | xargs -r docker inspect --format '{{.Config.Image}}' 2>/dev/null || true)"
+    if [ -n "$CURRENT" ]; then
+        # The file always holds the image that is running *before* the new one
+        # starts, so a second failed deployment still rolls back to the last
+        # version that was actually healthy.
+        echo "$CURRENT" > "${PREVIOUS_IMAGE_FILE}.tmp"
+        mv "${PREVIOUS_IMAGE_FILE}.tmp" "$PREVIOUS_IMAGE_FILE"
+    fi
+    PREVIOUS="$(cat "$PREVIOUS_IMAGE_FILE" 2>/dev/null || true)"
+    say "  the image in use before the deployment: ${CURRENT:-<none>}"
+fi
+
+# Drop the `:<sha>` tags left by previous releases. Keep exactly three things:
+# the image running now, the image a rollback would restore, and the image
+# being deployed. Everything else is a previous release that nothing can use.
+reclaim_superseded_images() {
+    {
+        docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+            | grep -E 'assetflow-(api|migrate):' \
+            | grep -v -F -e "$IMAGE" \
+            | { if [ -n "$CURRENT" ]; then grep -v -F -e "$CURRENT" || true; else cat; fi; } \
+            | { if [ -n "$PREVIOUS" ]; then grep -v -F -e "$PREVIOUS" || true; else cat; fi; } \
+            | while read -r image_ref; do
+                docker rmi "$image_ref" >/dev/null 2>&1 || true
+                say "  removed ${image_ref}"
+            done
+    } || true
+}
+
+# 0. Disk space ---------------------------------------------------------------
+# Unpacking an image needs room roughly equal to its uncompressed size, and a
+# pull that runs out of space fails halfway through a layer *and* leaves the
+# partial snapshot behind — so the next attempt starts with even less. This
+# check has to happen before the pull, with a message a human can act on.
+#
+# It is not hypothetical: a deploy failed with "no space left on device" while
+# extracting node_modules from the API image, which is invisible from the job
+# log unless you know to look for the containerd error.
+MIN_FREE_MB="${MIN_FREE_MB:-1536}"
+
+available_mb() { df -Pm / | awk 'NR==2 {print $4}'; }
+
+say "=== disk before the pull: $(df -Ph / | awk 'NR==2 {print $3 " used of " $2 " (" $5 ")"}') ==="
+if [ "$DRY_RUN" != true ]; then
+    free_before="$(available_mb)"
+    if [ "${free_before:-0}" -lt "$MIN_FREE_MB" ]; then
+        say "  ${free_before} MB free < ${MIN_FREE_MB} MB — reclaiming what is safe to reclaim"
+        # Least destructive first: stopped containers, then images no tag
+        # points at, then build cache older than a week.
+        docker container prune -f >/dev/null 2>&1 || true
+        docker image prune -f >/dev/null 2>&1 || true
+        docker builder prune -f --filter until=168h >/dev/null 2>&1 || true
+        # Then the previous releases, which are the bulk of it: every deploy
+        # adds a tag and nothing used to remove the old ones.
+        reclaim_superseded_images
+        free_after="$(available_mb)"
+        say "  ${free_after} MB free after the cleanup"
+
+        if [ "${free_after:-0}" -lt "$MIN_FREE_MB" ]; then
+            warn "not enough space to deploy safely: ${free_after} MB free, ${MIN_FREE_MB} MB needed"
+            say "  the images on this host:"
+            docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}  {{.CreatedSince}}' 2>/dev/null | head -15 || true
+            say "  the largest directories in /var/lib/docker:"
+            du -sh /var/lib/docker/* 2>/dev/null | sort -rh | head -5 || true
+            say "  free space with: docker system prune -af --filter until=24h"
+            say "  (that also removes the rollback image, so the next deploy has nothing to fall back to)"
+            exit 2
+        fi
+    else
+        say "  ${free_before} MB free"
+    fi
+fi
+
 # 1. The image --------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
     say "[dry-run] docker pull ${IMAGE}"
 else
     say "+ docker pull ${IMAGE}"
     docker pull "$IMAGE"
-fi
-
-# Remember the running image — that is what we roll back to.
-if [ "$DRY_RUN" != true ]; then
-    mkdir -p "$(dirname "$PREVIOUS_IMAGE_FILE")"
-    CURRENT="$(compose ps -q api 2>/dev/null | xargs -r docker inspect --format '{{.Config.Image}}' 2>/dev/null || true)"
-    if [ -n "$CURRENT" ]; then
-        # The file always holds the image that is running *before* the new
-        # one starts, so a second failed deployment still rolls back to the
-        # last version that was actually healthy.
-        echo "$CURRENT" > "${PREVIOUS_IMAGE_FILE}.tmp"
-        mv "${PREVIOUS_IMAGE_FILE}.tmp" "$PREVIOUS_IMAGE_FILE"
-    fi
-    say "  the image in use before the deployment: ${CURRENT:-<none>}"
 fi
 
 # 2. The migrations ---------------------------------------------------------
@@ -112,6 +177,15 @@ if [ "$HEALTHY" != true ]; then
     fi
     compose logs --tail 50 api || true
     exit 1
+fi
+
+# 5. Reclaim the superseded images -------------------------------------------
+# Every deployment adds a `:<sha>` tag. Keeping them all is what filled the disk
+# and broke a deployment, so the old ones go now that the new image is healthy.
+if [ "$DRY_RUN" != true ]; then
+    say "+ removing the images that are neither running nor the rollback target"
+    reclaim_superseded_images
+    say "  disk after the deploy: $(df -Ph / | awk 'NR==2 {print $3 " used of " $2 " (" $5 ")"}')"
 fi
 
 say "=== the deployment succeeded ==="
