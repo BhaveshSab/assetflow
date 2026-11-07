@@ -145,6 +145,16 @@ export default function Dashboard() {
     "ActivityLogs",
   ];
 
+  /** Views a department head's role cannot load (the API answers 403). The
+   *  sidebar hides them; quick actions and the activity bell must not resolve
+   *  them either. */
+  const HEAD_DENIED_VIEWS: ViewName[] = [
+    "AssetAudits",
+    "ReportsAnalytics",
+    "OrganizationSetup",
+    "ActivityLogs",
+  ];
+
   /** Build sidebar props from session */
   const role: Role = session.user.role ?? "EMPLOYEE";
 
@@ -152,6 +162,7 @@ export default function Dashboard() {
   const handleNavigate = (pageId: string) => {
     const view = NAVIGATE_MAP[pageId];
     if (!view) return;
+    if (role === "DEPARTMENT_HEAD" && HEAD_DENIED_VIEWS.includes(view)) return;
     if (role === "EMPLOYEE" && MANAGER_ONLY_VIEWS.includes(view)) {
       // Redirect employees to their own assets instead of a 403 manager page.
       setActivePage("my-assets");
@@ -176,7 +187,12 @@ export default function Dashboard() {
     badges,
   };
 
-  const isManager = role === "ADMIN" || role === "ASSET_MANAGER";
+  // Department heads get the manager view: its KPIs, transfers and maintenance
+  // queue are scoped for them, while the organisation-wide charts are not.
+  const isManager =
+    role === "ADMIN" ||
+    role === "ASSET_MANAGER" ||
+    role === "DEPARTMENT_HEAD";
   const maintenanceRole: "ADMIN" | "ASSET_MANAGER" | "EMPLOYEE" =
     role === "ADMIN"
       ? "ADMIN"

@@ -6,7 +6,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { ReportQueryDto } from './dto/report-query.dto';
+import { AnalyticsQueryDto, ReportQueryDto } from './dto/report-query.dto';
 import { ReportsService } from './reports.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 
@@ -60,12 +60,17 @@ export class ReportsController {
     return this.reports.assetStatus();
   }
 
-  /** Consolidated payload for the Reports & Analytics page. */
+  /**
+   * Consolidated payload for the Reports & Analytics page.
+   *
+   * `range` (30d | 6m | ytd | all) windows the utilization trend; the page's
+   * range buttons do nothing without it.
+   */
   @Get('analytics')
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.ASSET_MANAGER)
-  analytics() {
-    return this.reports.analytics();
+  analytics(@Query() query: AnalyticsQueryDto) {
+    return this.reports.analytics(query.range);
   }
 
   /** Most-used vs idle assets. */

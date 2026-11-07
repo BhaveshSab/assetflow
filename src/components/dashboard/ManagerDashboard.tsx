@@ -308,6 +308,10 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
     session?.user?.role === "ASSET_MANAGER" ||
     session?.user?.role === "DEPARTMENT_HEAD";
 
+  // The organisation-wide charts and the activity feed are manager-only
+  // endpoints; a head asking for them would 403 and blank the whole page.
+  const isHead = session?.user?.role === "DEPARTMENT_HEAD";
+
   const showToast = (msg: string, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
   const fetchAll = useCallback(async () => {
@@ -315,9 +319,12 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
     setDataError(null);
     try {
       const [k, chart, pie, transfers, maint, ov, act] = await Promise.all([
-        apiService.getKPIs(), apiService.getChartData(), apiService.getPieData(),
+        apiService.getKPIs(),
+        isHead ? Promise.resolve<ChartPoint[]>([]) : apiService.getChartData(),
+        isHead ? Promise.resolve<PieSlice[]>([]) : apiService.getPieData(),
         apiService.getPendingTransfers(), apiService.getMaintenanceRequests(),
-        apiService.getOverdueAssets(), apiService.getActivity(),
+        apiService.getOverdueAssets(),
+        isHead ? Promise.resolve<ActivityItem[]>([]) : apiService.getActivity(),
       ]);
       setKpi(k); setChartData(chart); setPieData(pie);
       setPendingTransfers(transfers); setMaintenanceReqs(maint);
@@ -329,7 +336,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
           : "Failed to load dashboard data. Check that the backend is running.",
       );
     } finally { setLoading(false); setRefreshing(false); }
-  }, []);
+  }, [isHead]);
 
   // Auto-refresh every 60s — no overlapping requests, nothing while the
   // tab is hidden.
@@ -424,7 +431,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-xl font-bold text-ink sm:text-2xl">Welcome back, <span className="text-info">{username}</span> &#128075;</h1>
-          <p className="text-xs text-ink-subtle mt-1">Asset Manager &middot; Organization-wide operational view</p>
+          <p className="text-xs text-ink-subtle mt-1">{isHead ? "Department Head \u00b7 Your department's operational view" : "Asset Manager \u00b7 Organization-wide operational view"}</p>
         </div>
         <div className="flex items-center gap-3">
           <span className="hidden sm:block text-[11px] text-ink-faint">Updated {lastUpdated.toLocaleTimeString()}</span>
@@ -441,7 +448,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
           <div className="flex items-center gap-2 bg-surface border border-line rounded-xl px-3 py-1.5">
             <div className="w-6 h-6 rounded-full bg-info flex items-center justify-center text-[10px] font-bold text-white">{username[0]?.toUpperCase()}</div>
             <span className="text-xs text-ink-soft hidden sm:block">{session?.user.email}</span>
-            <span className="text-[9px] bg-info/20 text-info border border-info/30 px-1.5 py-0.5 rounded-full font-bold">MANAGER</span>
+            <span className="text-[9px] bg-info/20 text-info border border-info/30 px-1.5 py-0.5 rounded-full font-bold">{isHead ? "HEAD" : "MANAGER"}</span>
           </div>
         </div>
       </div>
@@ -478,15 +485,23 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
             <div><h2 className="text-sm font-semibold text-ink">Asset Activity Overview</h2><p className="text-xs text-ink-subtle">Allocated vs Available &mdash; last 8 days</p></div>
             <span className="text-[11px] text-ink-faint bg-canvas border border-line px-2 py-1 rounded-lg">{new Date().toLocaleString("default", { month: "long", year: "numeric" })}</span>
           </div>
+          {isHead ? (
+            <p className="py-12 text-center text-xs text-ink-subtle">Organisation-wide charts are limited to asset managers.</p>
+          ) : (
           <ResponsiveContainer width="100%" height={160}><BarChart data={chartData} barGap={4} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--chart-grid))" vertical={false} /><XAxis dataKey="date" tick={{ fill: "hsl(var(--chart-tick))", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "hsl(var(--chart-tick))", fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip content={<ChartTooltip />} /><Legend wrapperStyle={{ fontSize: 11, paddingTop: 6 }} formatter={(v) => <span style={{ color: "hsl(var(--chart-tick))" }}>{v}</span>} /><Bar dataKey="allocated" name="Allocated" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} maxBarSize={18} /><Bar dataKey="available" name="Available" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} opacity={0.7} maxBarSize={18} /></BarChart></ResponsiveContainer>
+          )}
         </motion.div>
         <div className="flex flex-col gap-4">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.42 }} className="bg-surface border border-line rounded-2xl p-5">
             <h2 className="text-sm font-semibold text-ink mb-3">Asset Status Breakdown</h2>
+            {isHead ? (
+              <p className="py-6 text-center text-xs text-ink-subtle">Limited to asset managers.</p>
+            ) : (
             <div className="flex items-center gap-4">
               <div className="relative flex-shrink-0"><PieChart width={100} height={100}><Pie data={pieData} cx={45} cy={45} innerRadius={28} outerRadius={45} dataKey="value" paddingAngle={3}>{pieData.map((e, i) => <Cell key={i} fill={e.color} />)}</Pie></PieChart><div className="absolute inset-0 flex items-center justify-center"><span className="text-[11px] font-bold text-ink">{totalAssets}</span></div></div>
               <PieLegend data={pieData} />
             </div>
+            )}
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.44 }} className="bg-surface border border-line rounded-2xl p-4 flex flex-col gap-2.5">
             <div className="flex items-center gap-2 mb-1"><Zap size={13} className="text-warning" /><h2 className="text-sm font-semibold text-ink">Quick Actions</h2></div>
@@ -563,7 +578,10 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.56 }} className="bg-surface border border-line rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-line"><div className="flex items-center gap-2"><Activity size={15} className="text-info" /><h2 className="text-sm font-semibold text-ink">Recent Activity</h2></div><button onClick={() => onNavigate("activity")} className="text-xs text-info hover:text-info transition-colors">View all &#8594;</button></div>
           <div className="divide-y divide-line max-h-72 overflow-y-auto">
-            {activity.map((item, i) => (
+            {isHead && (
+              <p className="px-5 py-8 text-center text-xs text-ink-subtle">Activity history is limited to asset managers.</p>
+            )}
+            {!isHead && activity.map((item, i) => (
               <motion.div key={item.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.58 + i * 0.04 }} className="px-5 py-3.5 flex items-start gap-3 hover:bg-surface-3 transition-colors">
                 <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${statusDot[item.status]}`} /><div className="flex-1 min-w-0"><p className="text-xs text-ink-soft leading-snug">{item.text}</p><p className="text-[10px] text-ink-faint mt-0.5">{item.time}</p></div>
               </motion.div>
@@ -584,7 +602,7 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
       />
 
       {/* Footer */}
-      <div className="text-center text-[11px] text-ink pb-2">AssetFlow ERP &middot; Asset Manager Portal &middot; Last updated {lastUpdated.toLocaleTimeString()}</div>
+      <div className="text-center text-[11px] text-ink pb-2">AssetFlow ERP &middot; {isHead ? "Department Head Portal" : "Asset Manager Portal"} &middot; Last updated {lastUpdated.toLocaleTimeString()}</div>
     </div>
   );
 }

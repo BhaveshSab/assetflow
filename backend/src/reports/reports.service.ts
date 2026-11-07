@@ -13,6 +13,10 @@ import { allocationScope, isManager } from '../common/auth/scopes';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 
+/** Windows offered by the Reports page's range selector. */
+export const ANALYTICS_RANGES = ['30d', '6m', 'ytd', 'all'] as const;
+export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
+
 /** Columns exported by GET /reports/export/assets.csv, in order. */
 const CSV_COLUMNS = [
   'assetTag',
@@ -651,8 +655,11 @@ export class ReportsService {
   /**
    * Consolidated payload for the Reports & Analytics page: KPIs, utilization
    * trend, department allocations, asset status and booking heatmap.
+   *
+   * `range` is the page's range selector. It windows the utilization trend; the
+   * KPI cards are current-state numbers and are the same for every range.
    */
-  async analytics() {
+  async analytics(range: AnalyticsRange = '6m') {
     const now = new Date();
     const MONTHS = [
       'Jan',
@@ -669,6 +676,26 @@ export class ReportsService {
       'Dec',
     ];
 
+    const startOfMonth = (d: Date) =>
+      new Date(d.getFullYear(), d.getMonth(), 1);
+    const monthsBack = (months: number) =>
+      new Date(now.getFullYear(), now.getMonth() - months, 1);
+
+    let since: Date;
+    switch (range) {
+      case '30d':
+        since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+        break;
+      case 'ytd':
+        since = new Date(now.getFullYear(), 0, 1);
+        break;
+      case 'all':
+        since = new Date(0);
+        break;
+      default:
+        since = monthsBack(5);
+    }
+
     const [dash, status, dept, heatmap, totalAssets, allocatedRows] =
       await Promise.all([
         // `analytics` is a manager-only endpoint, so it uses the
@@ -679,12 +706,9 @@ export class ReportsService {
         this.bookingHeatmap(),
         this.prisma.asset.count(),
         this.prisma.allocation.findMany({
-          where: {
-            allocatedAt: {
-              gte: new Date(now.getFullYear(), now.getMonth() - 5, 1),
-            },
-          },
-          select: { allocatedAt: true },
+          where: { allocatedAt: { gte: since } },
+          select: { assetId: true, allocatedAt: true, returnedAt: true },
+          orderBy: { allocatedAt: 'asc' },
         }),
       ]);
 
@@ -693,17 +717,57 @@ export class ReportsService {
         ? Math.round((dash.assetsAllocated / totalAssets) * 100)
         : 0;
 
-    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
     const utilizationTrend: { month: string; rate: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const count = allocatedRows.filter(
-        (r) => monthKey(r.allocatedAt) === monthKey(d),
-      ).length;
-      utilizationTrend.push({
-        month: MONTHS[d.getMonth()],
-        rate: totalAssets > 0 ? Math.round((count / totalAssets) * 100) : 0,
-      });
+
+    /**
+     * Share of the fleet in use at some point in the window. Distinct assets,
+     * not allocation rows: one asset can be allocated (and returned, and
+     * re-allocated) several times inside a window, which used to push the rate
+     * above 100%.
+     */
+    const rateOf = (start: Date, end: Date) => {
+      if (totalAssets === 0) return 0;
+      const assetsInUse = new Set<string>();
+      for (const row of allocatedRows) {
+        if (row.allocatedAt < end && (!row.returnedAt || row.returnedAt >= start)) {
+          assetsInUse.add(row.assetId);
+        }
+      }
+      return Math.min(100, Math.round((assetsInUse.size / totalAssets) * 100));
+    };
+
+    if (range === '30d') {
+      // Daily points: a 30-day window is unreadable as six monthly buckets.
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+        utilizationTrend.push({
+          month: `${d.getDate()} ${MONTHS[d.getMonth()]}`,
+          rate: rateOf(d, dayEnd),
+        });
+      }
+    } else {
+      let cursor: Date;
+      if (range === 'all') {
+        // From the first allocation, but never more than two years of months.
+        const cap = monthsBack(23);
+        const earliest = allocatedRows[0]?.allocatedAt;
+        cursor = startOfMonth(
+          earliest && earliest < cap ? earliest : cap,
+        );
+        if (allocatedRows.length === 0) cursor = monthsBack(5);
+      } else {
+        cursor = startOfMonth(since);
+      }
+      const last = startOfMonth(now);
+      while (cursor.getTime() <= last.getTime()) {
+        const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        utilizationTrend.push({
+          month: MONTHS[cursor.getMonth()],
+          rate: rateOf(cursor, next),
+        });
+        cursor = next;
+      }
     }
 
     const deptRows =
@@ -728,6 +792,7 @@ export class ReportsService {
     });
 
     return {
+      range,
       kpis: {
         totalAssets,
         utilizationRate,

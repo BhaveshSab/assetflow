@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+
+import { ANALYTICS_RANGES, type AnalyticsRange } from '../reports.service';
 
 /**
  * Shared query params for the ranked analytics reports. Everything is optional;
@@ -13,4 +15,11 @@ export class ReportQueryDto {
   @Min(1)
   @Max(200)
   limit?: number;
+}
+
+/** Range selector for GET /reports/analytics. */
+export class AnalyticsQueryDto {
+  @IsOptional()
+  @IsIn(ANALYTICS_RANGES)
+  range?: AnalyticsRange;
 }

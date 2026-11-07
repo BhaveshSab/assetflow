@@ -126,6 +126,41 @@ describe('Reports & Analytics (e2e)', () => {
     expect(Array.isArray(res.body.assetStatus)).toBe(true);
   });
 
+  it('windows the utilization trend by the requested range', async () => {
+    const thirty = await request(app.getHttpServer())
+      .get('/api/reports/analytics?range=30d')
+      .set(auth(adminToken))
+      .expect(200);
+    expect(thirty.body.range).toBe('30d');
+    expect(thirty.body.utilizationTrend).toHaveLength(30);
+
+    const sixMonths = await request(app.getHttpServer())
+      .get('/api/reports/analytics?range=6m')
+      .set(auth(adminToken))
+      .expect(200);
+    expect(sixMonths.body.utilizationTrend).toHaveLength(6);
+
+    // Year to date buckets per month, January through the current month.
+    const ytd = await request(app.getHttpServer())
+      .get('/api/reports/analytics?range=ytd')
+      .set(auth(adminToken))
+      .expect(200);
+    expect(ytd.body.utilizationTrend).toHaveLength(new Date().getMonth() + 1);
+
+    // A rate is a share of the whole fleet, so it can never exceed 100%.
+    for (const point of thirty.body.utilizationTrend) {
+      expect(point.rate).toBeGreaterThanOrEqual(0);
+      expect(point.rate).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('rejects an unknown analytics range', async () => {
+    await request(app.getHttpServer())
+      .get('/api/reports/analytics?range=90d')
+      .set(auth(adminToken))
+      .expect(400);
+  });
+
   it('exports the asset list as CSV', async () => {
     await createAsset(app, {
       name: 'Laptop, 14"',

@@ -108,6 +108,14 @@ function ChartTooltip({
   );
 }
 
+/** The range buttons' labels and the window each one asks the API for. */
+const RANGE_PARAM: Record<string, string> = {
+  "Last 30 Days": "30d",
+  "Last 6 Months": "6m",
+  "Year to Date": "ytd",
+  "All Time": "all",
+};
+
 export default function ReportsAnalytics() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
     null
@@ -125,7 +133,9 @@ export default function ReportsAnalytics() {
       setError(null);
 
       try {
-        const data = await apiGet<AnalyticsData>("/reports/analytics");
+        const data = await apiGet<AnalyticsData>(
+          `/reports/analytics?range=${RANGE_PARAM[timeRange] ?? "6m"}`
+        );
         setAnalyticsData(data);
       } catch (err) {
         setError(
