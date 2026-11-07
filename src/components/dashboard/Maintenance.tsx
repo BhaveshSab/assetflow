@@ -94,6 +94,9 @@ const toRequest = (r: RawMaintenanceRequest): MaintenanceRequest => ({
   photo: r.photoUrl ?? undefined,
 });
 
+/** What an action on a request reports back to the screen. */
+type ActionResult = { success: true } | { success: false; error: string };
+
 const maintenanceService = {
   getAll: async (mine = false): Promise<MaintenanceRequest[]> => {
     const path = mine ? "/maintenance?mine=true" : "/maintenance";
@@ -111,34 +114,54 @@ const maintenanceService = {
     return toRequest(created);
   },
 
-  approve: async (id: string) => {
+  // Each of these used to `catch { return false; }`, and the callers ignored
+  // the result — so a refused approval, assignment or resolution still showed a
+  // success toast and flipped the card locally. Return the reason instead.
+  approve: async (id: string): Promise<ActionResult> => {
     try {
       await apiSend(`/maintenance/${id}/approve`, "POST", {});
-      return true;
-    } catch { return false; }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Approval failed") };
+    }
   },
 
-  reject: async (id: string) => {
+  reject: async (id: string): Promise<ActionResult> => {
     try {
       await apiSend(`/maintenance/${id}/reject`, "POST", {});
-      return true;
-    } catch { return false; }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: errorMessage(err, "Rejection failed") };
+    }
   },
 
-  assignTechnician: async (id: string, technicianName: string) => {
+  assignTechnician: async (
+    id: string,
+    technicianName: string,
+  ): Promise<ActionResult> => {
     try {
       await apiSend(`/maintenance/${id}/assign`, "POST", { technicianName });
-      return true;
-    } catch { return false; }
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: errorMessage(err, "Could not assign the technician"),
+      };
+    }
   },
 
-  resolve: async (id: string, notes: string) => {
+  resolve: async (id: string, notes: string): Promise<ActionResult> => {
     try {
       await apiSend(`/maintenance/${id}/resolve`, "POST", {
         resolutionNotes: notes || undefined,
       });
-      return true;
-    } catch { return false; }
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: errorMessage(err, "Could not mark the request resolved"),
+      };
+    }
   },
 
   getAssets: async (): Promise<AssetOption[]> => {
@@ -535,10 +558,12 @@ const AssignTechnicianModal = ({
   const [loadingEmps, setLoadingEmps] = useState(false);
   const [selected,   setSelected]   = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  const [error,      setError]      = useState("");
 
   useEffect(() => {
     if (!open) return;
     setSelected("");
+    setError("");
     setLoadingEmps(true);
     maintenanceService
       .getTechnicians()
@@ -550,8 +575,13 @@ const AssignTechnicianModal = ({
   const handleAssign = async () => {
     if (!selected || !request) return;
     setSubmitting(true);
-    await maintenanceService.assignTechnician(request.id, selected);
+    setError("");
+    const res = await maintenanceService.assignTechnician(request.id, selected);
     setSubmitting(false);
+    if (!res.success) {
+      setError(res.error);
+      return;
+    }
     onSuccess(selected);
   };
 
@@ -617,6 +647,11 @@ const AssignTechnicianModal = ({
                   </button>
                 ))}
               </div>
+              {error && (
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-danger">
+                  <AlertCircle size={12} /> {error}
+                </p>
+              )}
             </div>
 
             <div className="px-5 py-4 border-t border-line flex gap-3">
@@ -644,12 +679,18 @@ const ResolveModal = ({
 }: { open: boolean; request: MaintenanceRequest | null; onClose: () => void; onSuccess: () => void }) => {
   const [notes,      setNotes]      = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error,      setError]      = useState("");
 
   const handleResolve = async () => {
     if (!request) return;
     setSubmitting(true);
-    await maintenanceService.resolve(request.id, notes);
+    setError("");
+    const res = await maintenanceService.resolve(request.id, notes);
     setSubmitting(false);
+    if (!res.success) {
+      setError(res.error);
+      return;
+    }
     onSuccess();
   };
 
@@ -689,6 +730,11 @@ const ResolveModal = ({
               <p className="text-[11px] text-ink-faint mt-2">
                 The asset status will automatically revert to <span className="text-ink font-medium">Available</span> after resolution.
               </p>
+              {error && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-danger">
+                  <AlertCircle size={12} /> {error}
+                </p>
+              )}
             </div>
 
             <div className="px-5 py-4 border-t border-line flex gap-3">
@@ -952,7 +998,11 @@ const Maintenance = ({
   }), [requests]);
 
   const handleApprove = async (req: MaintenanceRequest) => {
-    await maintenanceService.approve(req.id);
+    const res = await maintenanceService.approve(req.id);
+    if (!res.success) {
+      showToast(res.error, "error");
+      return;
+    }
     setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "Approved" } : r));
     showToast(`${req.assetName} approved for maintenance`);
   };
@@ -961,7 +1011,11 @@ const Maintenance = ({
   const [rejectTarget, setRejectTarget] = useState<MaintenanceRequest | null>(null);
 
   const handleReject = async (req: MaintenanceRequest) => {
-    await maintenanceService.reject(req.id);
+    const res = await maintenanceService.reject(req.id);
+    if (!res.success) {
+      showToast(res.error, "error");
+      return;
+    }
     setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "Rejected" } : r));
     showToast(`Request ${req.reqId} rejected`, "warning");
   };

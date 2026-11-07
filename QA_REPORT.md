@@ -305,6 +305,18 @@ Found while re-testing the Allocations & Transfers screen:
   allocation, approving a transfer or sending a ping gets 403 while
   `/allocations/my` returns only their own rows.
 
+Found while re-testing the Maintenance screen:
+
+* Approve, reject, assign-technician and mark-resolved all reported success no
+  matter what the server answered. The three service calls ended in
+  `catch { return false; }` and every caller ignored the result, so a refused
+  action still showed a success toast and moved the card to the new state. They
+  now surface the API's own message (toast for approve/reject, an inline error
+  inside the assign/resolve dialogs) and leave the card alone when the call
+  fails.
+* Raising a request from the screen, approving it, assigning a technician and
+  resolving it all worked (the resolved request carries the technician name).
+
 Checks at the time of writing: backend build clean, 98 unit tests, 152 e2e
 (150 passing, 1 skipped, includes the six new cases), frontend 93 tests,
 typecheck clean, ESLint 0 errors (18 pre-existing warnings).
