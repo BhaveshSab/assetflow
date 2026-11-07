@@ -44,6 +44,10 @@ export async function getAssets(): Promise<Asset[]> {
     assetTag: fieldStr(a, "—", "assetTag"),
     category: fieldStr(a, "—", "category", "name"),
     location: fieldStr(a, "—", "location"),
-    status: STATUS_LABEL[fieldStr(a)] ?? fieldStr(a),
+    // `fieldStr(a)` with no field name read nothing, so every row fell back to
+    // the table's "Unknown" — the status column never showed a real value.
+    status:
+      STATUS_LABEL[fieldStr(a, "", "status").toUpperCase()] ??
+      fieldStr(a, "Unknown", "status"),
   }));
 }

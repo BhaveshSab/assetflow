@@ -317,6 +317,13 @@ Found while re-testing the Maintenance screen:
 * Raising a request from the screen, approving it, assigning a technician and
   resolving it all worked (the resolved request carries the technician name).
 
+Found while re-testing the Asset Directory:
+
+* Every row showed the status **Unknown**. The mapping called `fieldStr(a)` with
+  no field name, so the asset's status was never read and the table's fallback
+  was used for all of them. Statuses now map from the API enum, so rows read
+  Available / Allocated / Under Maintenance / Lost / Disposed.
+
 Checks at the time of writing: backend build clean, 98 unit tests, 152 e2e
 (150 passing, 1 skipped, includes the six new cases), frontend 93 tests,
 typecheck clean, ESLint 0 errors (18 pre-existing warnings).
