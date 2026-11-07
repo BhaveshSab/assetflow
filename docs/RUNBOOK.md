@@ -39,6 +39,54 @@ IMAGE=ghcr.io/bhaveshsab/assetflow-api:latest infra/scripts/deploy.sh
 
 ---
 
+## The API answers 500 on every request {#api-500-every-request}
+
+**Symptom:** every call — `/api/health` included — returns `500 Internal Server
+Error`, and the browser console shows a **CORS** error ("No
+`Access-Control-Allow-Origin` header"). The CORS message is a red herring.
+
+**How to tell the two apart.** The CORS headers are written by the application
+as soon as it starts. So:
+
+- **500 (or 503) *with* the header** → the app started, the route failed.
+- **500 with *no* header at all** → the app never started. Nothing the browser
+  says about CORS is true; the server died while loading.
+
+```bash
+curl -i https://API/api/health | head -20      # status and headers, side by side
+ls backend/dist                               # what did the build actually emit?
+```
+
+**The cause we hit on 2026-11-07.** `nest build` compiles everything that is
+not excluded in `tsconfig.build.json`. While it compiled only `src/`, the output
+was `dist/main.js` and `dist/serverless.js`. Adding `scripts/promote.ts` to the
+program made `backend/` the common root, so **every file moved down one level**
+to `dist/src/main.js` and `dist/src/serverless.js` — and both deployments ask
+for the old paths:
+
+| Asks for | Used by |
+|---|---|
+| `node dist/main.js` | `infra/docker/Dockerfile.api` (`CMD`) |
+| `require('../dist/serverless')` | Vercel (`backend/api/index.js`) |
+
+Both fail with "module not found", the container restarts forever, the Vercel
+function answers 500 — and lint, types, unit tests, e2e tests and the build all
+stay green, because none of them ever look at `dist/`.
+
+**The fix** is one line in `backend/tsconfig.build.json` (`"scripts"` in
+`exclude`), and CI now asserts the layout after the build:
+
+```
+✓ dist/main.js
+✓ dist/serverless.js
+```
+
+`backend/api/index.js` also tries both layouts and answers with the real reason
+(and the CORS header the browser needs in order to read it) instead of letting
+the platform answer an opaque 500.
+
+---
+
 ## The browser says "blocked by CORS" {#cors-blocked}
 
 **Symptom:** the page loads, the sign-in button does nothing, and the console

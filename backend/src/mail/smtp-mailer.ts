@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
 import {
@@ -8,6 +7,32 @@ import {
   ResetMail,
   maskEmail,
 } from './mailer.interface';
+
+/**
+ * Load `nodemailer` the first time the SMTP transport actually sends anything.
+ *
+ * This used to be a top-level `import`, which put the package in the module
+ * graph of *every* deployment — including the ones that never send mail. A
+ * serverless bundle without it then fails while the file is being loaded,
+ * before any handler exists to explain why: the platform answers its own `500`
+ * with no `Access-Control-Allow-Origin` header, and the browser reports the
+ * whole thing as "blocked by CORS policy". Loading it on demand keeps a mail
+ * problem inside mail.
+ */
+function loadNodemailer(): typeof import('nodemailer') {
+  try {
+    // Required, not imported: `require` fails here — at the moment of use —
+    // instead of at module load, which is the entire point of this function.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('nodemailer') as typeof import('nodemailer');
+  } catch (error) {
+    throw new Error(
+      'MAIL_TRANSPORT=smtp needs the "nodemailer" package, but it could not be loaded (' +
+        `${(error as Error).message}). Set MAIL_TRANSPORT=dev, or make sure the ` +
+        'package ships with the deployment (includeFiles in vercel.json).',
+    );
+  }
+}
 
 /**
  * A real SMTP transport, used when `MAIL_TRANSPORT=smtp`.
@@ -23,10 +48,14 @@ export class SmtpMailer implements Mailer {
   private readonly logger = new Logger('Mail(smtp)');
   private readonly from =
     process.env.MAIL_FROM ?? 'AssetFlow <no-reply@assetflow.local>';
-  private readonly transporter: Transporter;
+  private transporter: Transporter | undefined;
 
-  constructor(smtpUrl: string) {
-    this.transporter = nodemailer.createTransport(smtpUrl);
+  constructor(private readonly smtpUrl: string) {}
+
+  /** Created on the first send — see `loadNodemailer()`. */
+  private transport(): Transporter {
+    this.transporter ??= loadNodemailer().createTransport(this.smtpUrl);
+    return this.transporter;
   }
 
   async sendPasswordReset(mail: ResetMail): Promise<void> {
@@ -63,6 +92,6 @@ export class SmtpMailer implements Mailer {
   }
 
   private async send(to: string, subject: string, text: string) {
-    await this.transporter.sendMail({ from: this.from, to, subject, text });
+    await this.transport().sendMail({ from: this.from, to, subject, text });
   }
 }
