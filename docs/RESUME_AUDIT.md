@@ -253,8 +253,8 @@ throttler, Redis, brute force, allow-list validation, class-validator.
 | ESLint, zero `any` | — | ✅ backend `eslint` exit 0 / no findings; frontend **0 errors, 17 warnings**; `grep ': any'` = 1 hit and it is inside a comment |
 
 **Say it like this:**
-> *319 automated checks — 84 unit, 143 e2e (142 passing, 1 skipped) against an embedded
-> PostgreSQL that replays the real migrations, 92 frontend — with an ESLint gate and no `any`
+> *337 automated checks — 98 unit, 146 e2e (145 passing, 1 skipped) against an embedded
+> PostgreSQL that replays the real migrations, 93 frontend — with an ESLint gate and no `any`
 > types.*
 
 **Keywords:** Jest, PGlite, embedded Postgres, e2e, Vitest, Testing Library, ESLint,
@@ -399,7 +399,7 @@ Copy-paste replacements. Order and structure stay exactly as they are.
 | 4 | `7 UI primitives built using user-centered design principles` | `7 UI primitives on one design-token layer` |
 | 5 | `79 REST endpoints` | `78 REST endpoints` |
 | 6 | `conflict-safe under simultaneous requests` | `serialised with row-level locks so a second request cannot slip between check and write` |
-| 7 | `238 automated checks (72 unit, 114 e2e on embedded PostgreSQL, 52 frontend)` | `319 automated checks (84 unit, 143 e2e on embedded PostgreSQL, 92 frontend)` |
+| 7 | `238 automated checks (72 unit, 114 e2e on embedded PostgreSQL, 52 frontend)` | `337 automated checks (98 unit, 146 e2e on embedded PostgreSQL, 93 frontend)` |
 | 8 | `Infra: 13.55.90.25` | `Infra: 3.107.83.86` |
 
 Two smaller ones:

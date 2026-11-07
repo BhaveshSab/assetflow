@@ -342,6 +342,26 @@ export class AuditsService {
       },
     });
 
+    // AUDIT_DISCREPANCY — a MISSING/DAMAGED finding has to reach the people who
+    // can act on it. The notification type existed but nothing ever produced
+    // it, so a discrepancy was visible only to whoever opened the report.
+    if (
+      updated.result === AuditResult.MISSING ||
+      updated.result === AuditResult.DAMAGED
+    ) {
+      const cycle = await this.prisma.auditCycle.findUnique({
+        where: { id },
+        select: { name: true },
+      });
+      await this.notifications.notifyAuditDiscrepancy({
+        assetId: updated.assetId,
+        label: `${updated.asset?.name ?? 'An asset'} (${updated.asset?.assetTag ?? updated.assetId})`,
+        cycleName: cycle?.name ?? 'audit cycle',
+        result: updated.result,
+        actorId: user.id,
+      });
+    }
+
     return updated;
   }
 

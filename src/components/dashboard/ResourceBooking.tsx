@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar as CalendarIcon,
@@ -50,6 +50,9 @@ interface TimeSlot {
   time: string;
   status: string;
   bookedBy?: string;
+  /** Local wall-clock hour this slot starts/ends — used to build the request. */
+  startHour: number;
+  endHour: number;
 }
 
 interface Toast { msg: string; type: string; }
@@ -60,28 +63,51 @@ interface Toast { msg: string; type: string; }
 import { apiGet, apiSend } from "@/lib/api";
 
 const bookingApi = {
+  /**
+   * Create a booking.
+   *
+   * The API's own message is returned on failure. This used to `catch {}` and
+   * report only "success: false", so every rejection — an overlap (409), a
+   * past start time (400), a non-bookable asset (409) — reached the user as
+   * the same unhelpful "Booking failed. Please try again."
+   */
   confirmBooking: async (payload: {
     assetId: string;
     startTime: string;
     endTime: string;
     purpose: string;
-  }) => {
+  }): Promise<
+    { success: true; bookingId: string } | { success: false; message: string }
+  > => {
     try {
       const r = await apiSend<{ id: string }>("/bookings", "POST", payload);
       return { success: true, bookingId: r.id };
-    } catch {
-      return { success: false };
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Booking failed. Please try again.";
+      return { success: false, message };
     }
   },
 };
+
+/**
+ * An ISO timestamp for a local wall-clock hour.
+ *
+ * The screen used to append a literal "Z" to the hour it drew, so a 09:00 slot
+ * was sent as 09:00 **UTC** — in IST (UTC+5:30) that is 14:30 local, i.e. the
+ * booking was not for the slot the user clicked, and the "past" checks were
+ * wrong by the same offset.
+ */
+const localIso = (year: number, month: number, day: number, hour: number) =>
+  new Date(year, month - 1, day, hour, 0, 0, 0).toISOString();
 
 const fmt12 = (h: number) => {
   const period = h < 12 ? "AM" : "PM";
   const hr = h % 12 === 0 ? 12 : h % 12;
   return `${String(hr).padStart(2, "0")}:00 ${period}`;
 };
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
 
 const getResourceIcon = (type: string) => {
   if (type === "room") return <Users size={18} />;
@@ -105,117 +131,126 @@ export default function ResourceBooking() {
   const [booking, setBooking] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
+  // The slot list is already drawn for the first bookable resource when nobody
+  // has clicked a card, so confirming has to target that same resource.
+  // `handleConfirmBooking` used to read `selectedResource` alone and return
+  // silently, which made the Confirm button do nothing at all — no request, no
+  // toast — on a freshly opened screen.
+  const activeResource = selectedResource ?? resources[0] ?? null;
+
   const showToast = (msg: string, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ==========================================
+  // BACKEND INTEGRATION: Fetch Resources & Slots
+  // ==========================================
+  const fetchBookingData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    try {
+      // 1) Bookable assets = isBookable=true and in service.
+      const assets = await apiGet<{ items: RawBookableAsset[] }>(
+        "/assets?isBookable=true",
+      );
+      const resourceList: Resource[] = (assets.items ?? []).map((a) => {
+        const cat = (a.category?.name ?? "").toLowerCase();
+        return {
+          id: a.id,
+          name: a.name ?? "Unnamed resource",
+          type: cat.includes("vehicle") || cat.includes("van")
+            ? "vehicle"
+            : cat.includes("furniture") || cat.includes("meeting") || cat.includes("room")
+              ? "room"
+              : "equipment",
+          capacity: a.category?.name ?? "—",
+          location: a.location ?? "—",
+        };
+      });
+      setResources(resourceList);
+
+      // 2) Slots for the selected date — mark overlaps as booked.
+      const target = selectedResource ?? resourceList[0] ?? null;
+      if (!target) {
+        setSlots([]);
+        return;
+      }
+      // A failed calendar read must be visible: swallowing it showed every
+      // slot as "available" and the overlap warning never appeared.
+      const bookings = await apiGet<{ items?: Array<{
+          startTime: string; endTime: string;
+          bookedBy?: { name: string };
+        }> }>(
+          `/bookings?assetId=${target.id}` +
+            `&from=${encodeURIComponent(localIso(year, month, selectedDate, 0))}` +
+            `&to=${encodeURIComponent(localIso(year, month, selectedDate, 24))}`,
+        );
+
+      const daySlots: TimeSlot[] = [];
+      for (let h = 9; h <= 16; h++) {
+        const start = localIso(year, month, selectedDate, h);
+        const end = localIso(year, month, selectedDate, h + 1);
+        const conflict = (bookings.items ?? []).find(
+          (b) =>
+            new Date(b.startTime).getTime() < new Date(end).getTime() &&
+            new Date(b.endTime).getTime() > new Date(start).getTime(),
+        );
+        // A slot that has already ended cannot be booked — the API refuses it
+        // ("startTime must be in the future"), so offering it was a dead end.
+        const elapsed = new Date(end).getTime() <= Date.now();
+        daySlots.push({
+          id: `S${h - 8}`,
+          time: `${fmt12(h)} - ${fmt12(h + 1)}`,
+          status: conflict ? "booked" : elapsed ? "past" : "available",
+          bookedBy: conflict?.bookedBy?.name,
+          startHour: h,
+          endHour: h + 1,
+        });
+      }
+      setSlots(daySlots);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load booking data."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedDate, selectedResource]);
+
+  useEffect(() => {
+    void fetchBookingData();
+  }, [fetchBookingData]);
+
   const handleConfirmBooking = async () => {
-    if (!selectedSlot || !selectedResource) return;
+    if (!selectedSlot || !activeResource) return;
     const slot = slots.find((s) => s.id === selectedSlot);
     if (!slot) return;
 
     setBooking(true);
-    const match = slot.time.match(/(\d{1,2}):00/g);
-    const startH = match ? parseInt(match[0], 10) : 9;
-    const endH = match && match[1] ? parseInt(match[1], 10) : startH + 1;
     const now = new Date();
-    const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(selectedDate)}`;
     const res = await bookingApi.confirmBooking({
-      assetId: selectedResource.id,
-      startTime: `${date}T${pad2(startH)}:00:00.000Z`,
-      endTime: `${date}T${pad2(endH)}:00:00.000Z`,
+      assetId: activeResource.id,
+      startTime: localIso(now.getFullYear(), now.getMonth() + 1, selectedDate, slot.startHour),
+      endTime: localIso(now.getFullYear(), now.getMonth() + 1, selectedDate, slot.endHour),
       purpose: "Resource booking from portal",
     });
 
     if (res.success) {
-      showToast(`Booking confirmed! ID: ${res.bookingId ?? "N/A"}`);
-      // Mark the slot as booked in local state
-      setSlots((prev) =>
-        prev.map((s) =>
-          s.id === selectedSlot ? { ...s, status: "booked", bookedBy: "You" } : s
-        )
-      );
+      showToast(`Booking confirmed! ID: ${res.bookingId}`);
       setSelectedSlot(null);
+      // Re-read the calendar so a neighbouring slot shows the new overlap.
+      await fetchBookingData();
     } else {
-      showToast("Booking failed. Please try again.", "error");
+      // Show what the API actually said (overlap, past time, not bookable…).
+      showToast(res.message, "error");
     }
     setBooking(false);
   };
-
-  // ==========================================
-  // BACKEND INTEGRATION: Fetch Resources & Slots
-  // ==========================================
-  useEffect(() => {
-    const fetchBookingData = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        // 1) Bookable assets = isBookable=true and in service.
-        const assets = await apiGet<{ items: RawBookableAsset[] }>(
-          "/assets?isBookable=true",
-        );
-        const resourceList: Resource[] = (assets.items ?? []).map((a) => {
-          const cat = (a.category?.name ?? "").toLowerCase();
-          return {
-            id: a.id,
-            name: a.name ?? "Unnamed resource",
-            type: cat.includes("vehicle") || cat.includes("van")
-              ? "vehicle"
-              : cat.includes("furniture") || cat.includes("meeting") || cat.includes("room")
-                ? "room"
-                : "equipment",
-            capacity: a.category?.name ?? "—",
-            location: a.location ?? "—",
-          };
-        });
-        setResources(resourceList);
-
-        // 2) Slots for the selected date — mark overlaps as booked.
-        const target = selectedResource ?? resourceList[0] ?? null;
-        if (!target) {
-          setSlots([]);
-          return;
-        }
-        const now = new Date();
-        const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(selectedDate)}`;
-        const bookings = await apiGet<{ items: Array<{
-            startTime: string; endTime: string;
-            bookedBy?: { name: string };
-          }> }>(
-            `/bookings?assetId=${target.id}&from=${date}T00:00:00.000Z&to=${date}T23:59:59.000Z`,
-          )
-          .catch(() => ({ items: [] }));
-
-        const daySlots: TimeSlot[] = [];
-        for (let h = 9; h <= 16; h++) {
-          const start = `${date}T${pad2(h)}:00:00.000Z`;
-          const end = `${date}T${pad2(h + 1)}:00:00.000Z`;
-          const conflict = (bookings.items ?? []).find(
-            (b) =>
-              new Date(b.startTime).getTime() < new Date(end).getTime() &&
-              new Date(b.endTime).getTime() > new Date(start).getTime(),
-          );
-          daySlots.push({
-            id: `S${h - 8}`,
-            time: `${fmt12(h)} - ${fmt12(h + 1)}`,
-            status: conflict ? "booked" : "available",
-            bookedBy: conflict?.bookedBy?.name,
-          });
-        }
-        setSlots(daySlots);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load booking data."
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void fetchBookingData();
-  }, [selectedDate, selectedResource]);
 
   // Calendar grid for the current month (real number of days).
   const now = new Date();
@@ -381,7 +416,7 @@ export default function ResourceBooking() {
                   Available Slots
                 </h3>
                 <h2 className="text-xl font-bold text-ink">
-                  {selectedResource?.name || "Select a resource"}
+                  {activeResource?.name || "Select a resource"}
                 </h2>
                 <p className="text-sm text-info flex items-center gap-1 mt-1">
                   <CalendarIcon size={14} /> {new Date().toLocaleString("default", { month: "short" })} {selectedDate}, {new Date().getFullYear()}
@@ -406,16 +441,17 @@ export default function ResourceBooking() {
                 >
                   {slots.map((slot) => {
                     const isBooked = slot.status === "booked";
+                    const isPast = slot.status === "past";
                     const isSelected = selectedSlot === slot.id;
 
                     return (
                       <motion.button
                         key={slot.id}
                         variants={itemVariants}
-                        disabled={isBooked}
+                        disabled={isBooked || isPast}
                         onClick={() => setSelectedSlot(slot.id)}
                         className={`w-full flex items-center justify-between p-4 rounded-xl border text-left transition-all ${
-                          isBooked
+                          isBooked || isPast
                             ? "bg-danger/5 border-danger/10 cursor-not-allowed opacity-75"
                             : isSelected
                             ? "bg-info/10 border-info shadow-[0_0_20px_rgba(37,99,235,0.15)]"
@@ -427,6 +463,8 @@ export default function ResourceBooking() {
                             className={`p-2 rounded-lg ${
                               isBooked
                                 ? "bg-danger/10 text-danger"
+                                : isPast
+                                ? "bg-surface-3 text-ink-faint"
                                 : isSelected
                                 ? "bg-info text-white"
                                 : "bg-surface-3 text-ink-muted"
@@ -437,7 +475,7 @@ export default function ResourceBooking() {
                           <div>
                             <p
                               className={`font-semibold ${
-                                isBooked
+                                isBooked || isPast
                                   ? "text-ink-subtle"
                                   : isSelected
                                   ? "text-info"
@@ -448,7 +486,9 @@ export default function ResourceBooking() {
                             </p>
                             <p className="text-xs text-ink-subtle mt-0.5">
                               {isBooked
-                                ? `Overlap Conflict: Booked by ${slot.bookedBy}`
+                                ? `Overlap conflict: booked by ${slot.bookedBy ?? "another user"}`
+                                : isPast
+                                ? "This time has already passed today"
                                 : "Slot available for booking"}
                             </p>
                           </div>
@@ -458,6 +498,10 @@ export default function ResourceBooking() {
                           {isBooked ? (
                             <div className="flex items-center gap-1.5 px-3 py-1 bg-danger/10 text-danger rounded-full text-xs font-semibold border border-danger/20">
                               <Lock size={12} /> Unavailable
+                            </div>
+                          ) : isPast ? (
+                            <div className="flex items-center gap-1.5 px-3 py-1 bg-surface-3 text-ink-subtle rounded-full text-xs font-semibold border border-line">
+                              <Lock size={12} /> Past
                             </div>
                           ) : isSelected ? (
                             <div className="flex items-center gap-1.5 px-3 py-1 bg-info text-white rounded-full text-xs font-semibold shadow-md shadow-blue-500/20">

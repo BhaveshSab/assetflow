@@ -501,17 +501,28 @@ const fetchAudits = useCallback(async () => {
                           >
                             <ClipboardCheck size={14} /> Continue Audit
                           </button>
+                          {/* Closing is ADMIN-only on the server (audits.controller
+                              @Roles(ADMIN)). It used to render enabled for every
+                              viewer, so an Asset Manager could click through a
+                              two-step confirm and always got a 403 — a control
+                              that looks live and cannot work (DECISIONS #40). */}
                           <button
                             type="button"
-                            disabled={closingId === audit.id}
+                            disabled={!isAdmin || closingId === audit.id}
+                            title={
+                              isAdmin
+                                ? "Close this cycle and rewrite missing assets"
+                                : "Only Admins can close an audit cycle"
+                            }
                             onClick={() => {
+                              if (!isAdmin) return;
                               if (confirmCloseId !== audit.id) {
                                 setConfirmCloseId(audit.id);
                                 return;
                               }
                               void handleCloseCycle(audit.id);
                             }}
-                            className="flex-[0.6] bg-surface-3 hover:bg-surface-3 text-ink-soft border border-line py-2.5 rounded-xl text-xs font-semibold transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
+                            className="flex-[0.6] bg-surface-3 hover:bg-surface-3 text-ink-soft border border-line py-2.5 rounded-xl text-xs font-semibold transition-colors flex justify-center items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                           >
                             {closingId === audit.id ? (
                               <Loader2 size={14} className="animate-spin" />

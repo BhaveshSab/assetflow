@@ -9,7 +9,7 @@ import {
   TransferStatus,
 } from '@prisma/client';
 
-import { allocationScope } from '../common/auth/scopes';
+import { allocationScope, isManager } from '../common/auth/scopes';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 
@@ -81,6 +81,54 @@ export class ReportsService {
       department: { select: { id: true, name: true } },
     };
 
+    //
+    // The counters are scoped exactly like the lists below.
+    //
+    // Only the two *catalogue* counts (available, under maintenance) stay
+    // organisation-wide: GET /assets is readable by every authenticated role,
+    // so neither number tells a caller anything it cannot already query. The
+    // operational figures — how many assets other people hold, the transfer
+    // queue, live bookings, today's maintenance — are filtered by the caller's
+    // scope. Before this, an employee received byte-identical counters to an
+    // admin on an endpoint documented as "only what is theirs".
+    const manager = isManager(user);
+    const deptHead = user.role === Role.DEPARTMENT_HEAD;
+    const deptId = user.departmentId ?? '__no-department__';
+
+    const allocatedWhere: Prisma.AssetWhereInput = manager
+      ? { status: AssetStatus.ALLOCATED }
+      : {
+          status: AssetStatus.ALLOCATED,
+          allocations: {
+            some: { status: AllocationStatus.ACTIVE, ...scope },
+          },
+        };
+
+    const maintenanceScope: Prisma.MaintenanceRequestWhereInput = manager
+      ? {}
+      : deptHead
+        ? { raisedBy: { is: { departmentId: deptId } } }
+        : { raisedById: user.id };
+
+    const bookingScope: Prisma.BookingWhereInput = manager
+      ? {}
+      : deptHead
+        ? { bookedBy: { is: { departmentId: deptId } } }
+        : { bookedById: user.id };
+
+    const transferScope: Prisma.TransferRequestWhereInput = manager
+      ? {}
+      : deptHead
+        ? {
+            OR: [
+              { requestedById: user.id },
+              { requestedBy: { is: { departmentId: deptId } } },
+              { toUser: { is: { departmentId: deptId } } },
+              { toDepartmentId: deptId },
+            ],
+          }
+        : { OR: [{ requestedById: user.id }, { toUserId: user.id }] };
+
     const [
       assetsAvailable,
       assetsAllocated,
@@ -94,16 +142,21 @@ export class ReportsService {
       upcomingReturnsList,
     ] = await Promise.all([
       this.prisma.asset.count({ where: { status: AssetStatus.AVAILABLE } }),
-      this.prisma.asset.count({ where: { status: AssetStatus.ALLOCATED } }),
+      this.prisma.asset.count({ where: allocatedWhere }),
       this.prisma.asset.count({
         where: { status: AssetStatus.UNDER_MAINTENANCE },
       }),
       // "Maintenance Today" = requests raised today OR still being worked on.
       this.prisma.maintenanceRequest.count({
         where: {
-          OR: [
-            { createdAt: { gte: startOfToday } },
-            { status: MaintenanceStatus.IN_PROGRESS },
+          AND: [
+            maintenanceScope,
+            {
+              OR: [
+                { createdAt: { gte: startOfToday } },
+                { status: MaintenanceStatus.IN_PROGRESS },
+              ],
+            },
           ],
         },
       }),
@@ -111,13 +164,18 @@ export class ReportsService {
       // a non-cancelled booking whose window contains "now".
       this.prisma.booking.count({
         where: {
-          status: { not: BookingStatus.CANCELLED },
-          startTime: { lte: now },
-          endTime: { gt: now },
+          AND: [
+            bookingScope,
+            {
+              status: { not: BookingStatus.CANCELLED },
+              startTime: { lte: now },
+              endTime: { gt: now },
+            },
+          ],
         },
       }),
       this.prisma.transferRequest.count({
-        where: { status: TransferStatus.REQUESTED },
+        where: { AND: [transferScope, { status: TransferStatus.REQUESTED }] },
       }),
       this.prisma.allocation.count({ where: upcomingWhere }),
       this.prisma.allocation.count({ where: overdueWhere }),

@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { NotificationType, Prisma, Role } from '@prisma/client';
 import { randomBytes } from 'crypto';
 
 import { ActivityService } from '../activity/activity.service';
+import type { AuthUser } from '../auth/jwt.strategy';
 import { normalizeEmail } from '../common/security/email';
 import { hashPassword } from '../common/security/password';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -51,12 +53,23 @@ export class EmployeesService {
     private readonly config: ConfigService,
   ) {}
 
-  /** GET /org/employees — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
-  async list(query: ListEmployeesDto) {
+  /**
+   * GET /org/employees — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD.
+   *
+   * A DEPARTMENT_HEAD only sees their own department; managers see everyone.
+   * The controller allows heads on this route, so the scope has to live here.
+   */
+  async list(query: ListEmployeesDto, user?: AuthUser) {
     const page = query.page ?? 1;
     const pageSize = Math.min(query.pageSize ?? 50, 200);
 
+    const deptScope: Prisma.UserWhereInput =
+      user?.role === Role.DEPARTMENT_HEAD
+        ? { departmentId: user.departmentId ?? '__no-department__' }
+        : {};
+
     const where: Prisma.UserWhereInput = {
+      ...deptScope,
       ...(query.q
         ? {
             OR: [
@@ -156,13 +169,29 @@ export class EmployeesService {
       : user;
   }
 
-  /** GET /org/employees/:id — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
-  async findOne(id: string) {
+  /**
+   * GET /org/employees/:id — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD.
+   *
+   * TC-102: a department head may not read another department's employee by id
+   * (the list is scoped the same way, so the detail route cannot be used to
+   * walk around it). Managers are unrestricted.
+   */
+  async findOne(id: string, user?: AuthUser) {
     const employee = await this.prisma.user.findUnique({
       where: { id },
       select: EMPLOYEE_SELECT,
     });
     if (!employee) throw new NotFoundException('Employee not found');
+
+    if (
+      user?.role === Role.DEPARTMENT_HEAD &&
+      employee.departmentId !== user.departmentId
+    ) {
+      throw new ForbiddenException(
+        'You can only view employees in your own department',
+      );
+    }
+
     return employee;
   }
 
@@ -229,7 +258,7 @@ export class EmployeesService {
    * last remaining active ADMIN into lockout.
    */
   async updateRole(actorId: string, id: string, dto: UpdateEmployeeRoleDto) {
-    const { employee, previousRole } = await this.prisma.$transaction(
+    const { employee } = await this.prisma.$transaction(
       async (tx) => {
         const current = await tx.user.findUnique({
           where: { id },
@@ -254,17 +283,24 @@ export class EmployeesService {
           data: { role: dto.role },
           select: EMPLOYEE_SELECT,
         });
-        return { employee: updated, previousRole: current.role };
+
+        // The audit row belongs to the same transaction as the change it
+        // records: a crash between the two used to leave a role change with no
+        // activity entry (docs/RESUME_AUDIT.md recorded this gap).
+        await this.activity.log(
+          {
+            actorId,
+            action: 'user.role_changed',
+            entityType: 'User',
+            entityId: updated.id,
+            metadata: { from: current.role, to: dto.role },
+          },
+          tx,
+        );
+
+        return { employee: updated };
       },
     );
-
-    await this.activity.log({
-      actorId,
-      action: 'user.role_changed',
-      entityType: 'User',
-      entityId: employee.id,
-      metadata: { from: previousRole, to: dto.role },
-    });
 
     // Inform the affected user their role changed.
     await this.notifications.notify({

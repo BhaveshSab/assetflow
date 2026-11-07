@@ -29,8 +29,8 @@ export class EmployeesController {
   /** List employees — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
   @Get()
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  list(@Query() query: ListEmployeesDto) {
-    return this.employees.list(query);
+  list(@Query() query: ListEmployeesDto, @CurrentUser() user: AuthUser) {
+    return this.employees.list(query, user);
   }
 
   /** Minimal active-employee directory (id/name/email/dept) for picking a
@@ -51,8 +51,8 @@ export class EmployeesController {
   /** Employee detail — ADMIN, ASSET_MANAGER, DEPARTMENT_HEAD. */
   @Get(':id')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
-  findOne(@Param('id') id: string) {
-    return this.employees.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.employees.findOne(id, user);
   }
 
   /** Update an employee's profile (ADMIN only). Never changes role. */
