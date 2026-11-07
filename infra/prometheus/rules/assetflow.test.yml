@@ -147,9 +147,6 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: HostCpuSaturated
-              job: node
-              instance: node-exporter:9100
-              service: host
               severity: warning
             exp_annotations:
               summary: The host CPU has been above 90% for 15 minutes

@@ -111,13 +111,25 @@ jobs:
             prom/prometheus:v2.54.1 \
             check rules /rules/assetflow.yml
 
+      # promtool prints the whole failing case as one long line per problem;
+      # replaying it as annotations puts the message on the pull request instead
+      # of three clicks into the log.
       - name: Test the alert rules
         run: |
-          docker run --rm \
+          set +e
+          output=$(docker run --rm \
             -v "$PWD/infra/prometheus/rules:/rules:ro" \
             --entrypoint promtool \
             prom/prometheus:v2.54.1 \
-            test rules /rules/assetflow.test.yml
+            test rules /rules/assetflow.test.yml 2>&1)
+          code=$?
+          echo "$output"
+          if [ "$code" -ne 0 ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=promtool::${line}"
+            done <<< "$output"
+          fi
+          exit $code
 
       # The blackbox exporter's config is small but a typo silently stops the
       # certificate probe, so it is validated in the same image that runs it.
