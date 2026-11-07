@@ -25,6 +25,10 @@ import { ActivityService } from '../activity/activity.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { NotificationsService } from '../notifications/notifications.service';
 import { bookingScope } from '../common/auth/scopes';
+import {
+  isCheckViolation,
+  isExclusionViolation,
+} from '../common/prisma/constraint-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
@@ -75,38 +79,40 @@ export class BookingsService {
       throw new BadRequestException('startTime must be in the future');
     }
 
-    const booking = await this.prisma.$transaction(async (tx) => {
-      const asset = await tx.asset.findUnique({ where: { id: dto.assetId } });
-      if (!asset) {
-        throw new BadRequestException('Asset not found');
-      }
-      if (!asset.isBookable) {
-        throw new ConflictException('This asset is not bookable');
-      }
-      if (OUT_OF_SERVICE.includes(asset.status)) {
-        throw new ConflictException(
-          `Asset is out of service and cannot be booked (status: ${asset.status})`,
-        );
-      }
+    const booking = await this.runGuarded(() =>
+      this.prisma.$transaction(async (tx) => {
+        const asset = await tx.asset.findUnique({ where: { id: dto.assetId } });
+        if (!asset) {
+          throw new BadRequestException('Asset not found');
+        }
+        if (!asset.isBookable) {
+          throw new ConflictException('This asset is not bookable');
+        }
+        if (OUT_OF_SERVICE.includes(asset.status)) {
+          throw new ConflictException(
+            `Asset is out of service and cannot be booked (status: ${asset.status})`,
+          );
+        }
 
-      // Lock the asset row so two concurrent overlapping bookings can't both
-      // pass assertNoOverlap (closes the check-then-write race).
-      await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${dto.assetId} FOR UPDATE`;
+        // Lock the asset row so two concurrent overlapping bookings can't both
+        // pass assertNoOverlap (closes the check-then-write race).
+        await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${dto.assetId} FOR UPDATE`;
 
-      await this.assertNoOverlap(tx, dto.assetId, startTime, endTime);
+        await this.assertNoOverlap(tx, dto.assetId, startTime, endTime);
 
-      return tx.booking.create({
-        data: {
-          assetId: dto.assetId,
-          bookedById: user.id,
-          startTime,
-          endTime,
-          purpose: dto.purpose,
-          status: BookingStatus.UPCOMING,
-        },
-        include: bookingInclude,
-      });
-    });
+        return tx.booking.create({
+          data: {
+            assetId: dto.assetId,
+            bookedById: user.id,
+            startTime,
+            endTime,
+            purpose: dto.purpose,
+            status: BookingStatus.UPCOMING,
+          },
+          include: bookingInclude,
+        });
+      }),
+    );
 
     await this.activity.log({
       actorId: user.id,
@@ -239,29 +245,35 @@ export class BookingsService {
       throw new BadRequestException('startTime must be in the future');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.findUnique({ where: { id } });
-      if (!booking) {
-        throw new NotFoundException('Booking not found');
-      }
-      this.assertBookerOrManager(user, booking.bookedById);
-      if (booking.status === BookingStatus.CANCELLED) {
-        throw new ConflictException('Cancelled bookings cannot be rescheduled');
-      }
-      if (new Date() >= booking.endTime) {
-        throw new ConflictException('Completed bookings cannot be rescheduled');
-      }
+    const updated = await this.runGuarded(() =>
+      this.prisma.$transaction(async (tx) => {
+        const booking = await tx.booking.findUnique({ where: { id } });
+        if (!booking) {
+          throw new NotFoundException('Booking not found');
+        }
+        this.assertBookerOrManager(user, booking.bookedById);
+        if (booking.status === BookingStatus.CANCELLED) {
+          throw new ConflictException(
+            'Cancelled bookings cannot be rescheduled',
+          );
+        }
+        if (new Date() >= booking.endTime) {
+          throw new ConflictException(
+            'Completed bookings cannot be rescheduled',
+          );
+        }
 
-      await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${booking.assetId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${booking.assetId} FOR UPDATE`;
 
-      await this.assertNoOverlap(tx, booking.assetId, startTime, endTime, id);
+        await this.assertNoOverlap(tx, booking.assetId, startTime, endTime, id);
 
-      return tx.booking.update({
-        where: { id },
-        data: { startTime, endTime },
-        include: bookingInclude,
-      });
-    });
+        return tx.booking.update({
+          where: { id },
+          data: { startTime, endTime },
+          include: bookingInclude,
+        });
+      }),
+    );
 
     await this.activity.log({
       actorId: user.id,
@@ -287,6 +299,31 @@ export class BookingsService {
   }
 
   // --- helpers ------------------------------------------------------------
+
+  /**
+   * Run a write and translate the storage-level invariants into the same HTTP
+   * errors the application checks produce.
+   *
+   * The checks run inside a transaction that locks the asset row, so a
+   * violation here means a writer outside this code path (a script, a job, a
+   * second process) already took the slot. The client still gets a 409, not a
+   * 500 carrying a Postgres error.
+   */
+  private async runGuarded<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (err) {
+      if (isExclusionViolation(err, 'Booking_no_overlap')) {
+        throw new ConflictException(
+          'This time slot overlaps an existing booking for this asset',
+        );
+      }
+      if (isCheckViolation(err, 'Booking_time_order')) {
+        throw new BadRequestException('endTime must be after startTime');
+      }
+      throw err;
+    }
+  }
 
   /**
    * Reject (409) if any non-cancelled booking for the asset overlaps

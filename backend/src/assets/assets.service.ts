@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   AllocationStatus,
@@ -12,6 +13,7 @@ import {
 
 import { AuthUser } from '../auth/jwt.strategy';
 import { ActivityService } from '../activity/activity.service';
+import { isUniqueViolation } from '../common/prisma/constraint-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { QueryAssetsDto } from './dto/query-assets.dto';
@@ -107,20 +109,28 @@ export class AssetsService {
 
         return asset;
       } catch (err) {
-        // Only retry on a unique-constraint clash (racing tag generation).
-        if (
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === 'P2002'
-        ) {
+        // Retry only on a unique-constraint clash. Duck-typed on the error
+        // shape rather than `instanceof Prisma.PrismaClientKnownRequestError`:
+        // with a driver adapter the error class can come from a different
+        // module instance, and `instanceof` then quietly returns false — which
+        // turned a retryable collision into a 500.
+        if (isUniqueViolation(err, ['assetTag', 'Asset_assetTag_key'])) {
           lastError = err;
+          // Small randomised pause so retries of a burst do not stay in lockstep.
+          await new Promise((resolve) =>
+            setTimeout(resolve, 5 + Math.floor(Math.random() * 20)),
+          );
           continue;
         }
         throw err;
       }
     }
 
-    throw new Error(
-      `Failed to allocate a unique asset tag after ${MAX_TAG_RETRIES} attempts: ${String(
+    // Exhausting the budget is a transient capacity problem, not a bad request:
+    // say so honestly instead of throwing a bare Error (which the filter turns
+    // into a 500 carrying a stack trace).
+    throw new ServiceUnavailableException(
+      `Could not allocate an asset tag right now (${MAX_TAG_RETRIES} attempts collided). Please retry. Last error: ${String(
         lastError,
       )}`,
     );
@@ -158,14 +168,44 @@ export class AssetsService {
         orderBy: { createdAt: 'desc' },
         take,
         skip,
-        include: {
+        // A list screen needs the columns it renders, not the whole row. The
+        // two JSON blobs (`documents`, `customFieldValues`) are the heaviest
+        // fields on an asset and are only ever shown on the detail page, so
+        // they are fetched by findOne() and deliberately not here. The nested
+        // allocation is trimmed to what a row displays as well.
+        select: {
+          id: true,
+          assetTag: true,
+          name: true,
+          serialNumber: true,
+          acquisitionDate: true,
+          acquisitionCost: true,
+          condition: true,
+          location: true,
+          photoUrl: true,
+          isBookable: true,
+          status: true,
+          categoryId: true,
+          createdAt: true,
+          updatedAt: true,
           category: { select: { id: true, name: true } },
           allocations: {
             where: { status: AllocationStatus.ACTIVE },
             take: 1,
             orderBy: { allocatedAt: 'desc' },
-            include: {
-              holderUser: { select: USER_SELECT },
+            select: {
+              id: true,
+              status: true,
+              allocatedAt: true,
+              expectedReturnDate: true,
+              holderUser: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  departmentId: true,
+                },
+              },
               department: { select: { id: true, name: true } },
             },
           },
@@ -359,11 +399,23 @@ export class AssetsService {
    * assets.
    */
   private async nextAssetTag(tx: Prisma.TransactionClient): Promise<string> {
+    // Take the counter row first: this serialises concurrent registrations, so
+    // no two callers can read the same "current" value. Released on COMMIT.
+    const counter = await tx.$queryRaw<
+      Array<{ value: bigint | number | string }>
+    >`
+      SELECT "value" FROM "AssetTagCounter" WHERE "id" = 1 FOR UPDATE
+    `;
+
+    // The table still wins if it is ahead of the counter (a data import, a
+    // restore, a manual INSERT). Read it under the same lock, so the maximum
+    // cannot move between this read and the insert.
+    //
     // NOTE: the prefix length is inlined as a *number* in the arithmetic
     // below. `SUBSTRING(tag FROM $1)` cannot be used here — Postgres reads a
     // parameterised "FROM" argument as a regular expression and silently
     // returns NULL instead of the tail of the tag.
-    const rows = await tx.$queryRaw<
+    const highest = await tx.$queryRaw<
       Array<{ maxNumber: number | bigint | null }>
     >`
       SELECT COALESCE(MAX(CAST(RIGHT("assetTag", LENGTH("assetTag") - ${ASSET_TAG_PREFIX.length}) AS INTEGER)), 0) AS "maxNumber"
@@ -371,8 +423,20 @@ export class AssetsService {
       WHERE "assetTag" LIKE ${`${ASSET_TAG_PREFIX}%`}
     `;
 
-    const max = Number(rows[0]?.maxNumber ?? 0);
-    const nextNumber = (Number.isFinite(max) ? max : 0) + 1;
+    const fromCounter = Number(counter[0]?.value ?? 0);
+    const fromTable = Number(highest[0]?.maxNumber ?? 0);
+    const nextNumber =
+      Math.max(
+        Number.isFinite(fromCounter) ? fromCounter : 0,
+        Number.isFinite(fromTable) ? fromTable : 0,
+      ) + 1;
+
+    // Persist the new high-water mark in the caller's transaction: if the asset
+    // insert fails, the counter rolls back with it and no number is burned.
+    await tx.assetTagCounter.update({
+      where: { id: 1 },
+      data: { value: BigInt(nextNumber) },
+    });
 
     return `${ASSET_TAG_PREFIX}${String(nextNumber).padStart(ASSET_TAG_PAD, '0')}`;
   }

@@ -67,7 +67,15 @@ export async function createTestApp(
 export async function resetDatabase(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "PasswordResetToken", "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
+    'TRUNCATE TABLE "AssetTagCounter", "PasswordResetToken", "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
+  );
+
+  // The asset-tag counter is durable state (that is the point of it: deleting
+  // assets must not recycle a tag). A test that starts from an empty database
+  // still expects the first registration to be AF-0001, so the counter is put
+  // back to zero with the rest of the schema.
+  await prisma.$executeRawUnsafe(
+    'INSERT INTO "AssetTagCounter" ("id", "value") VALUES (1, 0)',
   );
 
   // The attempt counters are in-process — clear them between tests so one

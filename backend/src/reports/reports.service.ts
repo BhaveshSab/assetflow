@@ -729,7 +729,10 @@ export class ReportsService {
       if (totalAssets === 0) return 0;
       const assetsInUse = new Set<string>();
       for (const row of allocatedRows) {
-        if (row.allocatedAt < end && (!row.returnedAt || row.returnedAt >= start)) {
+        if (
+          row.allocatedAt < end &&
+          (!row.returnedAt || row.returnedAt >= start)
+        ) {
           assetsInUse.add(row.assetId);
         }
       }
@@ -739,7 +742,11 @@ export class ReportsService {
     if (range === '30d') {
       // Daily points: a 30-day window is unreadable as six monthly buckets.
       for (let i = 29; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        const d = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate() - i,
+        );
         const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
         utilizationTrend.push({
           month: `${d.getDate()} ${MONTHS[d.getMonth()]}`,
@@ -752,9 +759,7 @@ export class ReportsService {
         // From the first allocation, but never more than two years of months.
         const cap = monthsBack(23);
         const earliest = allocatedRows[0]?.allocatedAt;
-        cursor = startOfMonth(
-          earliest && earliest < cap ? earliest : cap,
-        );
+        cursor = startOfMonth(earliest && earliest < cap ? earliest : cap);
         if (allocatedRows.length === 0) cursor = monthsBack(5);
       } else {
         cursor = startOfMonth(since);

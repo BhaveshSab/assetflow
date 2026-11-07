@@ -10,6 +10,7 @@
  * `prisma migrate deploy` uses, so the tests exercise the shipped schema.
  */
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
@@ -33,7 +34,15 @@ async function applyMigrations(db: PGlite) {
 }
 
 export default async function globalSetup() {
-  const db = await PGlite.create();
+  // `btree_gist` is a contrib extension: Postgres does not ship it compiled in,
+  // so the engine cannot create it with a bare `CREATE EXTENSION`. PGlite
+  // provides it as an importable bundle, which is registered here so the
+  // migration that adds the `Booking_no_overlap` EXCLUDE constraint replays
+  // exactly as it will on the production server (where `postgresql-contrib`
+  // is installed).
+  const db = await PGlite.create({
+    extensions: { btree_gist },
+  });
   // Port 0 lets the OS pick a free port. A fixed port is not portable: on
   // Windows + Hyper-V, WinNAT reserves whole ranges (e.g. 54259–54358), and
   // binding inside one fails with EACCES. `TEST_PG_PORT` still overrides it.
