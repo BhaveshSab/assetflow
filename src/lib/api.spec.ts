@@ -83,6 +83,16 @@ describe("api client", () => {
       await expect(apiGet("/assets")).rejects.toThrow(/Could not reach/);
     });
 
+    it("names both causes of a failed request: API down, or this page not allowed", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("failed")));
+
+      // A CORS block and a dead API are the same event in the browser, so the
+      // message must not assert one of them.
+      await expect(apiGet("/assets")).rejects.toThrow(
+        /may be offline, or it may not allow http:\/\/localhost:3000 to call it/,
+      );
+    });
+
     it("drops the session and sends the user back to the sign-in page on a 401", async () => {
       localStorage.setItem("token", "expired-token");
       localStorage.setItem("session", JSON.stringify({ token: "expired-token" }));
