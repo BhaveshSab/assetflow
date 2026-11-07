@@ -76,7 +76,7 @@ Recharts, Framer Motion, Vitest, ESLint
 
 3. **Cut the first load by more than half without removing a feature** — the
    app was one 1,089 kB file (294 kB gzipped) that carried every screen plus
-   Recharts and Framer Motion; it is now **147 kB gzipped** for the first
+   Recharts and Framer Motion; it is now **146 kB gzipped** for the first
    screen, one 4–10 kB file per view loaded on demand, and the **98 kB
    gzipped** charts chunk only fetched when a chart is drawn. The last step was
    not `React.lazy`: the chunk list named packages, so Rollup had put recharts'
@@ -84,7 +84,7 @@ Recharts, Framer Motion, Vitest, ESLint
    entry imported it, and every visitor downloaded **118 kB gzipped of charting
    library before the sign-in page painted** — first load fell from 247 kB to
    143 kB gzipped once chunks were assigned by module path, and stands at
-   **147 kB gzipped** now that the account screens exist.
+   **146 kB gzipped** now that the account screens exist.
 
 4. **Turned one hard-coded palette into a real light/dark theme** — the app was
    built against a single dark palette: ~2,300 colour utilities (`zinc`/`gray`

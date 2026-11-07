@@ -9,7 +9,7 @@ Vercel) and talking to the NestJS API under `/api`.
 | **Stack** | React 18.3 · TypeScript 5.6 (`strict`) · Vite 5 · Tailwind 3 · React Router 6 · Recharts 3 · Framer Motion 12 · lucide-react |
 | **Tests** | 92 Vitest tests in 13 files (unit + component, jsdom) |
 | **Lint** | ESLint 9 · `react-hooks` · `react-refresh` · `typescript-eslint` |
-| **First load** | **147 kB gzipped** (React 50, Motion 42, vendor 28, app 9, icons 7, ui 1.5, CSS 9); the **98 kB gzipped** Recharts chunk is fetched only when a chart is drawn |
+| **First load** | **146 kB gzipped** (vendor 77 — React, ReactDOM, React Router and their CJS helpers in one file — Motion 42, app 9, icons 7, ui 1.5, CSS 9); the **98 kB gzipped** Recharts chunk is fetched only when a chart is drawn |
 | **Screens** | 12 lazily-loaded views — 9 navigation screens + 3 role dashboards (admin / manager / employee) — reached from 10 sidebar entries, plus 2 auth routes |
 | **Theme** | light and dark, from CSS variables; the choice is remembered and follows the OS until it is made |
 
@@ -92,7 +92,7 @@ browser cache.
 
 | Before | After |
 |---|---|
-| one file, 1,089 kB (294 kB gzipped) | **147 kB gzipped first load** (React 50 + Motion 42 + vendor 28 + app 9 + icons 7 + ui 1.5 + CSS 9), then one 4–10 kB file per view |
+| one file, 1,089 kB (294 kB gzipped) | **146 kB gzipped first load** (vendor 77 + Motion 42 + app 9 + icons 7 + ui 1.5 + CSS 9), then one 4–10 kB file per view |
 | Recharts in the first load | a **98 kB gzipped** charts chunk, requested when a chart is drawn |
 
 **The recharts chunk was still being preloaded until 2026-11-05.** The chunk
@@ -104,15 +104,29 @@ downloaded 118 kB gzipped of charting library before the sign-in page painted.
 Assigning chunks by module path (`vite.config.ts`) fixed it: first load went
 from **247 kB to 143 kB gzipped**.
 
-**2026-11-07: 147.4 kB gzipped.** The account screens (`/profile`,
+**2026-11-07: 146.3 kB gzipped.** The account screens (`/profile`,
 `/forgot-password`, `/reset-password`) and the audit-cycle panel added ~4 kB of
 application code and ~0.3 kB of CSS. They are lazily loaded, so the sign-in
 page still pays only for what it draws. Measured from `dist/index.html`:
 
 ```
-index  9.20 · vendor 28.39 · react 49.83 · icons 7.09 · motion 42.13
-ui     1.45 ·  css  9.29   →  147.38 kB gz   (charts 98.54 kB gz, on demand)
+index  8.97 · vendor 77.45 · icons 7.09 · motion 42.14
+ui     1.45 ·  css  9.22   →  146.32 kB gz   (charts 98.52 kB gz, on demand)
 ```
+
+**The `react` chunk is gone on purpose.** Splitting React out of `vendor`
+created a circular import between the two files — `react` needs Rollup's CJS
+interop helpers (which lived in `vendor`), and `vendor` needs the React
+namespace. Chunks in a cycle are only safe while the browser happens to
+evaluate them in the lucky order, and on 2026-11-07 it did not: the shipped
+page died with `Cannot read properties of undefined (reading 'useState')`
+before painting a single pixel, while lint, types, 319 tests and `npm run
+build` were all green. React, ReactDOM, React Router and their helpers now
+share one file, which cannot be circular with itself; the first load is 1 kB
+*smaller* than the broken build because there is one chunk header less.
+`scripts/bundle-smoke.mjs` (run by `npm run test:bundle` and by CI) fails the
+build if a cycle ever returns, and loads the real entry chunk in jsdom to prove
+it renders.
 
 ### 2.6 Light and dark are one set of tokens, not two stylesheets
 

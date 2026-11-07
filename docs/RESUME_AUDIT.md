@@ -70,16 +70,17 @@ Recharts, role-based routing.
 | | Value |
 |---|---|
 | Before | 1,089 kB raw / **294 kB gzip**, one file — `docs/FRONTEND.md:95` ✅ |
-| Now (this build) | **147.4 kB gzip** first load |
+| Now (this build) | **146.3 kB gzip** first load |
 | Reduction | **51 %**, not 60 % |
 
-Current first load, measured on this commit: React 48.7 + Motion 41.1 + vendor 27.7 + CSS 9.0
-+ app 9.2 + icons 7.1 + ui 1.5 = **147.4 kB gz**. Recharts is a separate **98.5 kB gz** chunk
-that is requested only when a chart draws; each view is 2.64–10.16 kB gz on top.
+Current first load, measured on this commit: vendor 77.5 (React, ReactDOM, React Router and
+their CJS helpers in one file) + Motion 42.1 + CSS 9.2 + app 9.0 + icons 7.1 + ui 1.5 =
+**146.3 kB gz**. Recharts is a separate **98.5 kB gz** chunk that is requested only when a
+chart draws; each view is 2.6–10.2 kB gz on top.
 
 **Say it like this:**
-> *Cut first-load JavaScript from 294 kB to 144 kB gzipped (51 %) by splitting the views and
-> moving Recharts into a deferred 96 kB chunk.*
+> *Cut first-load JavaScript from 294 kB to 146 kB gzipped (50 %) by splitting the views and
+> moving Recharts into a deferred 98 kB chunk.*
 
 **Keywords:** code splitting, manualChunks, gzip budget, deferred/lazy chunk, cache invalidation.
 
@@ -359,7 +360,7 @@ interviewer clicks.
    frozen and was not audited in this pass; none of those numbers were re-measured here.
 3. **The smart-grid project** — C++, ESP32, MQTT, Isolation Forest, Streamlit: not in this repo.
 4. **The 294 kB “before” figure** — recorded in `docs/FRONTEND.md:95` from the pre-split build;
-   the *current* 147.4 kB is measured, the historical 294 kB is a documented past measurement,
+   the *current* 146.3 kB is measured, the historical 294 kB is a documented past measurement,
    not re-runnable from this commit.
 5. **“Deactivation takes effect at once”** — true for the next API call; an open tab shows stale
    UI until it polls (60 s). Not measurable as “at once” from the UI.

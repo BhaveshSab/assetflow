@@ -83,6 +83,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Every check above tests the source. This one loads the files the
+      # browser actually downloads: it fails if two chunks import each other
+      # (a cycle makes startup depend on evaluation order) or if the entry
+      # chunk throws before React paints. On 2026-11-07 a bundle with exactly
+      # that defect shipped while lint, types, tests and build were all green,
+      # and the deployed site was a blank page.
+      - name: Bundle smoke test (the shipped files must boot)
+        run: node scripts/bundle-smoke.mjs
+
       # The theme is two tables of colour, and "it looks fine to me" is not a
       # check. This parses the tokens out of src/index.css and fails if any
       # pair drops below WCAG AA.
