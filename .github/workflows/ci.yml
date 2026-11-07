@@ -53,6 +53,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      # `nest build` puts the compiled app at `dist/` only while every file it
+      # compiles lives under `src/`. One extra root (a script) shifts all of it
+      # to `dist/src/`, which breaks `node dist/main.js` in the Docker image and
+      # `require('../dist/serverless')` on Vercel — silently, and only in the
+      # deployment. Nothing else in the pipeline notices, so this asserts it.
+      - name: Assert the compiled layout the deployments depend on
+        run: |
+          node -e "
+            for (const file of ['dist/main.js', 'dist/serverless.js']) {
+              require('fs').accessSync(file);
+              console.log('✓', file);
+            }
+          "
+
   frontend:
     name: Frontend (lint, type check, tests, build)
     runs-on: ubuntu-latest
