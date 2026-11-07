@@ -12,7 +12,7 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 import { ListDepartmentsDto } from './dto/list-departments.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 
-const HEAD_SELECT = { id: true, name: true } as const;
+const HEAD_SELECT = { id: true, name: true, email: true } as const;
 
 @Injectable()
 export class DepartmentsService {

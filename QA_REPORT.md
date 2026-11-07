@@ -327,3 +327,35 @@ Found while re-testing the Asset Directory:
 Checks at the time of writing: backend build clean, 98 unit tests, 152 e2e
 (150 passing, 1 skipped, includes the six new cases), frontend 93 tests,
 typecheck clean, ESLint 0 errors (18 pre-existing warnings).
+
+## Admin setup flows, re-tested
+
+Drove the three admin journeys in the browser against a real database, then
+re-read each result from the API after a full page reload:
+
+* **Create department** — the new department appeared in the table and in
+  `GET /org/departments`. The head field resolves a real employee by name; a name
+  that matches nobody is dropped silently (no head, no message), which is worth
+  tightening.
+* **Add employee** — created through the dialog with department IT and came back
+  as role `EMPLOYEE`, status `ACTIVE`, department IT.
+* **Change role** — promoting that employee to Asset Manager showed *Role updated
+to Asset Manager*, persisted as `ASSET_MANAGER`, and the directory row read
+  "Asset Manager" after the reload.
+* The Activity Log recorded all three: `department.created`, `user.created`,
+  `user.role_changed`.
+
+One defect found and fixed here:
+
+* **A department with a head always displayed "Unassigned".** The table only drew
+  the head when `head.email` existed, and `HEAD_SELECT` in the departments service
+  selected just the head's id and name. The select now includes the email and the
+  row keys off the head's name instead, so heads render (with their email when
+  the API supplies one). Pinned by `src/components/dashboard/OrganizationSetup.spec.tsx`.
+
+Also verified: the Asset Directory's category and status dropdowns narrow the
+table, pinned by a component test because a native `<select>` cannot be driven
+from the automation used for the screen pass.
+
+Checks after these changes: backend build clean, 152 e2e passing (1 skipped),
+frontend 95 tests, typecheck clean, ESLint 0 errors (18 pre-existing warnings).
