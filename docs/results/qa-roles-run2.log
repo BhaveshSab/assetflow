@@ -1,0 +1,91 @@
+QA|TC-00|all|env|PASS|GET /api/health → 200 database=up
+QA|TC-01|Employee|S1 session|PASS|POST /auth/signup → 201 role=EMPLOYEE
+QA|TC-02|Employee|S1 session|PASS|POST /auth/signup {role:"ADMIN"} → 400 ["property role should not exist"]
+QA|TC-03|Employee|S1 session|PASS|POST /auth/login wrong password → 401 "Invalid email or password"
+QA|TC-05|all|S1 session|PASS|GET /assets without token → 401
+QA|TC-06|Employee|S1 session|PASS|forgot → 202; reset → 200; reuse → 400
+QA|TC-07|Employee|S1 session|PASS|change-password → 200; the pre-change session → 401
+QA|TC-08|Admin|S1 session|PASS|GET /auth/me (admin) → 200 role=ADMIN
+QA|TC-20|Admin|S3 org|PASS|create → 201 parent=set; patch → 200 status=INACTIVE
+QA|TC-21|Admin|S3 org|PASS|POST /org/categories (customFields) → 201 [{"key":"warrantyMonths","type":"number"}]
+QA|TC-22|Admin|S3 org|PASS|GET /org/employees → 200 rows=8 sample={"id":"cmw6s6esf000488nzahhs3y0y","name":"Ava Admin","email":"admin@assetflow.com","role":"ADMIN","status":"ACTIVE","departmentId":null,"department":null}
+QA|TC-23|Admin|S3 org|PASS|PATCH /org/employees/:id/role → 200 role=ASSET_MANAGER (restored 200)
+QA|TC-24:manager|Asset Manager|S3 org|PASS|departments=403 categories=403 role=403
+QA|TC-24:head|Department Head|S3 org|PASS|departments=403 categories=403 role=403
+QA|TC-24:priya|Employee|S3 org|PASS|departments=403 categories=403 role=403
+QA|TC-25|Employee|S3 org|PASS|GET /org/employees (employee) → 403
+QA|TC-100|Employee|security|PASS|PATCH /auth/me {role:ADMIN} → 400; role still EMPLOYEE
+QA|TC-30|Asset Manager|S4 assets|PASS|POST /assets → 201 tag=AF-0001 status=AVAILABLE cost=1500
+QA|TC-31|Asset Manager|S4 assets|PASS|two registrations → AF-0001, AF-0002
+QA|TC-34|Asset Manager|S4 assets|PASS|bookable flag → true
+QA|TC-32:priya|Employee|S4 assets|PASS|POST=403 PATCH=403
+QA|TC-32:head|Department Head|S4 assets|PASS|POST=403 PATCH=403
+QA|TC-33|Employee|S4 assets|PASS|search q=QA Laptop → 200 rows=1; filter status=AVAILABLE → 200 rows=5
+QA|TC-35|Admin|S4 assets|PASS|GET /assets/:id/history → 200 keys=allocations,maintenance
+QA|TC-40|Asset Manager|S5 allocation|PASS|POST /allocations → 201; asset → ALLOCATED; holder=undefined
+QA|TC-41|Asset Manager|S5 allocation|PASS|same asset to Raj → 409 "Asset AF-0001 is currently held by Priya Sharma"
+QA|TC-42|Employee|S5 allocation|PASS|POST /allocations (employee) → 403
+QA|TC-43|Department Head|S5 transfer|PASS|request → 201; head approve → 200; holder now it2@acme.com; history has both holders=true; asset keys=id,assetTag,name,serialNumber,acquisitionDate,acquisitionCost,condition,location,photoUrl,documents,isBookable,status,customFieldValues,categoryId,createdAt,updatedAt,category,currentAllocation,currentHolder
+QA|TC-48|Asset Manager|S5 transfer|PASS|asset history retains the previous holder → true
+QA|TC-44|Department Head|S5 transfer|PASS|Facilities-to-Facilities transfer (never touching IT) approved by the IT head → 403 "You can only approve transfers that involve your department" (allocation 201)
+QA|TC-45|Asset Manager|S5 return|PASS|return → 200; asset → AVAILABLE; condition note stored=true
+QA|TC-46|Asset Manager|S5 allocation|PASS|allocation with a past return date → 201; GET /allocations/overdue → 200 rows=1
+QA|TC-48c|Department Head|S5 allocation|PASS|IT head: Raj's live Facilities allocation (cmw6s6fhb001988nznrzk6cd2) present in the list=false; ?departmentId=Facilities → 200 rows=0
+QA|TC-48b|Department Head|S5 allocation|PASS|GET /allocations (IT head) → 200 rows=4 all in IT=true depts=["cmw6s6erv000088nz1978i9ka","cmw6s6erv000088nz1978i9ka","cmw6s6erv000088nz1978i9ka","cmw6s6erv000088nz1978i9ka"] holders=["priya@acme.com","priya@acme.com","it2@acme.com","priya@acme.com"]
+QA|TC-49|Employee|S5 allocation|PASS|GET /allocations/my (employee) → 200 rows=3
+QA|TC-47|Employee|S5 allocation|PASS|GET /allocations (employee) → 403
+QA|TC-50|Employee|S6 booking|PASS|POST /bookings 09:00–10:00 → 201 status=UPCOMING
+QA|TC-51|Employee|S6 booking|PASS|POST /bookings 09:30–10:30 → 409 "This time slot overlaps an existing booking for this asset"
+QA|TC-52|Employee|S6 booking|PASS|POST /bookings 10:00–11:00 (adjacent) → 201
+QA|TC-53|Employee|S6 booking|PASS|POST /bookings on a non-bookable asset → 409
+QA|TC-54|Employee|S6 booking|PASS|cancel → 200; cancel twice → 409; reschedule → 200
+QA|TC-57|Department Head|S6 booking|PASS|POST /bookings as department head → 201
+QA|TC-56|Employee|S6 booking|PASS|booking in 20 min (201) → sweepReminders() twice → 1 BOOKING_REMINDER notification(s) for the booker
+QA|TC-55|Employee|S6 booking|PASS|GET /bookings?assetId (calendar data) → 200 rows=4 statuses=["UPCOMING","CANCELLED"]
+QA|TC-60|Employee|S7 maintenance|PASS|raise → 201 status=PENDING; asset unchanged ALLOCATED → ALLOCATED
+QA|TC-61|Asset Manager|S7 maintenance|PASS|approve → 200; asset → UNDER_MAINTENANCE
+QA|TC-63|Asset Manager|S7 maintenance|PASS|assign=200 start=200 resolve=200; asset → ALLOCATED (allocation to Raj still ACTIVE, so ALLOCATED is the documented restore)
+QA|TC-62|Asset Manager|S7 maintenance|PASS|reject → 200; asset (never approved) → AVAILABLE
+QA|TC-64:priya|Employee|S7 maintenance|PASS|POST /maintenance/:id/approve (priya) → 403
+QA|TC-64:head|Department Head|S7 maintenance|PASS|POST /maintenance/:id/approve (head) → 403
+QA|TC-65|Employee|S7 maintenance|PASS|GET /maintenance/my (raj) → 200 rows=1
+QA|TC-70|Admin|S8 audit|PASS|POST /audits (scope QA-Store) → 201 status=OPEN items=6
+QA|TC-71|Admin|S8 audit|PASS|POST /audits/:id/auditors → 201
+QA|TC-72|Employee|S8 audit|PASS|GET /audits/:id/items as assigned auditor → 200 items=6
+QA|TC-72b|Employee|S8 audit|PASS|PATCH item → MISSING as auditor → 200
+QA|TC-72c|Employee|S8 audit|PASS|GET /audits/:id/items as unassigned employee → 403
+QA|TC-73|Asset Manager|S8 audit|PASS|GET /audits/:id/discrepancies → 200 flagged=1 MISSING
+QA|TC-74|Admin|S8 audit|PASS|close as IT head → 403; close as admin → 200 status=CLOSED
+QA|TC-74b|Admin|S8 audit|PASS|asset of the MISSING item after close → LOST
+QA|TC-75|Admin|S8 audit|PASS|edit after close → 409; cycle history still readable → 200 status=CLOSED
+QA|TC-76|Employee|S8 audit|PASS|GET /audits (employee) → 403
+QA|TC-80|Asset Manager|S9 reports|PASS|8/8 → 200 for the manager; 8/8 → 200 for the admin
+QA|TC-86|Employee|S9 reports|PASS|8/8 → 403 for the employee
+QA|TC-86b|Department Head|S9 reports|PASS|8/8 → 403 for the department head
+QA|TC-85|Admin|S9 reports|PASS|export → 200 7 lines; header="assetTag,name,category,status,condition,location,serialNumber,acquisitionDate,acquisitionCost"; employee → 403
+QA|TC-90|Employee|S10 notifications|PASS|priya/raj/manager/admin mailboxes=27 notifications, 16 distinct types=["ASSET_ASSIGNED","ASSET_RETURNED","AUDIT_ASSIGNED","AUDIT_CLOSED","AUDIT_DISCREPANCY","BOOKING_CANCELLED","BOOKING_CONFIRMED","BOOKING_REMINDER","MAINTENANCE_APPROVED","MAINTENANCE_RAISED","MAINTENANCE_REJECTED","MAINTENANCE_RESOLVED","OVERDUE_RETUR
+QA|TC-91|Employee|S10 notifications|PASS|mark one → 200; read-all → 201; unread left=0
+QA|TC-92|Admin|S10 activity|PASS|admin → 200; employee → 403; department head → 403
+QA|TC-93|Admin|S10 activity|PASS|activity rows=39; newest=audit.closed
+QA|TC-10|Admin|S2 dashboard|PASS|GET /dashboard → 200; {"available":2,"allocated":3,"overdueReturns":1,"pendingTransfers":1}
+QA|TC-13|Employee|S2 dashboard|PASS|admin {"available":2,"allocated":3} vs employee {"available":2,"allocated":1} (status 200)
+QA|TC-11|Asset Manager|S2 dashboard|PASS|manager dashboard overdueReturns=1 overdueList=1
+QA|TC-10b|Employee|S2 dashboard|PASS|employee KPIs {"myAllocations":1,"myUpcomingReturns":0,"myOverdueReturns":1,"myActiveBookings":0} vs /allocations/my ACTIVE=1
+QA|TC-12|Employee|S2 dashboard|PASS|quick action "Register Asset" is refused for an employee → 403
+QA|TC-14|Department Head|S2 dashboard|PASS|GET /dashboard as department head → 200 {"available":2,"allocated":2}
+QA|TC-110|all|security|PASS|tampered JWT → 401 "Unauthorized"
+QA|TC-111|Employee|security|PASS|raj notifications=7; priya marking raj's cmw6s6fy4002f88nz7n8kc4y5 read → HTTP 200 but raj's isRead stayed false=true (update scoped by userId; the 200 is a no-op)
+QA|TC-112|Employee|S5 transfer|PASS|priya approving a pending transfer → 403 "You do not have permission to perform this action"
+QA|TC-113|Employee|S8 audit|PASS|POST /audits → employee=403 manager=403 head=403
+QA|TC-114|Employee|S6 booking|PASS|booking that starts in the past → 400 "startTime must be in the future"
+QA|TC-115|Employee|security|PASS|booking with bookedForUserId → 400 "["property bookedForUserId should not exist"]"
+QA|TC-116|Employee|S7 maintenance|PASS|GET /maintenance/my (priya) → 200 rows=1 onlyMine=true (priya@acme.com); IT head /my rows=0
+QA|TC-120|Employee|S6 booking|PASS|raj books → 201; priya cancel → 403, reschedule → 403; raj's booking still UPCOMING
+QA|TC-121|Employee|S6 booking|PASS|booking the asset the audit marked LOST → 409 "Asset is out of service and cannot be booked (status: LOST)"
+QA|TC-117|Asset Manager|S4 assets|PASS|negative acquisitionCost → 400 "["acquisitionCost must not be less than 0"]"
+QA|TC-118|Asset Manager|S4 assets|PASS|unknown/privileged fields (status,isAdmin) on create → 400 "["property status should not exist","property isAdmin should not exist"]"
+QA|TC-102a|Department Head|security|PASS|GET /org/employees (IT head) → 200 rows=5 distinctDepartments=1 Raj(Facilities) listed=false
+QA|TC-102b|Department Head|security|PASS|GET /org/employees/<Raj, Facilities> as IT head → 403 "You can only view employees in your own department"; same call for Priya (IT) → 200
+QA|TC-119|Admin|security|PASS|before: /auth/me → 200; PATCH status=INACTIVE → 200; login → 401; the pre-deactivation token → 401
+QA|TC-104|Admin|security|PASS|keys on /auth/me=id,name,email,role,status,departmentId,avatarUrl,credentialsChangedAt
+QA|TC-105|Admin|security|PASS|no stack traces in payloads
