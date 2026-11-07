@@ -277,6 +277,15 @@ model Asset {
   @@index([location])
 }
 
+/// The single row that hands out asset tags (see the migration
+/// 20261108090300_asset_tag_counter for why a counter row rather than a
+/// sequence). Always read and written inside the caller's transaction, with
+/// `SELECT … FOR UPDATE` on this row to serialise concurrent registrations.
+model AssetTagCounter {
+  id    Int    @id
+  value BigInt @default(0)
+}
+
 // ---------------------------------------------------------------------------
 // ALLOCATION & TRANSFER
 // ---------------------------------------------------------------------------
@@ -309,6 +318,11 @@ model Allocation {
   @@index([assetId])
   @@index([status])
   @@index([holderUserId])
+
+  // One ACTIVE allocation per asset is ALSO enforced by a partial unique index
+  // created in migration 20261108090000_allocation_one_active_per_asset.
+  // Prisma cannot express partial indexes, so it lives in raw SQL; do not drop
+  // it with a manual migration.
 }
 
 model TransferRequest {
@@ -360,8 +374,10 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Overlap validation is enforced in application logic; this index makes the
-  // "is there an existing booking for this asset in this window?" query fast.
+  // Overlap validation runs in application logic AND is enforced by the
+  // "Booking_no_overlap" EXCLUDE constraint created in migration
+  // 20261108090100_booking_no_overlap (raw SQL — Prisma cannot express it).
+  // This index keeps the "is there an existing booking in this window?" query fast.
   @@index([assetId, startTime, endTime])
   @@index([status])
 }
@@ -500,4 +516,6 @@ model ActivityLog {
 
   @@index([actorId])
   @@index([entityType, entityId])
+  // The feed is read newest-first (ORDER BY createdAt DESC LIMIT 50).
+  @@index([createdAt(sort: Desc)])
 }

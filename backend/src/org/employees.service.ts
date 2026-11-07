@@ -258,49 +258,47 @@ export class EmployeesService {
    * last remaining active ADMIN into lockout.
    */
   async updateRole(actorId: string, id: string, dto: UpdateEmployeeRoleDto) {
-    const { employee } = await this.prisma.$transaction(
-      async (tx) => {
-        const current = await tx.user.findUnique({
-          where: { id },
-          select: { id: true, role: true },
-        });
-        if (!current) throw new NotFoundException('Employee not found');
+    const { employee } = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.user.findUnique({
+        where: { id },
+        select: { id: true, role: true },
+      });
+      if (!current) throw new NotFoundException('Employee not found');
 
-        // Demoting an ADMIN away from ADMIN: block if they are the last active one.
-        if (current.role === Role.ADMIN && dto.role !== Role.ADMIN) {
-          const activeAdmins = await tx.user.count({
-            where: { role: Role.ADMIN, status: 'ACTIVE' },
-          });
-          if (activeAdmins <= 1) {
-            throw new ConflictException(
-              'Cannot change the role of the last remaining admin',
-            );
-          }
+      // Demoting an ADMIN away from ADMIN: block if they are the last active one.
+      if (current.role === Role.ADMIN && dto.role !== Role.ADMIN) {
+        const activeAdmins = await tx.user.count({
+          where: { role: Role.ADMIN, status: 'ACTIVE' },
+        });
+        if (activeAdmins <= 1) {
+          throw new ConflictException(
+            'Cannot change the role of the last remaining admin',
+          );
         }
+      }
 
-        const updated = await tx.user.update({
-          where: { id },
-          data: { role: dto.role },
-          select: EMPLOYEE_SELECT,
-        });
+      const updated = await tx.user.update({
+        where: { id },
+        data: { role: dto.role },
+        select: EMPLOYEE_SELECT,
+      });
 
-        // The audit row belongs to the same transaction as the change it
-        // records: a crash between the two used to leave a role change with no
-        // activity entry (docs/RESUME_AUDIT.md recorded this gap).
-        await this.activity.log(
-          {
-            actorId,
-            action: 'user.role_changed',
-            entityType: 'User',
-            entityId: updated.id,
-            metadata: { from: current.role, to: dto.role },
-          },
-          tx,
-        );
+      // The audit row belongs to the same transaction as the change it
+      // records: a crash between the two used to leave a role change with no
+      // activity entry (docs/RESUME_AUDIT.md recorded this gap).
+      await this.activity.log(
+        {
+          actorId,
+          action: 'user.role_changed',
+          entityType: 'User',
+          entityId: updated.id,
+          metadata: { from: current.role, to: dto.role },
+        },
+        tx,
+      );
 
-        return { employee: updated };
-      },
-    );
+      return { employee: updated };
+    });
 
     // Inform the affected user their role changed.
     await this.notifications.notify({

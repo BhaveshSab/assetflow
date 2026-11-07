@@ -18,6 +18,7 @@ import {
 
 import { ActivityService } from '../activity/activity.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { isUniqueViolation } from '../common/prisma/constraint-errors';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAllocationDto } from './dto/create-allocation.dto';
 import { CreateTransferDto } from './dto/create-transfer.dto';
@@ -67,123 +68,164 @@ export class AllocationsService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const asset = await tx.asset.findUnique({ where: { id: dto.assetId } });
-      if (!asset) throw new NotFoundException('Asset not found');
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const asset = await tx.asset.findUnique({ where: { id: dto.assetId } });
+        if (!asset) throw new NotFoundException('Asset not found');
 
-      // Lock THIS asset's row for the rest of the transaction so two concurrent
-      // allocate() calls for the same asset can't both pass the conflict check
-      // (closes the check-then-write race — the second one waits, then sees the
-      // ACTIVE allocation the first one created and is rejected).
-      await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${dto.assetId} FOR UPDATE`;
+        // Lock THIS asset's row for the rest of the transaction so two concurrent
+        // allocate() calls for the same asset can't both pass the conflict check
+        // (closes the check-then-write race — the second one waits, then sees the
+        // ACTIVE allocation the first one created and is rejected).
+        await tx.$queryRaw`SELECT id FROM "Asset" WHERE id = ${dto.assetId} FOR UPDATE`;
 
-      // Validate the target exists (and is usable) before we touch anything.
-      if (dto.holderUserId) {
-        const holder = await tx.user.findUnique({
-          where: { id: dto.holderUserId },
-          select: { id: true, status: true },
+        // Validate the target exists (and is usable) before we touch anything.
+        if (dto.holderUserId) {
+          const holder = await tx.user.findUnique({
+            where: { id: dto.holderUserId },
+            select: { id: true, status: true },
+          });
+          if (!holder) throw new NotFoundException('Holder user not found');
+          if (holder.status === RecordStatus.INACTIVE) {
+            throw new BadRequestException(
+              'Cannot allocate an asset to a deactivated user',
+            );
+          }
+        }
+        if (dto.departmentId) {
+          const dept = await tx.department.findUnique({
+            where: { id: dto.departmentId },
+            select: { id: true, status: true },
+          });
+          if (!dept) throw new NotFoundException('Department not found');
+          if (dept.status === RecordStatus.INACTIVE) {
+            throw new BadRequestException(
+              'Cannot allocate an asset to an inactive department',
+            );
+          }
+        }
+
+        // CORE CONFLICT RULE: no existing ACTIVE allocation for this asset.
+        const existing = await tx.allocation.findFirst({
+          where: { assetId: dto.assetId, status: AllocationStatus.ACTIVE },
+          include: {
+            holderUser: { select: USER_SELECT },
+            department: { select: { id: true, name: true } },
+          },
         });
-        if (!holder) throw new NotFoundException('Holder user not found');
-        if (holder.status === RecordStatus.INACTIVE) {
-          throw new BadRequestException(
-            'Cannot allocate an asset to a deactivated user',
+        if (existing) {
+          const holderName =
+            existing.holderUser?.name ??
+            existing.department?.name ??
+            'another holder';
+          throw new ConflictException({
+            message: `Asset ${asset.assetTag} is currently held by ${holderName}`,
+            currentHolder: existing.holderUser ?? null,
+            currentDepartment: existing.department ?? null,
+            currentAllocationId: existing.id,
+          });
+        }
+
+        // Belt-and-braces: the asset must also be flagged AVAILABLE.
+        if (asset.status !== AssetStatus.AVAILABLE) {
+          throw new ConflictException(
+            `Asset ${asset.assetTag} is not available (status: ${asset.status})`,
           );
         }
-      }
-      if (dto.departmentId) {
-        const dept = await tx.department.findUnique({
-          where: { id: dto.departmentId },
-          select: { id: true, status: true },
-        });
-        if (!dept) throw new NotFoundException('Department not found');
-        if (dept.status === RecordStatus.INACTIVE) {
-          throw new BadRequestException(
-            'Cannot allocate an asset to an inactive department',
-          );
-        }
-      }
 
-      // CORE CONFLICT RULE: no existing ACTIVE allocation for this asset.
-      const existing = await tx.allocation.findFirst({
-        where: { assetId: dto.assetId, status: AllocationStatus.ACTIVE },
-        include: {
-          holderUser: { select: USER_SELECT },
-          department: { select: { id: true, name: true } },
-        },
-      });
-      if (existing) {
-        const holderName =
-          existing.holderUser?.name ??
-          existing.department?.name ??
-          'another holder';
-        throw new ConflictException({
-          message: `Asset ${asset.assetTag} is currently held by ${holderName}`,
-          currentHolder: existing.holderUser ?? null,
-          currentDepartment: existing.department ?? null,
-          currentAllocationId: existing.id,
-        });
-      }
-
-      // Belt-and-braces: the asset must also be flagged AVAILABLE.
-      if (asset.status !== AssetStatus.AVAILABLE) {
-        throw new ConflictException(
-          `Asset ${asset.assetTag} is not available (status: ${asset.status})`,
-        );
-      }
-
-      const allocation = await tx.allocation.create({
-        data: {
-          assetId: dto.assetId,
-          holderUserId: dto.holderUserId ?? null,
-          departmentId: dto.departmentId ?? null,
-          allocatedById: user.id,
-          expectedReturnDate: dto.expectedReturnDate
-            ? new Date(dto.expectedReturnDate)
-            : null,
-          status: AllocationStatus.ACTIVE,
-        },
-        include: {
-          asset: true,
-          holderUser: { select: USER_SELECT },
-          department: { select: { id: true, name: true } },
-        },
-      });
-
-      await tx.asset.update({
-        where: { id: dto.assetId },
-        data: { status: AssetStatus.ALLOCATED },
-      });
-
-      await this.activity.log(
-        {
-          actorId: user.id,
-          action: 'asset.allocated',
-          entityType: 'Allocation',
-          entityId: allocation.id,
-          metadata: {
-            assetId: asset.id,
-            assetTag: asset.assetTag,
+        const allocation = await tx.allocation.create({
+          data: {
+            assetId: dto.assetId,
             holderUserId: dto.holderUserId ?? null,
             departmentId: dto.departmentId ?? null,
+            allocatedById: user.id,
+            expectedReturnDate: dto.expectedReturnDate
+              ? new Date(dto.expectedReturnDate)
+              : null,
+            status: AllocationStatus.ACTIVE,
           },
-        },
-        tx,
-      );
+          include: {
+            asset: true,
+            holderUser: { select: USER_SELECT },
+            department: { select: { id: true, name: true } },
+          },
+        });
 
-      if (dto.holderUserId) {
-        await this.notifications.notify(
+        await tx.asset.update({
+          where: { id: dto.assetId },
+          data: { status: AssetStatus.ALLOCATED },
+        });
+
+        await this.activity.log(
           {
-            userId: dto.holderUserId,
-            type: NotificationType.ASSET_ASSIGNED,
-            message: `Asset ${asset.assetTag} (${asset.name}) has been assigned to you`,
-            relatedEntityType: 'Allocation',
-            relatedEntityId: allocation.id,
+            actorId: user.id,
+            action: 'asset.allocated',
+            entityType: 'Allocation',
+            entityId: allocation.id,
+            metadata: {
+              assetId: asset.id,
+              assetTag: asset.assetTag,
+              holderUserId: dto.holderUserId ?? null,
+              departmentId: dto.departmentId ?? null,
+            },
           },
           tx,
         );
-      }
 
-      return allocation;
+        if (dto.holderUserId) {
+          await this.notifications.notify(
+            {
+              userId: dto.holderUserId,
+              type: NotificationType.ASSET_ASSIGNED,
+              message: `Asset ${asset.assetTag} (${asset.name}) has been assigned to you`,
+              relatedEntityType: 'Allocation',
+              relatedEntityId: allocation.id,
+            },
+            tx,
+          );
+        }
+
+        return allocation;
+      });
+    } catch (err) {
+      // The transaction above normally catches a double allocation itself (it
+      // locks the asset row first). If the write ever reaches the database
+      // invariant anyway — a second writer outside this code path, a retried
+      // request, a manual UPDATE — translate the constraint violation into the
+      // same 409 the application check would have produced.
+      if (isUniqueViolation(err, ['Allocation_one_active_per_asset'])) {
+        throw await this.conflictForHeldAsset(dto.assetId);
+      }
+      throw err;
+    }
+  }
+
+  /** Build the "already held by X" 409 for an asset, from current data. */
+  private async conflictForHeldAsset(
+    assetId: string,
+  ): Promise<ConflictException> {
+    const [asset, existing] = await Promise.all([
+      this.prisma.asset.findUnique({
+        where: { id: assetId },
+        select: { assetTag: true },
+      }),
+      this.prisma.allocation.findFirst({
+        where: { assetId, status: AllocationStatus.ACTIVE },
+        include: {
+          holderUser: { select: USER_SELECT },
+          department: { select: { id: true, name: true } },
+        },
+      }),
+    ]);
+    const holderName =
+      existing?.holderUser?.name ??
+      existing?.department?.name ??
+      'another holder';
+    return new ConflictException({
+      message: `Asset ${asset?.assetTag ?? assetId} is currently held by ${holderName}`,
+      currentHolder: existing?.holderUser ?? null,
+      currentDepartment: existing?.department ?? null,
+      currentAllocationId: existing?.id ?? null,
     });
   }
 
