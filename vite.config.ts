@@ -66,11 +66,35 @@ export default defineConfig({
             return "motion";
           }
           if (id.includes("lucide-react")) return "icons";
-          if (
-            /node_modules\/(react|react-dom|react-router|react-router-dom|scheduler)\//.test(id)
-          ) {
-            return "react";
-          }
+          /*
+           * React, ReactDOM, React Router and the React-adjacent CommonJS
+           * packages share ONE file — deliberately.
+           *
+           * They used to get a `react` chunk of their own, and that created a
+           * circular import between two files:
+           *
+           *   react-*.js   imports Rollup's CJS-interop helpers from vendor
+           *   vendor-*.js  imports the React namespace back from react
+           *
+           * A circular pair only works while the browser happens to evaluate
+           * them in the lucky order. `use-sync-external-store` (pulled in by
+           * Framer Motion) copies `React.useState` into a variable *while its
+           * module body runs*, so when `react` was evaluated first, `vendor`
+           * read it as `undefined` and the page died before painting:
+           *
+           *   TypeError: Cannot read properties of undefined (reading 'useState')
+           *
+           * Build 2026-11-07 shipped exactly that: `npm test` and `npm run
+           * build` were both green, and the site was a blank page. One chunk
+           * cannot be circular with itself, so this is the structural fix,
+           * not a reordering trick. The first load is the same bytes: both
+           * files were preloaded on every page (147.4 kB gz before, 146.5 kB
+           * after — one chunk header less).
+           *
+           * `scripts/bundle-smoke.mjs` fails the build if a chunk cycle ever
+           * comes back, and it is the only check here that loads the real
+           * bundle in a DOM.
+           */
           return "vendor";
         },
       },
