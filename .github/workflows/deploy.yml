@@ -97,6 +97,13 @@ jobs:
           # The deployment script pulls the image, migrates, starts the new
           # version, checks the health endpoint and rolls back on failure.
           IMAGE="${IMAGE}" infra/scripts/deploy.sh
+
+          # The SPA is served by the Nginx container on this host, and its
+          # image is built here from this checkout — deploy.sh only replaces
+          # the API. Without this step a frontend commit would be in main and
+          # never reach the browser. Recreate just that container.
+          docker compose --project-directory infra -f infra/docker-compose.yml build nginx
+          docker compose --project-directory infra -f infra/docker-compose.yml up -d --no-deps nginx
           REMOTE
 
       - name: Verify the deployment on the host
