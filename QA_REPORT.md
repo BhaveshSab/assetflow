@@ -359,3 +359,60 @@ from the automation used for the screen pass.
 
 Checks after these changes: backend build clean, 152 e2e passing (1 skipped),
 frontend 95 tests, typecheck clean, ESLint 0 errors (18 pre-existing warnings).
+
+## Reports, exports and the department-head view
+
+### The asset export
+`GET /reports/export/assets.csv` answered `200` with `text/csv`, one header row in
+the documented column order and one row per asset (18 of 18), with values that
+contain a comma or a quote wrapped and escaped per RFC 4180. The Reports page's
+export button downloads `assetflow-assets-<date>.csv`; a copy of the real download
+is kept outside the repo as `assets-export-check.csv`.
+
+### The range selector did nothing
+All four buttons — *30 days*, *6 months*, *Year to date*, *All time* — requested
+`/reports/analytics` with no parameter, so every range drew the same six-month
+chart from the same payload. Fixed on both sides:
+
+* The API validates `range` (`30d` · `6m` · `ytd` · `all`, default `6m`, anything
+  else `400`) and windows the utilization trend by it: 30 daily buckets, 6 monthly
+  buckets, January through the current month, or from the first allocation.
+* The utilization rate now counts **distinct assets in use** per bucket instead of
+  allocation rows, which had let the rate reach 106% on a fleet of 18.
+* The page sends the selected range and the axis follows it (dates for 30 days,
+  months above that).
+
+Measured after the fix: 30 · 6 · 11 · 24 trend points, peak rate 44%, and
+`?range=90d` → `400`. Pinned by two new backend tests.
+
+### The department head
+The head account (`head@assetflow.com`) can reach the operational screens and
+nothing wider — measured, per role:
+
+| endpoint | admin | manager | head | employee |
+| --- | --- | --- | --- | --- |
+| `/reports/dashboard` | 200 | 200 | 200 | 200 |
+| `/reports/analytics`, `/reports/asset-activity`, `/reports/asset-status`, `/reports/export/assets.csv` | 200 | 200 | **403** | 403 |
+| `/activity` | 200 | 200 | **403** | 403 |
+| `/assets`, `/transfers`, `/maintenance`, `/bookings`, `/audits`, `/org/*`, `/notifications` | 200 | 200 | 200 | 200 → 403 on `/allocations`, `/transfers`, `/audits`, `/org/employees` |
+
+`/reports/dashboard` stays open to employees because it powers their own cards.
+
+One defect found and fixed: **a department head's home page was "Access Denied".**
+`Dashboard.tsx` only treated `ADMIN` and `ASSET_MANAGER` as manager roles, so the
+head fell through to the employee dashboard, which refuses anyone who is not an
+employee, and the head's five sidebar entries had no working landing page. Heads
+now get the manager view (its KPIs, transfer queue and maintenance queue are all
+already scoped for them), with the three manager-only feeds left out: the two
+charts and the activity feed show "limited to asset managers" instead of three
+403s that blanked the whole page. Quick actions and the activity bell can no
+longer route a head onto a screen their role cannot load.
+
+Checks after these changes: backend build clean, 154 e2e passing (1 skipped,
+16 suites, including the two new range tests), frontend 95 tests, typecheck
+clean, ESLint 0 errors (18 pre-existing warnings). Live pass as the head: the
+dashboard renders KPIs, quick actions, pending transfers, maintenance, overdue
+returns and a working refresh, with no error banner and no failed requests.
+
+A department head also no longer sees "Asset Manager" on their own screen: the
+header, the role badge and the footer now say department head.
