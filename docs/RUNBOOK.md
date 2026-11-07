@@ -249,6 +249,86 @@ The most common causes:
 sudo -u assetflow /opt/assetflow/infra/scripts/backup.sh
 ```
 
+## A container is close to its memory limit {#container-memory}
+
+The host has 1 GB of memory and ten containers share it, so the alert that
+matters most is the one that arrives *before* the kill: `ContainerMemoryNearLimit`
+means a container is above 90% of the limit set in `infra/docker-compose.yml`.
+
+```bash
+# Which container, and how much of its limit?
+docker stats --no-stream
+
+# Is it the API growing, or a leak in one instance?
+docker compose -f infra/docker-compose.yml exec api \
+  wget -qO- http://127.0.0.1:4000/api/metrics | grep -E '^process_resident_memory_bytes|^nodejs_heap_size_used_bytes'
+```
+
+| Symptom | What it usually is | The fix |
+|---------|--------------------|---------|
+| memory climbs after a deploy, never comes down | a cache or a queue that is not bounded | find the growth in the code; restart to reclaim the memory now (`docker compose restart api`) |
+| memory is flat but high | the limit in the compose file is too low for the dataset | raise `deploy.resources.limits.memory` for that service |
+| the container restarts itself | the kernel killed it (exit code 137) | `docker inspect --format '{{.State.ExitCode}}' <container>` → 137 is an OOM kill; raise the limit or fix the leak |
+
+## The API keeps restarting {#api-restarting}
+
+`ApiRestarting` fires when the API's start time changed more than once in an
+hour — a restart loop, not a restart.
+
+```bash
+docker compose -f infra/docker-compose.yml ps api
+docker inspect --format '{{.State.ExitCode}} restarts={{.RestartCount}}' $(docker compose -f infra/docker-compose.yml ps -q api)
+docker compose -f infra/docker-compose.yml logs --tail=200 api
+```
+
+* **exit 137** — the kernel killed it (out of memory): see
+  [a container is close to its memory limit](#container-memory).
+* **exit 1 with a stack trace** — the API refused to boot: the message is the
+  reason (a missing environment variable, a failed migration, an unreachable
+  database). Fix the cause; the container retries on its own.
+* **exit 0** — something stopped it on purpose: check `docker events` and
+  whether a deploy or a `systemctl restart` was running at that minute.
+
+## The certificate is about to expire {#tls-expiry}
+
+`TlsCertificateExpiringSoon` fires when the HTTPS certificate has fewer than
+three days left. Renewal runs from **cron once a day**, so this alert means
+**the renewal has been failing for days**, not that a certificate expired by
+itself.
+
+Three days, not fourteen, because a host without a domain gets an **IP
+certificate**: those only exist on Let's Encrypt's shortlived profile and live
+about six days (`infra/scripts/issue-cert.sh`). A longer threshold would be
+permanently on for such a host.
+
+```bash
+# What does the outside world see today?
+echo | openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:443" 2>/dev/null \
+  | openssl x509 -noout -dates -subject -issuer
+
+# Is the daily renewal scheduled?
+crontab -l | grep renew-cert
+
+# What did the last run say? The cron line sets LOG_DIR: on a laptop install
+# that is $HOME/.local/state/assetflow (infra/README.md), on the current AWS
+# host /home/ubuntu/backups/logs (the note under "the backup failed").
+LOG_DIR=/home/ubuntu/backups/logs
+ls -t "$LOG_DIR"/renew-cert-*.log | head -1 | xargs tail -40
+
+# Renew by hand (the same command cron runs), then read the log it prints
+LOG_DIR=/home/ubuntu/backups/logs /opt/assetflow/infra/scripts/renew-cert.sh
+```
+
+| The message in the log | The cause | The fix |
+|------------------------|-----------|---------|
+| `DNS problem: NXDOMAIN` | the domain does not point at this server | fix the DNS A record, then renew |
+| `Timeout during connect` | port 80 is blocked, so the webroot check cannot run | open 80 in the security group (Let's Encrypt validates over HTTP) |
+| `too many failed authorizations` | Let's Encrypt rate-limited the account after repeated failures | wait an hour, then renew once — do not retry in a loop |
+
+After a successful renewal the script reloads Nginx itself, but only when
+certbot actually wrote new files — a reload drops the keep-alive connections of
+live users, so it is not done for nothing.
+
 > **On the current host** the checkout is `/home/ubuntu/assetflow` and the dumps
 > live in `/home/ubuntu/backups` — not the `/opt/assetflow` layout the systemd
 > units assume (those units are for a root install; none are installed here).

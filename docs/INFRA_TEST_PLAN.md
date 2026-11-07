@@ -8,11 +8,11 @@ Reviewed against the repository at `main` @ `a7d08a5` plus this branch (`ee7c0e8
 
 | Claim | Where | Verdict |
 |---|---|---|
-| Docker Compose stack behind Nginx | `infra/docker-compose.yml`, `infra/nginx/nginx.conf` | **True.** 10 runtime services: `api`, `postgres`, `redis`, `migrate`, `nginx`, `prometheus`, `alertmanager`, `grafana`, `node-exporter`, `postgres-exporter` (plus a private `edge`/`backend` network split — not 9, and worth stating precisely) |
+| Docker Compose stack behind Nginx | `infra/docker-compose.yml`, `infra/nginx/nginx.conf` | **True.** 11 runtime services: `api`, `postgres`, `redis`, `migrate`, `nginx`, `prometheus`, `alertmanager`, `grafana`, `node-exporter`, `postgres-exporter`, `cadvisor`, `blackbox-exporter` (plus a private `edge`/`backend` network split — not 9, and worth stating precisely) |
 | Nothing but 80/443 published publicly | `docker-compose.yml` | **True.** Postgres/Redis have no `ports:`; Prometheus/Alertmanager/Grafana bind `127.0.0.1` only |
 | Nightly `pg_dump` to encrypted S3 | `infra/scripts/backup.sh`, `systemd/assetflow-backup.timer` (02:30 daily) | **True, with a nuance.** The script does `pg_dump -Fc → sha256 → aws s3 cp`; the *encryption is the bucket's* (SSE-AES256, versioned, public access blocked, lifecycle to Glacier IR — `infra/README.md:123`). There is no client-side encryption, so "encrypted S3" is accurate but "encrypted backup" would overstate it |
 | Restore verified | `infra/scripts/restore-verify.sh`, `systemd/assetflow-restore-verify.timer` (Sundays 03:00) | **True, and better than most.** Restores into a throwaway container, checks the SHA-256, compares row counts with live |
-| Prometheus 3 targets, 11 alert rules → Alertmanager → Telegram | `infra/prometheus/prometheus.yml`, `infra/prometheus/rules/assetflow.yml` | **True.** 11 rules including `BackupTooOld` and `ThrottleStoreDegraded` |
+| Prometheus → Alertmanager → Telegram, alert rules | `infra/prometheus/prometheus.yml`, `infra/prometheus/rules/assetflow.yml` | **True.** 5 scrape jobs, **14** rules in 5 groups, and every rule has a `promtool test rules` case (`assetflow.test.yml`). The CV's "3 targets, 11 rules" is the older number |
 | Grafana dashboard as code | `infra/grafana/dashboards/assetflow.json` + provisioning | **True** |
 | Logs with request-id tracing | `backend/src/common/logging/json-logger.ts`, `request-context.middleware.ts`; `json-file` with `max-size 10m`, 3 files | **True** for app logs. They are *local* to the host — see §3.2 |
 | CI: lint, shellcheck, tests | `.github/workflows/ci.yml` | **Runs** — but is **failing on main**, see §2 |
@@ -40,19 +40,19 @@ Ordered by "would this catch a failure a user would notice?".
 
 ### 3.1 Alerting itself (highest value, ~1 hour)
 
-You have 11 rules and a script that triggers three of them. What is not tested is the part that fails silently:
+You now have **14** rules, all of them unit-tested, and a script that triggers three of them by hand. What is still not tested is everything after the rule fires:
 
 | Test | How | What it catches |
 |---|---|---|
-| Every rule fires | `promtool test rules` with synthetic series — you already write rules as code, so write their unit tests the same way. 11 rules → 11 small YAML cases | A renamed metric or a typo'd `expr` that makes an alert *never* fire. Today 8 of your 11 rules have never fired |
+| Every rule fires | **Done.** `infra/prometheus/rules/assetflow.test.yml` — one firing case and one "healthy stack stays quiet" case per rule, run by the `Alerts (promtool)` job in `ci.yml` | A renamed metric or a typo'd `expr` that makes an alert *never* fire |
 | Alerts reach Telegram | `infra/scripts/trigger-alerts.sh` exists — put it on a **weekly timer**, not a manual script | Alertmanager route/config drift after an edit |
 | Alerts resolve | Same script, then assert the resolved notification arrives | Rules with no `for:`/`keep_firing_for` that flap |
 | **The host dying is noticed** | External dead-man's switch (healthchecks.io / BetterStack free tier) pinging `https://<your-domain>/api/health` from outside | **Prometheus, Alertmanager and the app are all on the same t3.micro.** If the instance dies, the thing that would tell you dies with it. This is the single biggest gap in the whole setup |
-| Certificate expiry | `blackbox_exporter` (`probe_ssl_earliest_cert_expiry < 14 days`) or a daily `openssl s_client` cron → Telegram | Let's Encrypt renewal failing quietly for 30 days until browsers warn |
+| Certificate expiry | **Done.** `blackbox-exporter` scrapes `probe_ssl_earliest_cert_expiry`; `TlsCertificateExpiringSoon` fires below 3 days (not 14 — an IP certificate only lives ~6 days, so a longer threshold would be permanently on) | Let's Encrypt renewal failing quietly for weeks until browsers warn |
 
 ### 3.2 Observability coverage
 
-- **No container metrics.** `node-exporter` gives you the host; `postgres-exporter` gives you the database. Nothing gives you *per-container* memory, CPU or restart counts — so on a 1 GB t3.micro the most likely production incident (an OOM kill of the API or Postgres) is invisible until a user complains. Add **cAdvisor**, then alert on `container_memory_working_set_bytes / limit > 0.9` and `changes(container_start_time_seconds[1h]) > 0`.
+- **Container metrics — done.** `cadvisor` scrapes `container_memory_working_set_bytes` / `container_spec_memory_limit_bytes`, `ContainerMemoryNearLimit` and `ApiRestarting` (`changes(process_start_time_seconds[1h]) > 1`) are in the rule file. Still missing: an alert on the *container* start-time series (`container_start_time_seconds`) for the case where the API is not scrapable at all — `ApiRestarting` needs the API to be up to notice it went down.
 - **Logs are only on the host.** `json-file` with rotation is fine as a buffer, but a dead instance takes its evidence with it. Either ship the JSON logs off-box (Loki + Promtail, or CloudWatch via the Docker log driver) or accept explicitly that post-mortems will be blind.
 - **No slow-query signal.** A `log_min_duration_statement = 200ms` in Postgres, or the Prisma middleware idea in `docs/BACKEND_SYSTEM_DESIGN_REVIEW.md` §7, catches the class of bug the code review found by reading (the unindexed `ActivityLog.createdAt`).
 
@@ -79,7 +79,7 @@ Each is a 15-minute exercise with a written expected result. Run them monthly; k
 
 ### 3.5 Performance
 
-- **k6 in CI, nightly.** Thresholds as assertions: `http_req_failed < 1%`, `http_req_duration p(95) < 500ms`, at 20 rps for 5 minutes. You already have `infra/scripts/k6-load.js`; wire it, and let it fail the build. A load test you run by hand is a demo; one on a timer is a regression test.
+- **k6 in CI — done.** `.github/workflows/perf.yml` runs nightly at 03:15 UTC against a throwaway Postgres + Redis: migrations, the demo seed, a load-test fixture (one account per VU, so the run measures the API and not the 300/min limiter), then `k6 run` with `http_req_failed < 1%` and `p(95) < 800 ms` as *assertions* — a breach fails the workflow. The budgets are looser than production (1 s) because a shared runner is noisier. Results are uploaded as artifacts, not committed: a nightly commit to `docs/results/` would be 365 commits a year of machine noise.
 - **Soak test:** 2 rps for an hour. Catches connection-pool leaks and the reminder-sweep timer accumulating work — neither shows up in a 30-second test.
 - **`EXPLAIN (ANALYZE, BUFFERS)`** on the five heaviest queries, captured into `docs/results/` after each release. Cheap, and it is the artifact that proves an index did something.
 
@@ -110,10 +110,10 @@ Each is a 15-minute exercise with a written expected result. Run them monthly; k
 | 1 | Merge this branch → CI green again; add branch protection requiring it | 15 min | Right now nothing is gated |
 | 2 | Fix the deploy SSH target (host address/secret) | 30 min | You cannot ship |
 | 3 | External dead-man's switch on `/api/health` | 30 min | Your monitoring dies with the host |
-| 4 | `promtool test rules` for all 11 alerts | 2 h | 8 of 11 have never been proven |
-| 5 | cAdvisor + container restart/OOM alerts | 1 h | The likely failure mode on 1 GB |
-| 6 | Certificate-expiry alert (blackbox or cron) | 30 min | Silent 30-day fuse |
-| 7 | Nightly k6 with thresholds, results committed | 3 h | Turns "it's fast" into a number |
+| 4 | ~~`promtool test rules` for every alert~~ **done** — 14 rules, 28 cases, in CI | 2 h | 8 of 11 had never been proven |
+| 5 | ~~cAdvisor + container restart/OOM alerts~~ **done** — `ContainerMemoryNearLimit`, `ApiRestarting` | 1 h | The likely failure mode on 1 GB |
+| 6 | ~~Certificate-expiry alert~~ **done** — blackbox exporter, 3-day threshold | 30 min | Silent 30-day fuse |
+| 7 | ~~Nightly k6 with thresholds~~ **done** — `.github/workflows/perf.yml`, artifacts | 3 h | Turns "it's fast" into a number |
 | 8 | Restore-from-S3 monthly + migrate-against-restored-copy | 2 h | The backup you verify is the local one |
 | 9 | trivy + gitleaks in CI | 1 h | Cheap, permanent |
 | 10 | Ship logs off-box (Loki or CloudWatch) | 4 h | Post-mortems need evidence after the host is gone |
@@ -122,7 +122,7 @@ Each is a 15-minute exercise with a written expected result. Run them monthly; k
 
 ## 5. Cost and capacity reality check (t3.micro, $12.04/month)
 
-- **1 GB of RAM, 2 vCPU.** 10 containers: Prometheus (~150-200 MB with 15 d retention), Grafana (~100 MB), Postgres (~80-150 MB), API (~120 MB), Redis (~10 MB), exporters (~30 MB each), Alertmanager (~20 MB), nginx (~10 MB). That is roughly 700-900 MB before page cache — you are close to the ceiling, and a k6 run or a Grafana query during a deploy is where it tips over. Add swap (2 GB, `vm.swappiness=10`) and/or move Grafana+Prometheus to a second t4g.nano later.
+- **1 GB of RAM, 2 vCPU.** 12 containers: Prometheus (~150-200 MB with 15 d retention), Grafana (~100 MB), Postgres (~80-150 MB), API (~120 MB), Redis (~10 MB), exporters (~30 MB each, plus cAdvisor ~40-80 MB and blackbox ~20 MB), Alertmanager (~20 MB), nginx (~10 MB). That is roughly 700-900 MB before page cache — you are close to the ceiling, and a k6 run or a Grafana query during a deploy is where it tips over. Add swap (2 GB, `vm.swappiness=10`) and/or move Grafana+Prometheus to a second t4g.nano later.
 - **The architecture is right for the load.** One institution, ~2k assets, tens of requests per second: one host, one database, one API is the correct design, and the compose file's private networks are the right call. Do not "scale" this with Kubernetes; scale it by making the single host observable and replaceable — which is what `rebuild-drill.sh` is for.
 - **$12.04/month is a good number to quote** because it is specific and defensible. Keep the line-item breakdown next to it (instance, EBS, S3, snapshot, egress) so the follow-up "how?" is answered before it is asked.
 

@@ -45,7 +45,7 @@ groups:
           severity: warning
         annotations:
           summary: "The 95th percentile of the API latency is above one second"
-          description: "p95 is {{ $value }}s. Check the database (slow query?) and the host (CPU, IO)."
+          description: "The 95th percentile has been above one second for 10 minutes. Check the database (slow query?) and the host (CPU, IO); the exact value is on the AssetFlow · latency panel."
 
   - name: assetflow-host
     rules:
@@ -60,7 +60,7 @@ groups:
           severity: warning
         annotations:
           summary: "The disk of {{ $labels.mountpoint }} is more than 85% full"
-          description: "Only {{ $value | humanizePercentage }} of free space is left. Docker images and log files are the usual suspects."
+          description: "{{ $value | humanizePercentage }} of it is in use. Docker images and log files are the usual suspects."
           runbook: "docs/RUNBOOK.md#disk-full"
 
       - alert: HostDiskFull
@@ -132,3 +132,70 @@ groups:
         annotations:
           summary: "The shared rate-limit store (Redis) is unavailable"
           description: "The API falls back to the per-process limiter — the limit is no longer global."
+
+  - name: assetflow-containers
+    rules:
+      # Which container is about to be OOM-killed. On a 1 GB host this is the
+      # failure mode that actually happens, and node-exporter cannot see it.
+      #
+      # `name` is cAdvisor's container-name label since v0.47 (v0.49 is pinned
+      # in docker-compose.yml). If the rule matches nothing while
+      # `container_memory_working_set_bytes{job="cadvisor"}` is not empty, the
+      # label is called `container` on that build — check it in the Prometheus
+      # expression browser and rename it here, in both selectors.
+      #
+      # Containers without a memory limit in docker-compose.yml report a limit
+      # of 0; the `and ... > 0` guard keeps them out instead of alerting on a
+      # division by zero.
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          (
+            container_memory_working_set_bytes{job="cadvisor", name!=""}
+              / container_spec_memory_limit_bytes{job="cadvisor", name!=""}
+          ) > 0.9
+          and on (instance, name)
+          container_spec_memory_limit_bytes{job="cadvisor", name!=""} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is above 90% of its memory limit"
+          description: "It will be OOM-killed if it keeps growing. Check the container's logs and the deploy that changed it."
+          runbook: "docs/RUNBOOK.md#container-memory"
+
+      # A restart loop shows up here before users notice: the process start time
+      # changes more than once an hour (OOM kill, crash on boot, broken deploy).
+      - alert: ApiRestarting
+        expr: changes(process_start_time_seconds{job="assetflow-api"}[1h]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The API has restarted more than once in the last hour"
+          description: "A restart loop is usually an OOM kill or a crash during boot. Check the container exit code and the boot logs."
+          runbook: "docs/RUNBOOK.md#api-restarting"
+
+  - name: assetflow-tls
+    rules:
+      # A failed renewal is invisible until browsers start warning, so the
+      # certificate has to be watched.
+      #
+      # Why 3 days and not 14: the threshold has to be shorter than the
+      # shortest certificate this project issues. A domain certificate lives 90
+      # days, but an IP certificate is only available on Let's Encrypt's
+      # shortlived profile — about 6 days (infra/scripts/issue-cert.sh). Any
+      # threshold above ~5 days fires permanently on an IP-only host, and an
+      # alert that is always on is an alert nobody reads. With a daily renewal
+      # cron, a healthy shortlived certificate sits at 5–6 days, so 3 days
+      # means "two renewal attempts in a row have failed".
+      - alert: TlsCertificateExpiringSoon
+        expr: |
+          (probe_ssl_earliest_cert_expiry{job="blackbox-tls"} - time())
+            < 3 * 24 * 3600
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "The TLS certificate expires in less than 3 days"
+          description: "Renewal is failing. Run infra/scripts/renew-cert.sh, then check the daily cron entry (17 3 * * *) and its log in LOG_DIR."
+          runbook: "docs/RUNBOOK.md#tls-expiry"

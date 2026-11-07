@@ -194,13 +194,19 @@ services:
     image: prom/prometheus:v2.54.1
     restart: unless-stopped
     user: "65534:65534"
+    # render.sh substitutes ${PUBLIC_BASE_URL} into the template and writes
+    # /tmp/prometheus.yml (the /etc mount is read-only). The same trick as
+    # alertmanager/render.sh.
+    entrypoint: ["/bin/sh", "/render.sh"]
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://nginx}
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.template.yml:ro
+      - ./prometheus/render.sh:/render.sh:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     networks: [edge, backend]
@@ -279,6 +285,49 @@ services:
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}?sslmode=disable"
     networks: [backend]
+    logging: *default-logging
+
+  # Per-container metrics. The host is 1 GB of RAM shared by ten containers, so
+  # the failure mode that actually happens is an OOM kill. Without this, "which
+  # container grew?" has no answer.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    networks: [edge, backend]
+    ports:
+      - "127.0.0.1:8081:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 256M
+    logging: *default-logging
+
+  # Probes the public HTTPS endpoint so the certificate's expiry date becomes a
+  # metric (see blackbox/blackbox.yml and the TlsCertificateExpiringSoon rule).
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks: [edge]
+    ports:
+      - "127.0.0.1:9115:9115"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
     logging: *default-logging
 
 networks:

@@ -1,0 +1,27 @@
+# The blackbox exporter probes an HTTP(S) endpoint from the outside in — the
+# same thing a browser does — and turns the result into metrics:
+#
+#   probe_success                     1 when the endpoint answered as expected
+#   probe_ssl_earliest_cert_expiry    the Unix time the certificate expires
+#
+# The certificate metric is what the TlsCertificateExpiringSoon alert watches.
+# Without it a failed Let's Encrypt renewal is invisible for ~90 days, until
+# browsers start warning.
+modules:
+  https_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      # /api/health answers 200. Keep this list tight: a redirect to a login
+      # page is not a healthy API.
+      valid_status_codes: [200]
+      tls_config:
+        # The default target is the nginx service on the internal Docker
+        # network, reached by service name; the certificate is issued for the
+        # public hostname. Hostname verification would fail for the wrong
+        # reason, and the thing this probe exists to watch is the *expiry*.
+        # Set PUBLIC_BASE_URL to the real public URL to check the full chain —
+        # hostname verification is still skipped, so also flip this to false if
+        # you want that too.
+        insecure_skip_verify: true

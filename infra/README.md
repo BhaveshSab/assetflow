@@ -9,6 +9,8 @@ internet ──▶ nginx (443, TLS) ──┬──▶ api (4000) ──▶ post
                                 └──▶ the built React SPA (static files)
 
 prometheus ──▶ api, node-exporter, postgres-exporter     (internal network)
+           ──▶ cadvisor         (per-container memory)
+           ──▶ blackbox-exporter ▶ the public HTTPS endpoint (certificate expiry)
 grafana    ──▶ prometheus                                  (127.0.0.1 only)
 alertmanager ─▶ telegram
 ```
@@ -22,12 +24,47 @@ alertmanager ─▶ telegram
 | `docker/Dockerfile.api` | the API image — multi-stage, non-root, with a health check |
 | `docker/Dockerfile.nginx` | Nginx + the built SPA (same-origin API calls) |
 | `nginx/` | the TLS configuration, the security headers, the rate limit |
-| `prometheus/` | the scrape configuration and the alert rules |
+| `prometheus/` | the scrape configuration (a template — `render.sh` substitutes `PUBLIC_BASE_URL`), the alert rules and their `promtool` tests |
+| `blackbox/` | the probe configuration for the certificate-expiry metric |
 | `grafana/` | the provisioned dashboard |
 | `alertmanager/` | the Telegram receiver (a template — the credentials come from the environment) |
 | `scripts/` | backup, restore verification, archiving, hardening, deployment, alerts, certificate, host provisioning, the saturation test and the rebuild drill |
 | `systemd/` | the timers that run the backup and the restore verification |
 | `certs/` · `certbot-www/` | **generated** TLS material and ACME challenges — bind-mounted into Nginx, never committed (`.gitignore`) |
+
+## The alert rules, and how they are tested
+
+`prometheus/rules/assetflow.yml` holds 14 rules in five groups:
+
+| Group | Rules |
+|-------|-------|
+| `assetflow-api` | the API is down, >5% of requests are 5xx, p95 latency is over a second |
+| `assetflow-host` | disk >85% and >95%, memory >90%, CPU >90% for 15 minutes |
+| `assetflow-data` | Postgres unreachable, >80 connections, the nightly backup is stale, Redis (the rate-limit store) is down |
+| `assetflow-containers` | a container is above 90% of its memory limit (cAdvisor), the API restarts more than once an hour |
+| `assetflow-tls` | the HTTPS certificate has less than 3 days left (blackbox exporter) |
+
+Every rule has a test in `prometheus/rules/assetflow.test.yml`: one case that
+makes it fire and asserts the labels **and** the exact annotation text, and one
+"healthy stack" case that asserts it stays quiet. Prometheus compares
+annotations exactly, so a reworded sentence fails the test — that is on purpose,
+it is how a broken template gets caught.
+
+```bash
+# the same two commands CI runs (no Prometheus install needed)
+docker run --rm -v "$PWD/rules:/rules:ro" --entrypoint promtool \
+  prom/prometheus:v2.54.1 check rules /rules/assetflow.yml
+docker run --rm -v "$PWD/rules:/rules:ro" --entrypoint promtool \
+  prom/prometheus:v2.54.1 test rules /rules/assetflow.test.yml
+```
+
+Two things to know when editing:
+
+1. **A new or renamed metric must come with a test case.** A rule whose metric
+   no longer exists never fires, and a rule that never fires looks exactly like
+   a rule that was never needed.
+2. **The test clock starts at 0 (1970),** so "the backup is older than 26
+   hours" is expressed as a timestamp far in the past, not as `0`.
 
 ## The two drills
 
@@ -106,7 +143,7 @@ on a server those ports are reachable through an SSH tunnel only.
 |---|---|
 | Host | AWS EC2 `t3.micro`, `ap-southeast-2b`, Ubuntu, 1 GB RAM, 30 GB gp3 |
 | Entry point | <https://13.55.90.25> — a Let's Encrypt **IP certificate** (SAN `IP:13.55.90.25`), 6-day lifetime, renewed daily by cron |
-| Containers | 9: nginx, api, postgres, redis, prometheus, grafana, alertmanager, node-exporter, postgres-exporter |
+| Containers | 9 running: nginx, api, postgres, redis, prometheus, grafana, alertmanager, node-exporter, postgres-exporter. The repo also defines `cadvisor` and `blackbox-exporter` (container memory + certificate expiry); they need one `deploy.sh` run to appear |
 | Health | `{"status":"ok","database":"up","rateLimitStore":"redis","redis":"up"}` |
 
 The measurements are in [`../docs/results`](../docs/results):
