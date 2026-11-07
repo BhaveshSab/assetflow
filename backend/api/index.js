@@ -57,39 +57,49 @@ function sendJson(res, req, status, message) {
 // Where `nest build` puts the compiled app depends on which files it compiles:
 // `backend/src/**` alone emits `dist/serverless.js`, but one extra root (e.g. a
 // script) shifts everything to `dist/src/serverless.js`. That difference is
-// invisible in the build log and fatal at runtime, so both layouts are tried
-// and the one that worked is reported. `tsconfig.build.json` excludes
-// `scripts/` so the flat layout is the intended one.
-const CANDIDATES = ['../dist/serverless', '../dist/src/serverless'];
-
+// invisible in the build log and fatal at runtime, so both layouts are tried.
+//
+// The requires below are **literals, at the top level, on purpose.** A
+// `require(variable)` — a loop over candidate paths, say — is invisible to the
+// bundler's static analysis, and nothing behind it is traced into the
+// deployment: the bundle then contains this file and its target and *no
+// node_modules at all*, which fails at runtime with `Cannot find module
+// '@nestjs/core'` even though `npm ci` succeeded.
 let handler;
 let loaded;
-let loadError;
-
 const failures = [];
 
-for (const candidate of CANDIDATES) {
-  try {
-    const loadedModule = require(candidate);
-    const candidateHandler = loadedModule && loadedModule.default;
-    if (typeof candidateHandler === 'function') {
-      handler = candidateHandler;
-      loaded = candidate;
-      break;
-    }
+try {
+  const compiled = require('../dist/serverless');
+  if (typeof compiled.default === 'function') {
+    handler = compiled.default;
+    loaded = '../dist/serverless';
+  } else {
     failures.push(
-      `${candidate}: no default export function (default is ${typeof candidateHandler})`,
+      `../dist/serverless: no default export function (default is ${typeof compiled.default})`,
     );
+  }
+} catch (err) {
+  failures.push(`../dist/serverless: ${(err && err.message) || String(err)}`);
+}
+
+if (!handler) {
+  try {
+    const compiled = require('../dist/src/serverless');
+    if (typeof compiled.default === 'function') {
+      handler = compiled.default;
+      loaded = '../dist/src/serverless';
+    } else {
+      failures.push(
+        `../dist/src/serverless: no default export function (default is ${typeof compiled.default})`,
+      );
+    }
   } catch (err) {
-    failures.push(`${candidate}: ${(err && err.message) || String(err)}`);
+    failures.push(`../dist/src/serverless: ${(err && err.message) || String(err)}`);
   }
 }
 
-// Every path is reported, not just the last failure: the interesting message
-// is usually the *first* one (the file exists, something it requires does not).
-if (!handler) {
-  loadError = new Error(failures.join(' | '));
-}
+const loadError = handler ? null : new Error(failures.join(' | '));
 
 if (handler) {
   console.log(`[assetflow] serverless handler loaded from ${loaded}`);

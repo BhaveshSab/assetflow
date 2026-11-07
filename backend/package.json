@@ -28,7 +28,8 @@
     "test:unit": "jest",
     "test:all": "npm run test:unit && npm run test:e2e",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "node scripts/migrate.js"
+    "prisma:migrate": "node scripts/migrate.js",
+    "check:bundle": "node scripts/verify-function-bundle.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
@@ -74,6 +75,7 @@
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
     "@types/ws": "^8.18.1",
+    "@vercel/nft": "^1.11.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",

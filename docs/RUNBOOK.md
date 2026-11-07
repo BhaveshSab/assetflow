@@ -85,6 +85,21 @@ stay green, because none of them ever look at `dist/`.
 (and the CORS header the browser needs in order to read it) instead of letting
 the platform answer an opaque 500.
 
+**Second half of the same bug: the bundle had no dependencies.** Vercel's
+bundler follows literal `require`/`import` statements only. A
+`require(variable)` — even a loop over two string constants — hides the whole
+graph, and the deployment ships with **no `node_modules`**:
+
+```
+AssetFlow API could not be loaded: ../dist/serverless:
+Cannot find module '@nestjs/core'
+```
+
+`npm run check:bundle` (in CI, after the build) runs the real tracer over
+`api/index.js` and fails unless it reaches `dist/serverless.js` and pulls in
+`@nestjs/core`, `@prisma/client` and `express`. Keep the requires in
+`api/index.js` literal and top-level.
+
 ---
 
 ## The browser says "blocked by CORS" {#cors-blocked}

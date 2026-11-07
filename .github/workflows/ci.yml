@@ -75,6 +75,13 @@ jobs:
             console.log('✓ vercel.json: includeFiles is a glob string and ships dist/**');
           "
 
+      # The bundler follows literal `require`/`import` statements and nothing
+      # else: a `require(variable)` ships a deployment with no node_modules,
+      # and the first sign of it is a 500 in production. This runs the real
+      # tracer (@vercel/nft) over the real entrypoint.
+      - name: Check the serverless bundle contains the application
+        run: npm run check:bundle
+
       - name: Assert the compiled layout the deployments depend on
         run: |
           node -e "
