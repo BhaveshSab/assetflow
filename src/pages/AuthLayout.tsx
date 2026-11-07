@@ -31,7 +31,7 @@ export default function AuthLayout() {
         <ThemeToggle className="bg-surface/70 backdrop-blur" />
       </div>
 
-      <div className="relative w-full max-w-5xl">
+      <div className="relative mx-auto w-full max-w-[1120px]">
         <Outlet />
       </div>
     </main>

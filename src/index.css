@@ -141,6 +141,28 @@
 }
 
 /*
+ * Browser autofill.
+ *
+ * Chrome paints an autofilled field with its own light-blue background and
+ * near-black text, ignoring `background-color`. On the white auth card that
+ * reads as a foreign input next to the empty ones. Autofill refuses to
+ * override `background-color`, but it does not touch an inset box-shadow, so
+ * the surface token is painted that way and the text colour is forced to the
+ * ink token — still legible in both themes.
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: hsl(var(--ink));
+  caret-color: hsl(var(--ink));
+  -webkit-box-shadow: 0 0 0 1000px hsl(var(--surface)) inset;
+  box-shadow: 0 0 0 1000px hsl(var(--surface)) inset;
+  /* Chrome repaints the tint on a timer; a long transition wins the race. */
+  transition: background-color 9999s ease-out 0s;
+}
+
+/*
  * The focus ring must never be removed — a keyboard user has to see where
  * they are. Tailwind removes it on some elements by default.
  */

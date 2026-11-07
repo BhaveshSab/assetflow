@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  ArrowLeft,
   Check,
   Eye,
   EyeOff,
@@ -72,22 +71,26 @@ const OTHER_MODE: Record<AuthMode, AuthMode> = {
   signup: "signin",
 };
 
-// Copy that flips based on which form is active. When you're on one form,
-// the opposite panel invites you to switch — this is the "convertible" hook.
+/*
+ * The left panel is product context, not a second call to action.
+ *
+ * It used to carry a "NEW HERE?" badge, a headline selling sign-up and its
+ * own "Sign Up" button — on top of the footer link to the same page. Three
+ * invitations to do the same thing, one of them pitched at new users while
+ * the form next to it was for returning ones. The copy now describes the
+ * product and stays true in both modes, and the footer link is the only way
+ * to switch screens.
+ */
 const PANEL_COPY = {
   signin: {
-    badge: "New here?",
-    title: "Welcome to the future of asset management.",
+    title: "Pick up where you left off.",
     subtitle:
-      "Sign up and discover a great amount of new opportunities to grow your portfolio.",
-    cta: "Sign Up",
+      "Sign in to manage assets, allocations, bookings and maintenance from one workspace.",
   },
   signup: {
-    badge: "One of us?",
-    title: "Welcome Back!",
+    title: "Set up your workspace.",
     subtitle:
-      "Enter your details and start your journey with us. Pick up right where you left off.",
-    cta: "Sign In",
+      "Create an account to bring your organisation's assets, allocations and audits into one place.",
   },
 } as const;
 
@@ -129,7 +132,7 @@ function PasswordInput({
         disabled={disabled}
         value={value}
         onChange={onChange}
-        className="h-11 pr-11"
+        className="h-11 bg-surface pr-11"
       />
       <button
         type="button"
@@ -227,12 +230,12 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: "spring", stiffness: 350, damping: 28 }}
         className={cn(
-          "w-full max-w-5xl overflow-hidden rounded-2xl bg-card shadow-xl shadow-primary/10 ring-1 ring-border md:grid md:grid-cols-2",
+          "mx-auto w-full max-w-[1120px] overflow-hidden rounded-2xl bg-card shadow-xl shadow-primary/10 ring-1 ring-border md:grid md:grid-cols-2",
           className
         )}
       >
-        {/* LEFT: purple brand / toggle panel */}
-        <aside className="relative hidden flex-col justify-between bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 p-10 text-white md:flex">
+        {/* LEFT: brand panel — context only, no second CTA */}
+        <aside className="relative hidden flex-col overflow-hidden bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 p-10 text-white md:flex">
           {/* decorative glow */}
           <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-2xl" />
           <div className="pointer-events-none absolute -bottom-32 -left-20 h-80 w-80 rounded-full bg-fuchsia-400/20 blur-3xl" />
@@ -246,42 +249,23 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
             <span className="text-lg font-semibold tracking-tight">{brandName}</span>
           </div>
 
-          <div className="relative space-y-6">
-            <span className="inline-flex items-center rounded-full bg-white/15 px-3 py-1 text-xs font-medium uppercase tracking-wider ring-1 ring-white/25">
-              {copy.badge}
-            </span>
+          {/* The headline sits right under the logo. The panel used to push
+              it to the bottom, leaving a large empty run of purple between
+              the two. */}
+          <div className="relative mt-12 space-y-4">
             <h2 className="text-3xl font-bold leading-tight xl:text-4xl">
               {copy.title}
             </h2>
-            <p className="max-w-sm text-sm leading-relaxed text-white/80">
+            <p className="max-w-sm text-sm leading-relaxed text-white/85">
               {copy.subtitle}
             </p>
-
-            {otherTo ? (
-              <Link
-                to={otherTo}
-                className="group inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-purple-700 shadow-lg transition-all hover:shadow-xl hover:active:scale-[0.98]"
-              >
-                {copy.cta}
-                <ArrowLeft className="h-4 w-4 rotate-180 transition-transform group-hover:translate-x-1" />
-              </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setMode(OTHER_MODE[mode])}
-                className="group inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-purple-700 shadow-lg transition-all hover:shadow-xl hover:active:scale-[0.98]"
-              >
-                {copy.cta}
-                <ArrowLeft className="h-4 w-4 rotate-180 transition-transform group-hover:translate-x-1" />
-              </button>
-            )}
           </div>
 
           {/* what the product does (checked against the code, not invented) */}
-          <ul className="relative space-y-3 rounded-xl bg-white/10 p-5 text-sm leading-relaxed text-white/90 ring-1 ring-white/15 backdrop-blur">
+          <ul className="relative mt-auto space-y-3 rounded-xl bg-black/20 p-5 text-sm leading-relaxed text-white ring-1 ring-white/25 backdrop-blur">
             {CAPABILITIES.map((line) => (
               <li key={line} className="flex items-start gap-2">
-                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" aria-hidden="true" />
                 <span>{line}</span>
               </li>
             ))}
@@ -313,7 +297,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.05 }}
-              className="text-sm text-muted-foreground"
+              className="text-sm text-ink-soft"
             >
               {isSignup
                 ? "Create an account to start managing your organisation's assets."
@@ -342,7 +326,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
             )}
           </div>
 
-          <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="my-6 flex items-center gap-3 text-xs font-medium text-ink-soft">
             <span className="h-px flex-1 bg-border" />
             {isSignup ? "or sign up with email" : "or sign in with email"}
             <span className="h-px flex-1 bg-border" />
@@ -365,7 +349,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                     disabled={loading}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="h-11 pl-10"
+                    className="h-11 bg-surface pl-10"
                   />
                 </div>
               </div>
@@ -385,7 +369,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                   disabled={loading}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-11 pl-10"
+                  className="h-11 bg-surface pl-10"
                 />
               </div>
             </div>
@@ -396,7 +380,7 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                 {!isSignup && (
                   <Link
                     to="/forgot-password"
-                    className="text-xs font-medium text-primary hover:underline"
+                    className="text-sm font-medium text-primary hover:underline"
                   >
                     Forgot password?
                   </Link>
@@ -487,9 +471,9 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
             )}
           </p>
 
-          <p className="mt-8 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Secured with 256-bit encryption
+          <p className="mt-8 flex items-center justify-center gap-1.5 text-xs text-ink-muted">
+            <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            SSL secured connection
           </p>
         </section>
       </motion.div>

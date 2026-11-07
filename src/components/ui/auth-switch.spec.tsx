@@ -103,8 +103,8 @@ describe("AuthSwitch", () => {
 
   it("points the footer switch at the other route when one is given", () => {
     renderCard({ defaultMode: "signin", otherTo: "/signup" });
-    // Exact, case-sensitive: the purple panel's CTA ("Sign Up") is a separate
-    // control, and this assertion is about the footer link.
+    // Exact, case-sensitive: this is the footer link, which is now the only
+    // control that switches screens (the purple panel's second CTA is gone).
     expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute(
       "href",
       "/signup",
