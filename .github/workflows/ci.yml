@@ -58,6 +58,23 @@ jobs:
       # to `dist/src/`, which breaks `node dist/main.js` in the Docker image and
       # `require('../dist/serverless')` on Vercel — silently, and only in the
       # deployment. Nothing else in the pipeline notices, so this asserts it.
+      # Vercel's schema types `includeFiles` as one glob string. An array is
+      # rejected at configuration validation — before the build starts — and
+      # the deployment fails with no useful message in the PR.
+      - name: Validate vercel.json against the rules that block a deploy
+        run: |
+          node -e "
+            const config = require('./vercel.json');
+            const fn = config.functions['api/index.js'];
+            if (typeof fn.includeFiles !== 'string') {
+              throw new Error('functions.includeFiles must be one glob string, got ' + typeof fn.includeFiles);
+            }
+            if (!fn.includeFiles.includes('dist/**')) {
+              throw new Error('includeFiles does not ship dist/**');
+            }
+            console.log('✓ vercel.json: includeFiles is a glob string and ships dist/**');
+          "
+
       - name: Assert the compiled layout the deployments depend on
         run: |
           node -e "
