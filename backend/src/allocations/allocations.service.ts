@@ -496,6 +496,19 @@ export class AllocationsService {
       }
     }
 
+    // One open request per asset. A second REQUESTED row put two cards in the
+    // pending queue for a single hand-over and raced the first approval; the
+    // screen let a manager raise the same request twice.
+    const pending = await this.prisma.transferRequest.findFirst({
+      where: { assetId: dto.assetId, status: TransferStatus.REQUESTED },
+      select: { id: true },
+    });
+    if (pending) {
+      throw new ConflictException(
+        'A transfer request for this asset is already pending approval',
+      );
+    }
+
     const transfer = await this.prisma.transferRequest.create({
       data: {
         assetId: dto.assetId,

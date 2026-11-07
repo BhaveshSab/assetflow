@@ -347,4 +347,50 @@ describe('QA regressions — scoping and notification producers', () => {
     });
     expect(allocation?.status).toBe('ACTIVE');
   });
+
+  it('refuses a second pending transfer for the same asset', async () => {
+    const { token: adminToken } = await createUserWithToken(app, {
+      name: 'Root',
+      email: 'root@example.com',
+      role: Role.ADMIN,
+    });
+    const { user: holder } = await createUserWithToken(app, {
+      name: 'Ada',
+      email: 'ada@example.com',
+      role: Role.EMPLOYEE,
+    });
+    const { user: target } = await createUserWithToken(app, {
+      name: 'Bob',
+      email: 'bob@example.com',
+      role: Role.EMPLOYEE,
+    });
+    const asset = await createAsset(app, {
+      name: 'Shared Laptop',
+      categoryId: fixtures.electronics.id,
+    });
+
+    await request(app.getHttpServer())
+      .post('/api/allocations')
+      .set(auth(adminToken))
+      .send({ assetId: asset.id, holderUserId: holder.id })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/transfers')
+      .set(auth(adminToken))
+      .send({ assetId: asset.id, toUserId: target.id, reason: 'first' })
+      .expect(201);
+
+    const duplicate = await request(app.getHttpServer())
+      .post('/api/transfers')
+      .set(auth(adminToken))
+      .send({ assetId: asset.id, toUserId: target.id, reason: 'second' })
+      .expect(409);
+    expect(duplicate.body.message).toContain('already pending approval');
+
+    const prisma = app.get(PrismaService);
+    expect(
+      await prisma.transferRequest.count({ where: { assetId: asset.id } }),
+    ).toBe(1);
+  });
 });

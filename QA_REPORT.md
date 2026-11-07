@@ -293,6 +293,18 @@ Also fixed, found while re-testing the booking screen:
 * `Close Cycle` in Asset Audits was enabled for non-admins and failed with a 403;
   it is now disabled with a reason.
 
+Found while re-testing the Allocations & Transfers screen:
+
+* The same transfer could be requested twice for one asset (both returned 201),
+  putting two cards in the pending queue for a single hand-over and racing the
+  first approval. A second REQUESTED transfer for an asset is now refused with
+  *A transfer request for this asset is already pending approval*.
+* Allocation, return, transfer and approval all worked end to end: a duplicate
+  allocation is 409 (*currently held by …*), a second return 409, an approved
+  transfer moves the holder, and an employee calling `/allocations`, creating an
+  allocation, approving a transfer or sending a ping gets 403 while
+  `/allocations/my` returns only their own rows.
+
 Checks at the time of writing: backend build clean, 98 unit tests, 152 e2e
 (150 passing, 1 skipped, includes the six new cases), frontend 93 tests,
 typecheck clean, ESLint 0 errors (18 pre-existing warnings).
