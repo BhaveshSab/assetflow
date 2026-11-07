@@ -3,7 +3,7 @@ import { RecordStatus, Role } from '@prisma/client';
 import { OAuth2Client } from 'google-auth-library';
 
 import { AuthService } from './auth.service';
-import { LoginThrottleService } from './login-throttle.service';
+import { AuthThrottleService } from './auth-throttle.service';
 
 jest.mock('google-auth-library', () => ({
   OAuth2Client: jest.fn(),
@@ -76,11 +76,19 @@ function makeService(options: {
     }),
   } as unknown as ConfigService;
 
+  const activity = { log: jest.fn().mockResolvedValue(undefined) } as any;
+  const mail = {
+    sendPasswordReset: jest.fn().mockResolvedValue(undefined),
+    sendPasswordChanged: jest.fn().mockResolvedValue(undefined),
+  } as any;
+
   const service = new AuthService(
     prisma,
     jwt,
     config,
-    new LoginThrottleService(config),
+    new AuthThrottleService(config),
+    activity,
+    mail,
   );
 
   return { service, verifyIdToken, findFirst, update, create, prisma };

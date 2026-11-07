@@ -9,35 +9,74 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 
 import { AppModule } from '../../src/app.module';
-import { LoginThrottleService } from '../../src/auth/login-throttle.service';
+import { AuthThrottleService } from '../../src/auth/auth-throttle.service';
 import { configureApp } from '../../src/configure-app';
 import { hashPassword } from '../../src/common/security/password';
+import { clearSentMail } from '../../src/mail/dev-mailer';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 export const DEFAULT_PASSWORD = 'password123';
 
-/** Boot the real application (all modules, guards and pipes included). */
-export async function createTestApp(): Promise<INestApplication<App>> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+/**
+ * Boot the real application (all modules, guards and pipes included).
+ *
+ * `env` is applied to `process.env` *before* the module is compiled (that is
+ * when `ConfigModule` reads and validates it) and restored when the app is
+ * closed. It exists for the few suites that need a different boot-time
+ * configuration — `BOOTSTRAP_ADMIN_EMAIL`, for instance.
+ */
+export async function createTestApp(
+  env: Record<string, string> = {},
+): Promise<INestApplication<App>> {
+  const saved: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(env)) {
+    saved[key] = process.env[key];
+    process.env[key] = value;
+  }
 
-  const app = moduleRef.createNestApplication();
-  configureApp(app);
-  await app.init();
-  return app;
+  const restore = () => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+
+  try {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    const app = moduleRef.createNestApplication();
+    configureApp(app);
+    await app.init();
+
+    const close = app.close.bind(app);
+    app.close = async () => {
+      await close();
+      restore();
+    };
+    return app;
+  } catch (error) {
+    // A failed boot must not leak the overrides into the next suite.
+    restore();
+    throw error;
+  }
 }
 
 /** Wipe every table so each suite starts from a clean slate. */
 export async function resetDatabase(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
+    'TRUNCATE TABLE "PasswordResetToken", "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
   );
 
-  // The brute-force counter is in-process — clear it between tests so one
+  // The attempt counters are in-process — clear them between tests so one
   // suite cannot lock another one out.
-  await app.get(LoginThrottleService).reset();
+  await app.get(AuthThrottleService).reset();
+
+  // The dev mail transport keeps a copy of everything it "sent" (that is how
+  // the reset tests read the token). Empty it with the database.
+  clearSentMail();
 }
 
 export type TestUser = {

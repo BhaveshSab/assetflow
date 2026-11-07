@@ -91,3 +91,52 @@ describe('safeValidateEnv', () => {
     expect(startupStatus.getError()).toMatch(/DATABASE_URL is not set/);
   });
 });
+
+describe('validateEnv — mail, reset links and bootstrap', () => {
+  it('defaults to the dev mail transport and a local front end', () => {
+    const env = validateEnv({ ...base });
+    expect(env.MAIL_TRANSPORT).toBe('dev');
+    expect(env.FRONTEND_URL).toBe('http://localhost:5173');
+    expect(env.SMTP_URL).toBeUndefined();
+    expect(env.BOOTSTRAP_ADMIN_EMAIL).toBeUndefined();
+  });
+
+  it('refuses the smtp transport without a connection string', () => {
+    // A reset flow that cannot send is worse than a server that will not boot.
+    expect(() => validateEnv({ ...base, MAIL_TRANSPORT: 'smtp' })).toThrow(
+      /SMTP_URL is required/,
+    );
+  });
+
+  it('refuses an unknown mail transport', () => {
+    expect(() => validateEnv({ ...base, MAIL_TRANSPORT: 'sendmail' })).toThrow(
+      /MAIL_TRANSPORT must be/,
+    );
+  });
+
+  it('accepts the smtp transport with a connection string', () => {
+    const env = validateEnv({
+      ...base,
+      MAIL_TRANSPORT: 'smtp',
+      SMTP_URL: 'smtps://user:pass@smtp.example.com:465',
+      MAIL_FROM: 'AssetFlow <no-reply@example.com>',
+    });
+    expect(env.MAIL_TRANSPORT).toBe('smtp');
+    expect(env.SMTP_URL).toBe('smtps://user:pass@smtp.example.com:465');
+    expect(env.MAIL_FROM).toBe('AssetFlow <no-reply@example.com>');
+  });
+
+  it('requires an absolute FRONTEND_URL (the reset link must work off-machine)', () => {
+    expect(() => validateEnv({ ...base, FRONTEND_URL: '/reset' })).toThrow(
+      /absolute http\(s\) URL/,
+    );
+  });
+
+  it('lower-cases BOOTSTRAP_ADMIN_EMAIL so it matches how accounts are stored', () => {
+    const env = validateEnv({
+      ...base,
+      BOOTSTRAP_ADMIN_EMAIL: '  Ada@Example.COM ',
+    });
+    expect(env.BOOTSTRAP_ADMIN_EMAIL).toBe('ada@example.com');
+  });
+});

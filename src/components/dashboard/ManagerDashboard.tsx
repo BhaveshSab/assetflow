@@ -258,8 +258,9 @@ const QuickAction = ({ icon: Icon, label, desc, color, badge, onClick, delay }: 
   </motion.button>
 );
 
-const NotifPanel = ({ activity, overdueCount, pendingCount, onClose }: {
-  activity: ActivityItem[]; overdueCount: number; pendingCount: number; onClose: () => void;
+const NotifPanel = ({ activity, overdueCount, pendingCount, onClose, onViewAll }: {
+  activity: ActivityItem[]; overdueCount: number; pendingCount: number;
+  onClose: () => void; onViewAll: () => void;
 }) => (
   <motion.div initial={{ opacity: 0, y: -10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.95 }}
     className="absolute top-14 right-0 w-80 bg-surface border border-line rounded-2xl shadow-2xl z-50 overflow-hidden"
@@ -276,7 +277,9 @@ const NotifPanel = ({ activity, overdueCount, pendingCount, onClose }: {
         <div key={a.id} className="px-4 py-3 hover:bg-surface-3 transition-colors"><div className="flex items-start gap-2"><span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${statusDot[a.status]}`} /><div><p className="text-xs text-ink-soft leading-snug">{a.text}</p><p className="text-[10px] text-ink-subtle mt-0.5">{a.time}</p></div></div></div>
       ))}
     </div>
-    <div className="px-4 py-2 border-t border-line"><button className="text-xs text-info hover:text-info transition-colors">View all notifications</button></div>
+    <div className="px-4 py-2 border-t border-line">
+      <button type="button" onClick={onViewAll} className="text-xs text-info hover:text-info transition-colors">View all notifications</button>
+    </div>
   </motion.div>
 );
 
@@ -431,7 +434,9 @@ export default function ManagerDashboard({ onNavigate, onSignOut }: ManagerDashb
               <Bell size={16} className="text-ink-muted" />
               {((kpi?.overdueReturns ?? 0) + (kpi?.pendingTransfers ?? 0)) > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-warning text-white text-[9px] font-bold rounded-full flex items-center justify-center">{(kpi?.overdueReturns ?? 0) + (kpi?.pendingTransfers ?? 0)}</span>}
             </button>
-            <AnimatePresence>{showNotif && <NotifPanel activity={activity} overdueCount={kpi?.overdueReturns ?? 0} pendingCount={kpi?.pendingTransfers ?? 0} onClose={() => setShowNotif(false)} />}</AnimatePresence>
+            <AnimatePresence>{showNotif && <NotifPanel activity={activity} overdueCount={kpi?.overdueReturns ?? 0} pendingCount={kpi?.pendingTransfers ?? 0}
+            onClose={() => setShowNotif(false)}
+            onViewAll={() => { setShowNotif(false); onNavigate("activity"); }} />}</AnimatePresence>
           </div>
           <div className="flex items-center gap-2 bg-surface border border-line rounded-xl px-3 py-1.5">
             <div className="w-6 h-6 rounded-full bg-info flex items-center justify-center text-[10px] font-bold text-white">{username[0]?.toUpperCase()}</div>

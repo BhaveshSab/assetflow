@@ -21,6 +21,10 @@ export interface AuthUser {
   role: UserRole;
   status: string;
   departmentId: string | null;
+  /** Link to the user's picture — `null` until they set one. */
+  avatarUrl?: string | null;
+  /** When the password last changed (ISO string from the API). */
+  credentialsChangedAt?: string | null;
 }
 
 export interface AuthResponse {

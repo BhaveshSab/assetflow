@@ -143,6 +143,19 @@ model User {
   role         Role         @default(EMPLOYEE)
   status       RecordStatus @default(ACTIVE)
 
+  // Optional profile picture. A URL, not an upload: the API never stores
+  // binary blobs (see docs/DECISIONS.md), so the column is a link to an image
+  // the user already hosts, validated as https on the way in.
+  avatarUrl String?
+
+  // Bumped whenever the password changes. The JWT carries the value it was
+  // minted with (`ver`), and JwtStrategy rejects a token whose `ver` is behind
+  // the row — which is how "change password" and "sign out everywhere" end
+  // *other* sessions without a server-side session table.
+  tokenVersion Int @default(0)
+
+  credentialsChangedAt DateTime?
+
   departmentId String?
   department   Department? @relation("DepartmentMembers", fields: [departmentId], references: [id])
 
@@ -163,12 +176,33 @@ model User {
   auditItemsChecked   AuditItem[]
   notifications       Notification[]
   activityLogs        ActivityLog[]
+  passwordResetTokens PasswordResetToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([role])
   @@index([departmentId])
+}
+
+/**
+ * A one-time password-reset link.
+ *
+ * Only the SHA-256 **hash** of the token is stored: a leaked database row
+ * cannot be turned back into a working link. `usedAt` makes the token
+ * single-use, and every new request deletes the previous outstanding ones so
+ * an old e-mail stops working the moment a fresh one is asked for.
+ */
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
 }
 
 model Department {

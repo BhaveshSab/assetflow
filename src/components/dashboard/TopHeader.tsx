@@ -1,5 +1,6 @@
 import { Menu } from "lucide-react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import NotificationBell from "@/components/dashboard/NotificationBell";
@@ -9,6 +10,8 @@ export interface TopHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   onMobileMenuToggle?: () => void;
   /** Display name of the signed-in user (used for the avatar initials). */
   userName?: string;
+  /** The user's picture, when they have set one. */
+  avatarUrl?: string;
 }
 
 /** Initials for the avatar fallback — "Ada Lovelace" → "AL". */
@@ -29,6 +32,7 @@ export default function TopHeader({
   className,
   onMobileMenuToggle,
   userName,
+  avatarUrl,
 }: TopHeaderProps) {
   return (
     <motion.header
@@ -62,16 +66,34 @@ export default function TopHeader({
         {/* Real notification bell (live backend data) */}
         <NotificationBell />
 
-        {/* Avatar — initials are rendered by React (no innerHTML). */}
-        <motion.div
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          title={userName}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-info text-xs font-semibold text-white ring-2 ring-line-strong transition-all hover:ring-info"
-        >
-          <span aria-hidden="true">{initialsOf(userName)}</span>
-          <span className="sr-only">{userName ?? "Signed in user"}</span>
-        </motion.div>
+        {/* Avatar — initials are rendered by React (no innerHTML).
+            It used to be a div with a pointer cursor, a hover animation and
+            no behaviour at all: it *looked* like the way into your account and
+            did nothing. It is now a link to /profile, which is where the name,
+            picture, password and "sign out everywhere" live. */}
+        <motion.span whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.95 }}>
+          <Link
+            to="/profile"
+            aria-label={
+              userName ? `Your profile (${userName})` : "Your profile"
+            }
+            title={userName ? `${userName} — your profile` : "Your profile"}
+            className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-info text-xs font-semibold text-white ring-2 ring-line-strong transition-all hover:ring-info focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+          >
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt=""
+                width={32}
+                height={32}
+                referrerPolicy="no-referrer"
+                className="h-8 w-8 object-cover"
+              />
+            ) : (
+              <span aria-hidden="true">{initialsOf(userName)}</span>
+            )}
+          </Link>
+        </motion.span>
       </div>
     </motion.header>
   );

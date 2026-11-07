@@ -11,7 +11,6 @@ import {
   AlertTriangle,
   FileText,
   Lock,
-  ArrowRight,
   AlertCircle,
   X,
   Loader2,
@@ -20,6 +19,7 @@ import {
 import { apiGet, apiSend } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
+import AuditCycleModal from "@/components/dashboard/AuditCycleModal";
 
 // Animation variants
 const containerVariants = {
@@ -79,6 +79,22 @@ export default function AssetAudits() {
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState("All");
+  /*
+   * The three buttons at the bottom of each card used to have no handler at
+   * all. They now do what they say:
+   *   Continue Audit          → open the items, each one markable
+   *   View Discrepancy Report → open the MISSING / DAMAGED items
+   *   Close Cycle             → POST /audits/:id/close (two-step, because it
+   *                             locks the cycle and rewrites asset statuses)
+   */
+  const [cycleView, setCycleView] = useState<{
+    id: string;
+    title: string;
+    mode: "items" | "discrepancies";
+    readOnly: boolean;
+  } | null>(null);
+  const [confirmCloseId, setConfirmCloseId] = useState<string | null>(null);
+  const [closingId, setClosingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -148,6 +164,24 @@ const fetchAudits = useCallback(async () => {
   useEffect(() => {
     void fetchAudits();
   }, [fetchAudits]);
+
+  /**
+   * POST /audits/:id/close — locks the cycle and rewrites the assets that were
+   * found missing or damaged. Destructive, so the button asks twice.
+   */
+  const handleCloseCycle = async (id: string) => {
+    setClosingId(id);
+    setError(null);
+    try {
+      await apiSend(`/audits/${id}/close`, "POST");
+      setConfirmCloseId(null);
+      await fetchAudits();
+    } catch (err) {
+      setError(errorMessage(err, "Could not close this audit cycle."));
+    } finally {
+      setClosingId(null);
+    }
+  };
 
   // ── Create audit cycle — real POST /audits, real error handling ──
   const handleCreateAudit = async () => {
@@ -445,27 +479,65 @@ const fetchAudits = useCallback(async () => {
                       )}
                     </div>
 
-                    {/* Action Buttons based on Status */}
+                    {/* Action Buttons based on Status.
+                        There is no "Draft" state in the database (a cycle is
+                        OPEN or CLOSED), so the branch that offered a "Start
+                        Audit Cycle" button — which no endpoint could honour —
+                        is gone rather than left unreachable. */}
                     <div className="mt-6 pt-4 border-t border-line/50 flex gap-3">
-                      {audit.status === "Draft" && (
-                        <button className="w-full bg-info/10 hover:bg-info/20 text-info border border-info/20 py-2.5 rounded-xl text-xs font-semibold transition-colors flex justify-center items-center gap-2">
-                          Start Audit Cycle <ArrowRight size={14} />
-                        </button>
-                      )}
-
-                      {audit.status === "In Progress" && (
+                      {!isCompleted && (
                         <>
-                          <button className="flex-1 bg-info text-white hover:bg-info py-2.5 rounded-xl text-xs font-semibold transition-colors shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCycleView({
+                                id: audit.id,
+                                title: audit.title,
+                                mode: "items",
+                                readOnly: false,
+                              })
+                            }
+                            className="flex-1 bg-info text-white hover:bg-info py-2.5 rounded-xl text-xs font-semibold transition-colors shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2"
+                          >
                             <ClipboardCheck size={14} /> Continue Audit
                           </button>
-                          <button className="flex-[0.6] bg-surface-3 hover:bg-surface-3 text-ink-soft border border-line py-2.5 rounded-xl text-xs font-semibold transition-colors flex justify-center items-center gap-2">
-                            <Lock size={14} /> Close Cycle
+                          <button
+                            type="button"
+                            disabled={closingId === audit.id}
+                            onClick={() => {
+                              if (confirmCloseId !== audit.id) {
+                                setConfirmCloseId(audit.id);
+                                return;
+                              }
+                              void handleCloseCycle(audit.id);
+                            }}
+                            className="flex-[0.6] bg-surface-3 hover:bg-surface-3 text-ink-soft border border-line py-2.5 rounded-xl text-xs font-semibold transition-colors flex justify-center items-center gap-2 disabled:opacity-60"
+                          >
+                            {closingId === audit.id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Lock size={14} />
+                            )}
+                            {confirmCloseId === audit.id
+                              ? "Confirm close?"
+                              : "Close Cycle"}
                           </button>
                         </>
                       )}
 
                       {isCompleted && (
-                        <button className="w-full bg-canvas hover:bg-surface-3 border border-line text-ink-soft py-2.5 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCycleView({
+                              id: audit.id,
+                              title: audit.title,
+                              mode: "discrepancies",
+                              readOnly: true,
+                            })
+                          }
+                          className="w-full bg-canvas hover:bg-surface-3 border border-line text-ink-soft py-2.5 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2"
+                        >
                           <FileText size={14} /> View Discrepancy Report
                         </button>
                       )}
@@ -598,6 +670,19 @@ const fetchAudits = useCallback(async () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* The cycle detail panel, opened by "Continue Audit" / "View
+          Discrepancy Report" (see AuditCycleModal.tsx). */}
+      {cycleView && (
+        <AuditCycleModal
+          cycleId={cycleView.id}
+          title={cycleView.title}
+          mode={cycleView.mode}
+          readOnly={cycleView.readOnly}
+          onClose={() => setCycleView(null)}
+          onChanged={() => void fetchAudits()}
+        />
+      )}
     </motion.div>
   );
 }

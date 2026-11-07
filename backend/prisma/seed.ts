@@ -4,7 +4,17 @@
  *
  * Run with:  npm run seed
  *
- * Default password for EVERY seeded account: "password123"
+ * Password for EVERY seeded account: "password123".
+ *
+ * **This is demo data, not a deployment step.** It creates a known-password
+ * administrator, so it is exactly the thing an attacker with the URL would
+ * try first. Two guards therefore exist:
+ *
+ *   1. it refuses to run when NODE_ENV=production unless
+ *      SEED_ALLOW_PRODUCTION=1 is set explicitly;
+ *   2. those accounts are for looking at the app — a real deployment gets its
+ *      administrator through BOOTSTRAP_ADMIN_EMAIL (see docs/RUNBOOK.md) and
+ *      its accounts through the sign-up page.
  */
 import { Role, AssetCondition } from '@prisma/client';
 
@@ -18,6 +28,30 @@ import { createPrismaClient } from '../src/prisma/prisma.service';
 const prisma = createPrismaClient(
   process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || '',
 );
+
+// A known-password ADMIN in a production database is a back door with a sign
+// on it. Refusing by default means running the wrong command against the
+// wrong database cannot quietly create one.
+if (
+  process.env.NODE_ENV === 'production' &&
+  process.env.SEED_ALLOW_PRODUCTION !== '1'
+) {
+  console.error(
+    [
+      'Refusing to seed demo data with NODE_ENV=production.',
+      '',
+      'The seed creates accounts with the published password "password123",',
+      'including an ADMIN. For a real deployment:',
+      '  1. sign up normally,',
+      '  2. set BOOTSTRAP_ADMIN_EMAIL to that address and restart,',
+      '  3. remove the variable (docs/RUNBOOK.md).',
+      '',
+      'If this really is a throw-away environment, re-run with',
+      'SEED_ALLOW_PRODUCTION=1.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 
 async function main() {
   const passwordHash = await hashPassword('password123', {

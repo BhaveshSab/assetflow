@@ -54,7 +54,10 @@ export default function DashboardLayout({
 
       {/* ── Main area ─────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopHeader userName={sidebarProps.user.name} />
+        <TopHeader
+          userName={sidebarProps.user.name}
+          avatarUrl={sidebarProps.user.avatar}
+        />
 
         <main
           id="main-content"

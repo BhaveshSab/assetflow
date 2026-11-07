@@ -6,10 +6,10 @@ import { RedisService } from '../common/redis/redis.service';
  * Where the failed-sign-in counters live.
  *
  * Two implementations:
- *  - {@link InMemoryLoginAttemptStore} — the default, a `Map` in the process.
- *  - {@link RedisLoginAttemptStore} — shared between every instance.
+ *  - {@link InMemoryAuthAttemptStore} — the default, a `Map` in the process.
+ *  - {@link RedisAuthAttemptStore} — shared between every instance.
  */
-export interface LoginAttemptStore {
+export interface AuthAttemptStore {
   /** Which implementation is in use (`memory` / `redis`). */
   readonly kind: 'memory' | 'redis';
 
@@ -42,10 +42,10 @@ const MAX_TRACKED_KEYS = 10_000;
  * The in-process store — one map per running instance.
  *
  * Correct for a single instance; with several replicas the counters are not
- * shared, which is exactly what {@link RedisLoginAttemptStore} fixes.
+ * shared, which is exactly what {@link RedisAuthAttemptStore} fixes.
  */
 @Injectable()
-export class InMemoryLoginAttemptStore implements LoginAttemptStore {
+export class InMemoryAuthAttemptStore implements AuthAttemptStore {
   readonly kind = 'memory' as const;
   private readonly attempts = new Map<string, AttemptRecord>();
 
@@ -166,10 +166,10 @@ return 0
  * limit) instead of rejecting every sign-in.
  */
 @Injectable()
-export class RedisLoginAttemptStore implements LoginAttemptStore {
+export class RedisAuthAttemptStore implements AuthAttemptStore {
   readonly kind = 'redis' as const;
-  private readonly local = new InMemoryLoginAttemptStore();
-  private readonly logger = new Logger(RedisLoginAttemptStore.name);
+  private readonly local = new InMemoryAuthAttemptStore();
+  private readonly logger = new Logger(RedisAuthAttemptStore.name);
 
   constructor(private readonly redis: RedisService) {}
 

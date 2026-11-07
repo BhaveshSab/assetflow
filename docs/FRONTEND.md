@@ -7,9 +7,9 @@ Vercel) and talking to the NestJS API under `/api`.
 |---|---|
 | **Source** | 56 files, ~14,900 lines (including ~1,050 lines of tests) |
 | **Stack** | React 18.3 · TypeScript 5.6 (`strict`) · Vite 5 · Tailwind 3 · React Router 6 · Recharts 3 · Framer Motion 12 · lucide-react |
-| **Tests** | 67 Vitest tests in 9 files (unit + component, jsdom) |
+| **Tests** | 92 Vitest tests in 13 files (unit + component, jsdom) |
 | **Lint** | ESLint 9 · `react-hooks` · `react-refresh` · `typescript-eslint` |
-| **First load** | **143 kB gzipped** (React 49, Motion 41, vendor 28, app 8, icons 7, CSS 9); the **96 kB gzipped** Recharts chunk is fetched only when a chart is drawn |
+| **First load** | **147 kB gzipped** (React 50, Motion 42, vendor 28, app 9, icons 7, ui 1.5, CSS 9); the **98 kB gzipped** Recharts chunk is fetched only when a chart is drawn |
 | **Screens** | 12 lazily-loaded views — 9 navigation screens + 3 role dashboards (admin / manager / employee) — reached from 10 sidebar entries, plus 2 auth routes |
 | **Theme** | light and dark, from CSS variables; the choice is remembered and follows the OS until it is made |
 
@@ -92,8 +92,8 @@ browser cache.
 
 | Before | After |
 |---|---|
-| one file, 1,089 kB (294 kB gzipped) | **143 kB gzipped first load** (React 49 + Motion 41 + vendor 28 + app 8 + icons 7 + CSS 9), then one 4–10 kB file per view |
-| Recharts in the first load | a **96 kB gzipped** charts chunk, requested when a chart is drawn |
+| one file, 1,089 kB (294 kB gzipped) | **147 kB gzipped first load** (React 50 + Motion 42 + vendor 28 + app 9 + icons 7 + ui 1.5 + CSS 9), then one 4–10 kB file per view |
+| Recharts in the first load | a **98 kB gzipped** charts chunk, requested when a chart is drawn |
 
 **The recharts chunk was still being preloaded until 2026-11-05.** The chunk
 list named the packages (`charts: ["recharts"]`), and Rollup put recharts'
@@ -103,6 +103,16 @@ emitted `<link rel="modulepreload">` for all of it, and every visitor
 downloaded 118 kB gzipped of charting library before the sign-in page painted.
 Assigning chunks by module path (`vite.config.ts`) fixed it: first load went
 from **247 kB to 143 kB gzipped**.
+
+**2026-11-07: 147.4 kB gzipped.** The account screens (`/profile`,
+`/forgot-password`, `/reset-password`) and the audit-cycle panel added ~4 kB of
+application code and ~0.3 kB of CSS. They are lazily loaded, so the sign-in
+page still pays only for what it draws. Measured from `dist/index.html`:
+
+```
+index  9.20 · vendor 28.39 · react 49.83 · icons 7.09 · motion 42.13
+ui     1.45 ·  css  9.29   →  147.38 kB gz   (charts 98.54 kB gz, on demand)
+```
 
 ### 2.6 Light and dark are one set of tokens, not two stylesheets
 
@@ -152,7 +162,7 @@ no authority of its own.
 
 ## 3. What the tests cover — and what they do not
 
-| Covered (67 tests) | Not covered |
+| Covered (92 tests) | Not covered |
 |---|---|
 | the API client: headers, timeout, error messages, 401 handling | the views' rendering |
 | the auth client: session storage, `getMe`, expiry | the charts |
@@ -175,7 +185,7 @@ npm install
 npm run dev          # http://localhost:5173, expects the API on :4000
 npm run lint         # ESLint (fails on errors; 16 known advisories are listed)
 npm run typecheck    # tsc -b, strict
-npm test             # 67 Vitest tests
+npm test             # 92 Vitest tests
 npm run build        # tsc -b && vite build → dist/
 ```
 

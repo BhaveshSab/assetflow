@@ -41,9 +41,42 @@ disclosed.
 | POST | `/auth/login` | public | `{ email, password }` → `{ token, user }`. E-mail matching is case-insensitive. Unknown account and wrong password return the **same** message after the same amount of work. Repeated failures are throttled (`429`). |
 | GET | `/auth/config` | public | → `{ googleClientId }` — `null` when `GOOGLE_CLIENT_ID` is unset. The sign-in page uses it to render or disable the Google button. |
 | POST | `/auth/google` | public | `{ credential }` — the Google Identity Services ID token → `{ token, user }`. The token is verified server-side (signature, issuer, audience, expiry) and the email must be verified. A new email creates an **EMPLOYEE**; an existing email links the Google identity. `503` when Google is not configured, `401` when the token is invalid. |
-| GET | `/auth/me` | any auth | → current `{ id, name, email, role, departmentId }`. A deactivated account's token stops working immediately. |
+| GET | `/auth/me` | any auth | → current `{ id, name, email, role, status, departmentId, avatarUrl, credentialsChangedAt }`. A deactivated account's token stops working immediately. |
+| PATCH | `/auth/me` | any auth | `{ name?, avatarUrl? }` → the updated user. `avatarUrl` must be an **https://** URL; `null` removes the picture. Role, status and e-mail are not accepted — the whitelist rejects them with `400`. |
+| POST | `/auth/forgot-password` | public | `{ email }` → **`202`** `{ message }`, always, whether or not the address exists. Mails a single-use link that expires in **30 minutes** (`FRONTEND_URL/reset-password?token=…`). Only the SHA-256 hash of the token is stored. A second request invalidates the first link. |
+| POST | `/auth/reset-password` | public | `{ token, password }` → `200 { message }`. Password ≥ 8 chars. Spends the token (a replay is `400`) and bumps the account's token version, so every session open before the reset is signed out. |
+| POST | `/auth/change-password` | any auth | `{ currentPassword, newPassword }` → `200 { token }`. The current password is required even though the caller is signed in. Returns a fresh token because the version bump invalidates the one that made the request. |
+| POST | `/auth/logout-everywhere` | any auth | `200 { message }`. Increments the token version: every token issued so far — on every device, including the caller's — stops working. |
 
-`user` shape everywhere: `{ id, name, email, role, status, departmentId }`. **passwordHash is never returned.** It is nullable in the database: an account created through Google has no password, and a password login for such an account fails exactly like a wrong password.
+`user` shape everywhere: `{ id, name, email, role, status, departmentId, avatarUrl, credentialsChangedAt }`. **passwordHash is never returned.** It is nullable in the database: an account created through Google has no password, and a password login for such an account fails exactly like a wrong password.
+
+### Token revocation, without a session table
+
+Every JWT carries `ver`, the account's `tokenVersion` at signing time. `JwtStrategy` re-reads the user on each request and rejects a token whose `ver` is behind the row. A password change, a reset and "sign out everywhere" all increment the column — one `UPDATE`, no extra storage, and revocation is immediate on every device.
+
+### Who is the first administrator?
+
+Signup only ever creates `EMPLOYEE`, and every admin-only route needs `ADMIN`, so an empty database needs one deliberate step (see `docs/RUNBOOK.md` → *First administrator*):
+
+1. sign up normally;
+2. set `BOOTSTRAP_ADMIN_EMAIL` to that address and restart — the API promotes it **only if no active administrator exists**, and it never creates an account;
+3. remove the variable again.
+
+For a one-off promotion at any other time: `npm run promote -- someone@example.com ADMIN`.
+
+### Attempt limits
+
+`AUTH_THROTTLE_LIMIT` / `AUTH_THROTTLE_TTL` (default **10 per 15 minutes**) are spent per key, so the flows cannot exhaust each other's budget:
+
+| Key | Endpoint | Cleared on success? |
+|---|---|---|
+| `login:<email>\|<ip>` | `/auth/login` | yes |
+| `signup:<ip>` | `/auth/signup` | no |
+| `reset:<email>\|<ip>` | `/auth/forgot-password` | no |
+| `reset-token:<ip>` | `/auth/reset-password` | no |
+| `change:<userId>` | `/auth/change-password` | no |
+
+The values are read on every call, so a deployment can tune them without a rebuild. `/auth/google` keeps its own `@Throttle` (30/minute) because there is no per-account key before the token is verified.
 
 ## Organization Setup (#3) ✅
 

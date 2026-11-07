@@ -70,11 +70,11 @@ Recharts, role-based routing.
 | | Value |
 |---|---|
 | Before | 1,089 kB raw / **294 kB gzip**, one file — `docs/FRONTEND.md:95` ✅ |
-| Now (this build) | **143.8 kB gzip** first load |
+| Now (this build) | **147.4 kB gzip** first load |
 | Reduction | **51 %**, not 60 % |
 
 Current first load, measured on this commit: React 48.7 + Motion 41.1 + vendor 27.7 + CSS 9.0
-+ app 8.9 + icons 7.0 + ui 1.4 = **143.8 kB gz**. Recharts is a separate **96.2 kB gz** chunk
++ app 9.2 + icons 7.1 + ui 1.5 = **147.4 kB gz**. Recharts is a separate **98.5 kB gz** chunk
 that is requested only when a chart draws; each view is 2.64–10.16 kB gz on top.
 
 **Say it like this:**
@@ -146,10 +146,12 @@ WCAG 2.1 AA, 1.4.3 contrast, 4.1.2 name/role/value.
 
 ### 1.7 “52 frontend” tests (inside the Security & Testing bullet)
 
-**❌ it is 67**
+**❌ it is 92**
 
-`npm test` on this commit: **67 passed / 67, 9 files** (Vitest 2.1.9 + Testing Library 16,
-jsdom). The count moved when the theme shipped (+15 tests).
+`npm test` on this commit: **92 passed / 92, 13 files** (Vitest 2.1.9 + Testing Library 16,
+jsdom). The count moved when the theme shipped (+15) and again when the account
+screens shipped (+25: the sign-in card's dead controls, `/forgot-password`,
+`/reset-password`, `/profile`).
 
 ---
 
@@ -243,15 +245,15 @@ throttler, Redis, brute force, allow-list validation, class-validator.
 
 | | Resume | Measured now |
 |---|---|---|
-| Unit | 72 | **72** ✅ (11 suites) |
-| E2E on embedded PostgreSQL | 114 | **117 passed + 1 skipped = 118** (14 suites, 3,201 lines, PGlite replaying the real migrations) |
-| Frontend | 52 | **67** (9 files) |
-| Total | 238 | **256** |
-| ESLint, zero `any` | — | ✅ backend `eslint` exit 0 / no findings; frontend **0 errors, 16 warnings**; `grep ': any'` = 1 hit and it is inside a comment |
+| Unit | 72 | **84** ✅ (12 suites) |
+| E2E on embedded PostgreSQL | 114 | **142 passed + 1 skipped = 143** (15 suites, PGlite replaying the real migrations) |
+| Frontend | 52 | **92** (13 files) |
+| Total | 238 | **319** |
+| ESLint, zero `any` | — | ✅ backend `eslint` exit 0 / no findings; frontend **0 errors, 17 warnings**; `grep ': any'` = 1 hit and it is inside a comment |
 
 **Say it like this:**
-> *256 automated checks — 72 unit, 118 e2e (117 passing, 1 skipped) against an embedded
-> PostgreSQL that replays the real migrations, 67 frontend — with an ESLint gate and no `any`
+> *319 automated checks — 84 unit, 143 e2e (142 passing, 1 skipped) against an embedded
+> PostgreSQL that replays the real migrations, 92 frontend — with an ESLint gate and no `any`
 > types.*
 
 **Keywords:** Jest, PGlite, embedded Postgres, e2e, Vitest, Testing Library, ESLint,
@@ -309,14 +311,14 @@ provisioning, structured logging, request correlation, RED metrics.
 
 ### 3.3 “Found the rate limiter keyed on client IP, so everyone behind one address shared 300 req/min (300 OK, then request 301 returned 429); re-keyed it to the user. CI runs lint, shellcheck and 238 tests; failed deploys roll back automatically”
 
-**⚠️ tests are 256 now; the rollback exists but has never been exercised**
+**⚠️ tests are 319 now; the rollback exists but has never been exercised**
 
 | Part | Verdict | Evidence |
 |---|---|---|
 | 300 OK then 429 with `Retry-After` | ✅ | `docs/results/rate-limit-20261105T083630Z.txt`; `THROTTLE_LIMIT`/`THROTTLE_BLOCK_MS`, the second asserted in a unit test |
 | re-keyed from IP to user | ✅ | `src/common/rate-limit/throttle-key.ts` + `.spec.ts`, `user-throttler.guard.ts` |
 | CI runs lint, shellcheck, tests | ✅ | 3 jobs: `backend` (lint, unit, e2e, build), `frontend` (lint, typecheck, tests, build, contrast), `infra` (shellcheck of 13 scripts, compose validation, both images) |
-| “238 tests” | ⚠️ | **256** |
+| “238 tests” | ⚠️ | **319** |
 | “failed deploys roll back automatically” | ⚠️ | `infra/scripts/deploy.sh:106-111` rolls back to the previous image when the health check fails — **there is no recorded rollback run**, so no time-to-rollback figure is quotable |
 
 **Keywords:** rate limiting, key by identity vs IP, 429 + Retry-After, shellcheck, CI pipeline,
@@ -338,7 +340,7 @@ interviewer clicks.
 
 | Claim | Verdict | Note |
 |---|---|---|
-| “400+ automated checks” | ⚠️ | This repository holds **256** (72 + 118 + 67 − 1 skipped). The rest are in VendorBridge, which is frozen and was not re-audited |
+| “400+ automated checks” | ⚠️ | This repository holds **319** (84 + 143 + 92 − 1 skipped). The rest are in VendorBridge, which is frozen and was not re-audited |
 | “250+ LeetCode problems” | ❓ | outside the repo |
 | “JEE 98.04 percentile”, “GPA 7.69”, “87 % / 92 %”, certifications | ❓ | outside the repo |
 | “…on AWS with Docker and CI/CD” | ✅ | EC2 + Compose + GitHub Actions, both workflows in `.github/workflows/` |
@@ -357,7 +359,7 @@ interviewer clicks.
    frozen and was not audited in this pass; none of those numbers were re-measured here.
 3. **The smart-grid project** — C++, ESP32, MQTT, Isolation Forest, Streamlit: not in this repo.
 4. **The 294 kB “before” figure** — recorded in `docs/FRONTEND.md:95` from the pre-split build;
-   the *current* 143.8 kB is measured, the historical 294 kB is a documented past measurement,
+   the *current* 147.4 kB is measured, the historical 294 kB is a documented past measurement,
    not re-runnable from this commit.
 5. **“Deactivation takes effect at once”** — true for the next API call; an open tab shows stale
    UI until it polls (60 s). Not measurable as “at once” from the UI.
@@ -396,14 +398,14 @@ Copy-paste replacements. Order and structure stay exactly as they are.
 | 4 | `7 UI primitives built using user-centered design principles` | `7 UI primitives on one design-token layer` |
 | 5 | `79 REST endpoints` | `78 REST endpoints` |
 | 6 | `conflict-safe under simultaneous requests` | `serialised with row-level locks so a second request cannot slip between check and write` |
-| 7 | `238 automated checks (72 unit, 114 e2e on embedded PostgreSQL, 52 frontend)` | `256 automated checks (72 unit, 118 e2e on embedded PostgreSQL, 67 frontend)` |
+| 7 | `238 automated checks (72 unit, 114 e2e on embedded PostgreSQL, 52 frontend)` | `319 automated checks (84 unit, 143 e2e on embedded PostgreSQL, 92 frontend)` |
 | 8 | `Infra: 13.55.90.25` | `Infra: 3.107.83.86` |
 
 Two smaller ones:
 
 - “Redis-backed brute-force throttling” → keep, but be ready to say *which* deployment runs Redis
   (Compose, not Vercel).
-- “CI runs lint, shellcheck and 238 tests” → `256 tests`.
+- “CI runs lint, shellcheck and 238 tests” → `319 tests`.
 
 ---
 
@@ -417,7 +419,7 @@ cd ~/assetflow
 find node_modules -maxdepth 1 -mindepth 1 | wc -l          # 331 installed packages
 find src -name '*.ts' -o -name '*.tsx' | wc -l              # 56 files
 cat $(find src -name '*.ts' -o -name '*.tsx') | wc -l       # 14,899 lines
-npm test                                                    # 67 passed, 9 files
+npm test                                                    # 92 passed, 13 files
 npm run build                                               # then inspect dist/ chunk sizes
 grep -rnoE "api(Get|Send)\(" src --include=*.ts --include=*.tsx | wc -l   # 78 occurrences − 2 definitions = 76
 grep -rhoE "<(Bar|Area|Pie)Chart" src | sort | uniq -c      # 4 bar, 2 area, 2 pie
@@ -428,8 +430,8 @@ grep -cE "^const [A-Za-z]+ = lazy" src/pages/Dashboard.tsx  # 12 views
 cd backend
 find src -name '*.ts' | wc -l                               # 106 files
 grep -rn "@\(Get\|Post\|Patch\|Put\|Delete\)(" src --include=*.controller.ts | wc -l   # routes
-npm run test:unit                                           # 72 passed, 11 suites
-npm run test:e2e                                            # 117 passed, 1 skipped, 14 suites
+npm run test:unit                                           # 84 passed, 12 suites
+npm run test:e2e                                            # 142 passed, 1 skipped, 15 suites
 npm run lint                                                # 0 findings
 grep -rn 'FOR UPDATE' src --include=*.ts | wc -l            # 4 row locks
 grep -rn '\$transaction' src --include=*.ts | grep -v spec | wc -l   # 18 transactions

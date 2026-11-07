@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 
 import { AuthService } from './auth.service';
-import { LoginThrottleService } from './login-throttle.service';
+import { AuthThrottleService } from './auth-throttle.service';
 
 type UserRecord = {
   id: string;
@@ -60,10 +60,25 @@ function makeService(
   const config = {
     get: jest.fn().mockReturnValue(4),
   } as unknown as ConfigService;
-  const throttle = new LoginThrottleService(config);
+  const throttle = new AuthThrottleService(config);
 
-  const service = new AuthService(prisma, jwt, config, throttle);
-  return { service, prisma, jwt, throttle, findFirst, create };
+  const activity = { log: jest.fn().mockResolvedValue(undefined) } as any;
+  // A mailer that records instead of sending: the reset flow is the only
+  // thing that talks to it.
+  const mail = {
+    sendPasswordReset: jest.fn().mockResolvedValue(undefined),
+    sendPasswordChanged: jest.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const service = new AuthService(
+    prisma,
+    jwt,
+    config,
+    throttle,
+    activity,
+    mail,
+  );
+  return { service, prisma, jwt, throttle, findFirst, create, activity, mail };
 }
 
 describe('AuthService', () => {

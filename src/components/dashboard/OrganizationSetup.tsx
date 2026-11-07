@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2, Search, Plus, MoreVertical, Users, Network,
   CheckCircle2, XCircle, AlertCircle, Layers, Contact,
-  Tag, Settings2, Box, Edit2, X, Loader2,
+  Tag, Box, Edit2, X, Loader2,
   User, UserCheck, UserX, Shield, ShieldCheck, ShieldAlert,
   Crown, Briefcase, Mail, Trash2, ChevronDown, Check,
 } from "lucide-react";
@@ -988,8 +988,7 @@ export default function OrganizationSetup() {
                           </td>
                           <td className="py-4 px-6 text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => handleOpenModal(cat)} className="text-ink-subtle hover:text-info p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Edit"><Edit2 size={16} /></button>
-                              <button className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Configure"><Settings2 size={18} /></button>
+                              <button onClick={() => handleOpenModal(cat)} className="text-ink-subtle hover:text-info p-1.5 rounded-lg hover:bg-surface-3 transition-colors" title="Edit" aria-label={`Edit ${cat.name}`}><Edit2 size={16} /></button>
                             </div>
                           </td>
                         </motion.tr>

@@ -15,8 +15,9 @@
  * every request is authorised server-side against the *current* user record
  * (role changes and deactivations take effect immediately).
  */
-import { BASE_URL } from "@/lib/api";
+import { BASE_URL, apiGet, apiSend } from "@/lib/api";
 import {
+  clearSession,
   getSession,
   getToken,
   saveSession,
@@ -117,4 +118,76 @@ export async function getMe(): Promise<AuthUser> {
   const session = getSession();
   if (session) saveSession({ ...session, user });
   return user;
+}
+
+// ---------------------------------------------------------------------------
+// Self-service account management
+//
+// These four calls are what the "Forgot password?", "Reset password" and
+// "Profile" screens use. They talk to the same API as everything else, so a
+// 401 is handled (and the session dropped) by the shared client in lib/api.
+// ---------------------------------------------------------------------------
+
+/** POST /auth/forgot-password — always succeeds, never says if the address exists. */
+export async function apiForgotPassword(email: string): Promise<string> {
+  const res = await apiSend<{ message: string }>("/auth/forgot-password", "POST", {
+    email,
+  });
+  return res.message;
+}
+
+/** POST /auth/reset-password — spends the token from the e-mail, once. */
+export async function apiResetPassword(
+  token: string,
+  password: string,
+): Promise<string> {
+  const res = await apiSend<{ message: string }>("/auth/reset-password", "POST", {
+    token,
+    password,
+  });
+  return res.message;
+}
+
+/**
+ * POST /auth/change-password — returns the replacement token.
+ *
+ * The server bumps the account's token version, which invalidates every token
+ * minted before this moment (that is how "other devices are signed out"
+ * works). The caller's own token is one of those, so the new one has to be
+ * stored immediately or the very next request would 401.
+ */
+export async function apiChangePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<AuthUser> {
+  const { token } = await apiSend<{ token: string }>(
+    "/auth/change-password",
+    "POST",
+    { currentPassword, newPassword },
+  );
+
+  const user = await apiGet<AuthUser>("/auth/me");
+  saveSession({ token, user });
+  return user;
+}
+
+/** PATCH /auth/me — the signed-in user's own name and picture. */
+export async function apiUpdateProfile(input: {
+  name?: string;
+  avatarUrl?: string | null;
+}): Promise<AuthUser> {
+  const user = await apiSend<AuthUser>("/auth/me", "PATCH", input);
+
+  // Keep the stored session in step so the header avatar and the name in the
+  // sidebar update without a reload.
+  const session = getSession();
+  const token = getToken();
+  if (session && token) saveSession({ token, user });
+  return user;
+}
+
+/** POST /auth/logout-everywhere — kills every token, then forgets this one. */
+export async function apiLogoutEverywhere(): Promise<void> {
+  await apiSend<{ message: string }>("/auth/logout-everywhere", "POST");
+  clearSession();
 }

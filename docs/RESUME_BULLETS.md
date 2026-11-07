@@ -76,14 +76,15 @@ Recharts, Framer Motion, Vitest, ESLint
 
 3. **Cut the first load by more than half without removing a feature** — the
    app was one 1,089 kB file (294 kB gzipped) that carried every screen plus
-   Recharts and Framer Motion; it is now **143 kB gzipped** for the first
-   screen, one 4–10 kB file per view loaded on demand, and the **96 kB
+   Recharts and Framer Motion; it is now **147 kB gzipped** for the first
+   screen, one 4–10 kB file per view loaded on demand, and the **98 kB
    gzipped** charts chunk only fetched when a chart is drawn. The last step was
    not `React.lazy`: the chunk list named packages, so Rollup had put recharts'
    own dependency (`clsx`, which the shell needs) inside the charts chunk, the
    entry imported it, and every visitor downloaded **118 kB gzipped of charting
    library before the sign-in page painted** — first load fell from 247 kB to
-   143 kB gzipped once chunks were assigned by module path.
+   143 kB gzipped once chunks were assigned by module path, and stands at
+   **147 kB gzipped** now that the account screens exist.
 
 4. **Turned one hard-coded palette into a real light/dark theme** — the app was
    built against a single dark palette: ~2,300 colour utilities (`zinc`/`gray`
@@ -154,17 +155,18 @@ arrives, a restore that actually restores.
 ## One correction to the existing bullets
 
 The auth bullet says "174 automated checks: 45 unit, 105 e2e, 24 frontend".
-The suite grew during the infrastructure work. Measured on 2026-10-29:
+The suite grew during the infrastructure work and again with the
+self-service account work. Measured on 2026-11-07:
 
 ```
-backend  unit   72 passed, 11 suites
-backend  e2e   114 passed, 13 suites
-frontend       52 passed,  7 files
-               238 total
+backend  unit   84 passed, 12 suites
+backend  e2e   142 passed, 1 skipped, 15 suites
+frontend       92 passed, 13 files
+               319 total
 ```
 
-Use **238 automated checks: 72 unit, 114 e2e on embedded PostgreSQL (PGlite),
-52 frontend.** The commands are `npm run test:unit`, `npm run test:e2e` and
+Use **319 automated checks: 84 unit, 143 e2e on embedded PostgreSQL (PGlite),
+92 frontend.** The commands are `npm run test:unit`, `npm run test:e2e` and
 `npx vitest run` — an interviewer can reproduce all three in about a minute.
 
 ## Do not claim (not measured)

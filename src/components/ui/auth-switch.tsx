@@ -1,9 +1,9 @@
 import * as React from "react";
 import {
   ArrowLeft,
+  Check,
   Eye,
   EyeOff,
-  Github,
   Loader2,
   Mail,
   ShieldCheck,
@@ -81,11 +81,6 @@ const PANEL_COPY = {
     subtitle:
       "Sign up and discover a great amount of new opportunities to grow your portfolio.",
     cta: "Sign Up",
-    quote: {
-      text: "AssetFlow completely transformed how our team tracks and manages every asset we own. It's intuitive, fast, and beautiful.",
-      author: "Alicia Mercer",
-      role: "COO, Northwind Capital",
-    },
   },
   signup: {
     badge: "One of us?",
@@ -93,13 +88,22 @@ const PANEL_COPY = {
     subtitle:
       "Enter your details and start your journey with us. Pick up right where you left off.",
     cta: "Sign In",
-    quote: {
-      text: "AssetFlow completely transformed how our team tracks and manages every asset we own. It's intuitive, fast, and beautiful.",
-      author: "Alicia Mercer",
-      role: "COO, Northwind Capital",
-    },
   },
 } as const;
+
+/**
+ * What the product actually does.
+ *
+ * This replaced a five-star quote attributed to a customer who does not exist.
+ * A testimonial nobody said is the one piece of copy on a sign-in page that is
+ * *provably* false, and it buys nothing: these three lines are true of every
+ * commit in this repository and can be checked in the code.
+ */
+const CAPABILITIES = [
+  "Every asset, allocation, booking and audit in one place",
+  "Admin, manager, department-head and employee roles",
+  "Every change recorded in an append-only activity log",
+] as const;
 
 function PasswordInput({
   id,
@@ -193,8 +197,11 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
       setLocalError(null);
 
       if (!emailValid) return setLocalError("Please enter a valid email address.");
-      if (password.length < 6)
-        return setLocalError("Password must be at least 6 characters.");
+      // The API rejects anything shorter than 8 (see ResetPasswordDto /
+      // ChangePasswordDto). Checking 6 here meant a 6–7 character password
+      // passed this form and came back as a server error.
+      if (password.length < 8)
+        return setLocalError("Password must be at least 8 characters.");
 
       if (isSignup) {
         if (!name.trim()) return setLocalError("Please enter your name.");
@@ -270,23 +277,15 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
             )}
           </div>
 
-          {/* testimonial */}
-          <figure className="relative space-y-3 rounded-xl bg-white/10 p-5 ring-1 ring-white/15 backdrop-blur">
-            <div className="flex gap-0.5 text-amber-300" aria-label="5 out of 5 stars">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <svg key={i} viewBox="0 0 20 20" className="h-4 w-4 fill-current">
-                  <path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.6 1-5.8L1.5 7.7l5.9-.9L10 1.5z" />
-                </svg>
-              ))}
-            </div>
-            <blockquote className="text-sm leading-relaxed text-white/90">
-              “{copy.quote.text}”
-            </blockquote>
-            <figcaption className="text-xs text-white/70">
-              <span className="font-semibold text-white">{copy.quote.author}</span>{" "}
-              · {copy.quote.role}
-            </figcaption>
-          </figure>
+          {/* what the product does (checked against the code, not invented) */}
+          <ul className="relative space-y-3 rounded-xl bg-white/10 p-5 text-sm leading-relaxed text-white/90 ring-1 ring-white/15 backdrop-blur">
+            {CAPABILITIES.map((line) => (
+              <li key={line} className="flex items-start gap-2">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
         </aside>
 
         {/* RIGHT: form panel */}
@@ -317,13 +316,18 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
               className="text-sm text-muted-foreground"
             >
               {isSignup
-                ? "Start your free trial. No credit card required."
+                ? "Create an account to start managing your organisation's assets."
                 : "Welcome back! Please enter your details."}
             </motion.p>
           </div>
 
-          {/* social */}
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* social — only what the server can actually do.
+              Google renders the real Google Identity Services button when the
+              backend has a client id, and an honestly-disabled placeholder
+              when it does not. The GitHub button that used to sit here is
+              gone: the API has no GitHub OAuth route, so it could only ever
+              do nothing. */}
+          <div className="mt-6 grid grid-cols-1 gap-3">
             {googleSlot ?? (
               <Button
                 type="button"
@@ -336,10 +340,6 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                 Google
               </Button>
             )}
-            <Button type="button" variant="outline" className="h-11" disabled={loading}>
-              <Github className="h-4 w-4" />
-              GitHub
-            </Button>
           </div>
 
           <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
@@ -394,12 +394,12 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
               <div className="flex items-center justify-between">
                 <Label htmlFor="auth-password">Password</Label>
                 {!isSignup && (
-                  <button
-                    type="button"
+                  <Link
+                    to="/forgot-password"
                     className="text-xs font-medium text-primary hover:underline"
                   >
                     Forgot password?
-                  </button>
+                  </Link>
                 )}
               </div>
               <PasswordInput
@@ -433,26 +433,11 @@ const AuthSwitch = React.forwardRef<HTMLDivElement, AuthSwitchProps>(
                   className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
                 />
                 <span>
-                  I agree to the{" "}
-                  <span className="font-medium text-primary hover:underline cursor-pointer">
-                    Terms
-                  </span>{" "}
-                  and{" "}
-                  <span className="font-medium text-primary hover:underline cursor-pointer">
-                    Privacy Policy
-                  </span>
-                  .
+                  I understand that the actions I take here are recorded in the
+                  activity log.
                 </span>
               </label>
-            ) : (
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-input accent-primary"
-                />
-                Remember me
-              </label>
-            )}
+            ) : null}
 
             {activeError && (
               <p

@@ -6,3 +6,7 @@ node_modules
 *.log
 
 /generated/prisma
+
+# Messages written by the dev mail transport (MAIL_TRANSPORT=dev).
+# They contain real reset links — never commit them.
+/var/mail

@@ -1,8 +1,8 @@
 import { RedisService } from '../common/redis/redis.service';
 import {
-  InMemoryLoginAttemptStore,
-  RedisLoginAttemptStore,
-} from './login-throttle.store';
+  InMemoryAuthAttemptStore,
+  RedisAuthAttemptStore,
+} from './auth-throttle.store';
 
 function redisDouble(options: { enabled?: boolean; fail?: boolean } = {}) {
   const state = new Map<string, { failures: number; blockedUntil: number }>();
@@ -40,9 +40,9 @@ function redisDouble(options: { enabled?: boolean; fail?: boolean } = {}) {
   return { service: service as unknown as RedisService, state };
 }
 
-describe('InMemoryLoginAttemptStore', () => {
+describe('InMemoryAuthAttemptStore', () => {
   it('blocks the key once the limit is reached', async () => {
-    const store = new InMemoryLoginAttemptStore();
+    const store = new InMemoryAuthAttemptStore();
     await store.recordFailure('a|1.1.1.1', 2, 60_000);
     expect(await store.isBlocked('a|1.1.1.1')).toBe(0);
     await store.recordFailure('a|1.1.1.1', 2, 60_000);
@@ -50,17 +50,17 @@ describe('InMemoryLoginAttemptStore', () => {
   });
 
   it('clears the counter on success', async () => {
-    const store = new InMemoryLoginAttemptStore();
+    const store = new InMemoryAuthAttemptStore();
     await store.recordFailure('a|1.1.1.1', 1, 60_000);
     await store.recordSuccess('a|1.1.1.1');
     expect(await store.isBlocked('a|1.1.1.1')).toBe(0);
   });
 });
 
-describe('RedisLoginAttemptStore', () => {
+describe('RedisAuthAttemptStore', () => {
   it('shares the counters through Redis', async () => {
     const { service, state } = redisDouble();
-    const store = new RedisLoginAttemptStore(service);
+    const store = new RedisAuthAttemptStore(service);
 
     await store.recordFailure('a|1.1.1.1', 2, 60_000);
     expect(await store.isBlocked('a|1.1.1.1')).toBe(0);
@@ -71,7 +71,7 @@ describe('RedisLoginAttemptStore', () => {
 
   it('falls back to the local limiter when Redis is down', async () => {
     const { service } = redisDouble({ fail: true });
-    const store = new RedisLoginAttemptStore(service);
+    const store = new RedisAuthAttemptStore(service);
 
     await store.recordFailure('a|1.1.1.1', 2, 60_000);
     await store.recordFailure('a|1.1.1.1', 2, 60_000);
@@ -81,7 +81,7 @@ describe('RedisLoginAttemptStore', () => {
 
   it('uses the local store when Redis is not configured', async () => {
     const { service } = redisDouble({ enabled: false });
-    const store = new RedisLoginAttemptStore(service);
+    const store = new RedisAuthAttemptStore(service);
 
     await store.recordFailure('a|1.1.1.1', 1, 60_000);
     expect(await store.isBlocked('a|1.1.1.1')).toBeGreaterThan(0);

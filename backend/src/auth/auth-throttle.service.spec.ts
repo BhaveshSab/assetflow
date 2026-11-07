@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 
-import { InMemoryLoginAttemptStore } from './login-throttle.store';
+import { InMemoryAuthAttemptStore } from './auth-throttle.store';
 import {
-  LoginThrottleService,
+  AuthThrottleService,
   TooManyRequestsException,
-} from './login-throttle.service';
+} from './auth-throttle.service';
 
 function config(values: Record<string, number>) {
   return {
@@ -12,7 +12,7 @@ function config(values: Record<string, number>) {
   } as unknown as ConfigService;
 }
 
-describe('LoginThrottleService', () => {
+describe('AuthThrottleService', () => {
   const env = { AUTH_THROTTLE_LIMIT: '3', AUTH_THROTTLE_TTL: '60000' };
 
   beforeEach(() => {
@@ -26,9 +26,9 @@ describe('LoginThrottleService', () => {
   });
 
   it('blocks the key after the configured number of failures', async () => {
-    const service = new LoginThrottleService(
+    const service = new AuthThrottleService(
       config({}),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     const key = 'ada@example.com|1.2.3.4';
 
@@ -43,9 +43,9 @@ describe('LoginThrottleService', () => {
   });
 
   it('keeps different keys independent', async () => {
-    const service = new LoginThrottleService(
+    const service = new AuthThrottleService(
       config({}),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     await service.recordFailure('a@example.com|1.1.1.1');
     await service.recordFailure('a@example.com|1.1.1.1');
@@ -60,9 +60,9 @@ describe('LoginThrottleService', () => {
   });
 
   it('clears the counter after a successful sign-in', async () => {
-    const service = new LoginThrottleService(
+    const service = new AuthThrottleService(
       config({}),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     const key = 'ada@example.com|1.2.3.4';
 
@@ -75,9 +75,9 @@ describe('LoginThrottleService', () => {
   });
 
   it('resets every key', async () => {
-    const service = new LoginThrottleService(
+    const service = new AuthThrottleService(
       config({}),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     const key = 'ada@example.com|1.2.3.4';
     await service.recordFailure(key);
@@ -92,9 +92,9 @@ describe('LoginThrottleService', () => {
   it('honours the configured limit', async () => {
     // process.env wins over the injected config, so clear it for this case.
     delete process.env.AUTH_THROTTLE_LIMIT;
-    const service = new LoginThrottleService(
+    const service = new AuthThrottleService(
       config({ AUTH_THROTTLE_LIMIT: 1 }),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     const key = 'ada@example.com|1.2.3.4';
 
@@ -103,9 +103,9 @@ describe('LoginThrottleService', () => {
   });
 
   it('reports which store it uses', () => {
-    const memory = new LoginThrottleService(
+    const memory = new AuthThrottleService(
       config({}),
-      new InMemoryLoginAttemptStore(),
+      new InMemoryAuthAttemptStore(),
     );
     expect(memory.kind).toBe('memory');
   });
