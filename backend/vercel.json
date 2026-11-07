@@ -3,13 +3,8 @@
   "buildCommand": "npm run vercel-build",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{dist/**,node_modules/.prisma/client/**,node_modules/@neondatabase/serverless/**,node_modules/@prisma/adapter-neon/**,node_modules/@prisma/adapter-pg/**,node_modules/bcrypt/prebuilds/**,node_modules/google-auth-library/**,node_modules/ioredis/**,node_modules/nodemailer/**,node_modules/passport-jwt/**,node_modules/passport/**,node_modules/pg-native/**,node_modules/pg/**,node_modules/prom-client/**,node_modules/ws/**}"
+      "includeFiles": "{dist/**,node_modules/.prisma/client/**,node_modules/bcrypt/prebuilds/**,node_modules/@prisma/adapter-pg/**,node_modules/@prisma/adapter-neon/**,node_modules/@neondatabase/serverless/**,node_modules/pg/**,node_modules/pg-native/**,node_modules/ws/**}"
     }
   },
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index.js"
-    }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index.js" }]
 }
