@@ -91,6 +91,17 @@ class HistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, self.assertRaises(ValueError):
             load('restore-history.py').history_sql(folder)
 
+    def test_readiness_needs_a_real_query_not_just_pg_isready(self):
+        # initdb runs a temporary server on the unix socket and then restarts.
+        # pg_isready answers against that temporary server, so a loop that only
+        # asks pg_isready breaks out early and then races the restart — which is
+        # how a fast runner produced "the database system is shutting down".
+        body = (SCRIPTS / 'restore-verify.sh').read_text()
+        ready_block = body[body.index('db_ready()'):body.index('say "+ restoring the dump"')]
+        self.assertIn("-h 127.0.0.1", ready_block)
+        self.assertIn('select 1', ready_block)
+        self.assertNotIn('pg_isready', ready_block)
+
     def test_migrate_precedes_current_table_checks_and_no_ports(self):
         body = (SCRIPTS / 'restore-verify.sh').read_text()
         self.assertLess(body.index('migration_exit='), body.index('EXPECTED_TABLES='))
@@ -290,6 +301,9 @@ case "$1" in
    touch "$MIGRATED"; echo 0 ;;
  exec)
    case "$*" in
+     # Readiness is now a real query over TCP, not pg_isready, so the stub must
+     # answer that query the way a started database would.
+     *'-h 127.0.0.1'*'-tAc select 1'*) [ "$MODE" != db-create-fail ] && exit 0 || exit 72 ;;
      *pg_isready*|*pg_restore*) exit 0 ;;
      *'select to_regclass'*) [ -f "$MIGRATED" ] || exit 72; echo t ;;
      *'SELECT count('*'"User"'*) echo 1 ;;
