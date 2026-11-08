@@ -147,8 +147,8 @@ say "+ applying the migrations (one-shot container)"
 if [ "$DRY_RUN" = true ]; then
     say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm -T migrate"
 else
-    # -T: do not attach stdin. The GitHub workflow pipes this script into
-    # `ssh bash -s`, and an attached container would consume the rest of it.
+    # -T disables the pseudo-TTY, NOT stdin. Detach stdin explicitly so
+    # children cannot consume commands when a caller uses `ssh ... bash -s`.
     #
     # No --no-build and no --pull here, deliberately:
     #   * `docker compose run` has no --no-build (it belongs to `up`); passing
@@ -159,7 +159,7 @@ else
     #     step 1 pulled it under its exact commit tag and MIGRATE_IMAGE carries
     #     that tag, so compose has nothing to build and no `latest` to fetch.
     # This is the same invocation provision-host.sh uses on the same host.
-    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T migrate
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T migrate </dev/null
 fi
 
 # 3. The new container ------------------------------------------------------
@@ -232,7 +232,7 @@ else
     # Reload via the internal network, not a publicly exposed lifecycle port.
     reloaded=false
     for attempt in $(seq 1 15); do
-        if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload; then
+        if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload </dev/null; then
             reloaded=true
             break
         fi

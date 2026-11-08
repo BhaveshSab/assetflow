@@ -3,7 +3,6 @@ import fcntl
 import os
 from pathlib import Path
 import select
-import shlex
 import signal
 import subprocess
 import tempfile
@@ -52,13 +51,16 @@ class DeployWorkflowTests(unittest.TestCase):
                 subprocess.run(['bash', '-n'], input=step['run'], text=True, check=True)
         self.assertEqual(next(s for s in JOB['steps'] if s.get('name') == 'Deploy')['timeout-minutes'], 20)
 
-    def run_transport(self, status):
+    def run_transport(self, status, omit_marker=False):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             executable(path / 'ssh', '''cat >/dev/null
 printf '%s\n' "${@: -1}" > "$COMMAND_FILE"
 echo LIVE_DEPLOY_LINE
 echo REMOTE_ERROR_LINE >&2
+if [ "$SSH_STATUS" = 0 ] && [ "$OMIT_MARKER" = 0 ]; then
+  echo "ASSETFLOW_DEPLOY_COMPLETE ${IMAGE##*:}"
+fi
 exit "$SSH_STATUS"
 ''')
             # Isolate the runner log path too; production uses /tmp.
@@ -68,8 +70,15 @@ exit "$SSH_STATUS"
                 env={**os.environ, 'PATH': f'{path}:{os.environ["PATH"]}',
                      'HOST': 'invalid.test', 'USER': 'deploy', 'CONFIGURED_PATH': '/path with spaces',
                      'IMAGE': API, 'MIGRATE_IMAGE': MIGRATE, 'WEB_IMAGE': WEB,
-                     'COMMAND_FILE': str(command), 'OUT_FILE': str(path / 'log'), 'SSH_STATUS': str(status)})
-            return result, shlex.split(command.read_text())
+                     'COMMAND_FILE': str(command), 'OUT_FILE': str(path / 'log'),
+                     'SSH_STATUS': str(status), 'OMIT_MARKER': str(int(omit_marker))})
+            # printf %q uses Bash ANSI-C quoting for a multiline bootstrap;
+            # POSIX shlex cannot parse it. Decode the trusted test-generated
+            # command with the same shell the remote endpoint uses.
+            decoded = subprocess.check_output(
+                ['bash', '-c', 'set -- ' + command.read_text() + '\nprintf "%s\\0" "$@"'],
+            )
+            return result, decoded.decode().rstrip('\0').split('\0')
 
     def test_ssh_failure_is_not_hidden_by_successful_tee(self):
         for status in [23, 124, 255]:
@@ -85,12 +94,18 @@ exit "$SSH_STATUS"
         self.assertEqual(args[-4:], ['/path with spaces', API, MIGRATE, WEB])
         self.assertNotIn('::error', result.stdout)
 
+    def test_ssh_zero_without_completion_is_a_failure(self):
+        result, _ = self.run_transport(0, omit_marker=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('::error title=Incomplete deployment::', result.stdout)
+
     def test_remote_output_is_visible_before_ssh_finishes(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             executable(path / 'ssh', '''cat >/dev/null
 echo LIVE_BEFORE_EXIT
 while [ ! -f "$RELEASE" ]; do sleep 0.02; done
+echo "ASSETFLOW_DEPLOY_COMPLETE ${IMAGE##*:}"
 ''')
             run = RUN.replace('out=/tmp/deploy-remote.log', 'out="$OUT_FILE"')
             process = subprocess.Popen(['bash', '-e', '-c', run], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -154,7 +169,12 @@ case "$1" in
     case "$*" in
       *'ps -q api') echo test-container ;;
       *'run --rm -T migrate')
+        bytes=$(cat | wc -c)
+        echo "migration_stdin_bytes=$bytes" >> "$CALLS"
         if [ "$MODE" = migration-fails ]; then exit 18; fi ;;
+      *'exec -T prometheus'*)
+        bytes=$(cat | wc -c)
+        echo "monitoring_stdin_bytes=$bytes" >> "$CALLS" ;;
     esac ;;
 esac
 ''')
@@ -170,7 +190,7 @@ esac
             # Explicit workflow pins must survive conflicting host defaults.
             (repo / 'infra/.env').write_text('IMAGE=wrong:latest\nMIGRATE_IMAGE=wrong-migrate:latest\nWEB_IMAGE=wrong-web:latest\n')
             calls = path / 'calls'
-            result = subprocess.run(['bash', str(scripts / 'deploy.sh')], capture_output=True, text=True, timeout=5,
+            result = subprocess.run(['bash', str(scripts / 'deploy.sh')], input='FAKE_CALLER_CONTROL_STREAM\n', capture_output=True, text=True, timeout=5,
                 env={**os.environ, 'PATH': f'{path}:{os.environ["PATH"]}', 'CALLS': str(calls),
                      'MODE': mode, 'IMAGE': API, 'MIGRATE_IMAGE': MIGRATE, 'WEB_IMAGE': WEB,
                      'LOG_FILE': str(path / 'log'), 'PREVIOUS_IMAGE_FILE': str(path / 'previous'),
@@ -191,6 +211,12 @@ esac
         self.assertFalse(any(' build ' in c for c in calls))
         self.assertFalse(any('wrong' in c for c in calls))
         self.assertNotIn(f'rmi {MIGRATE}', calls, 'cleanup must retain the current migration image')
+
+    def test_migration_and_monitoring_clients_are_detached_from_caller_stdin(self):
+        result, calls = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('migration_stdin_bytes=0', calls)
+        self.assertIn('monitoring_stdin_bytes=0', calls)
 
     def test_migration_never_passes_flags_compose_run_rejects(self):
         """`docker compose run` has no --no-build; passing it aborts every deploy.
