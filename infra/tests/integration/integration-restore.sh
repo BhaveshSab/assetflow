@@ -27,7 +27,6 @@ RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 PREFIX="assetflow-it-${RUN_ID}"
 PG_IMAGE="${POSTGRES_IMAGE:-postgres:16.4-alpine}"
 # Debian-based, so a client container can add python3 and psql without apk.
-PG_CLIENT_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:16.4-bookworm}"
 SHA="$(git rev-parse HEAD)"
 MIGRATE_IMAGE="${RESTORE_MIGRATE_IMAGE:-assetflow-it-migrate:${SHA}}"
 WORK="$(mktemp -d)"
@@ -157,7 +156,7 @@ docker network create --internal "$NET" >/dev/null || { record "create network" 
 docker volume create "$VOL" >/dev/null
 # Pull is allowed for these disposable test images: the runner has no preloaded
 # Postgres, and nothing here is a production artefact. ($PG_IMAGE and
-# $PG_CLIENT_IMAGE are the only images this harness is permitted to fetch.)
+# $PG_IMAGE is the only image this harness is permitted to fetch.)
 if ! docker run -d --name "$SRC" --network "$NET" --network-alias src-db \
     -e POSTGRES_USER=assetflow -e POSTGRES_PASSWORD="it-${RUN_ID}" -e POSTGRES_DB=assetflow \
     -v "${VOL}:/var/lib/postgresql/data" "$PG_IMAGE" >"${WORK}/pg-run.log" 2>&1; then
@@ -226,13 +225,18 @@ say "== verifying the shipped constraint SQL against real PostgreSQL =="
 # Run against the source database from a throwaway client container that carries
 # both psql and python3, on the same isolated network. The database itself keeps
 # no published port.
+# psql runs inside the database container itself (it ships with the image), so
+# no client image and no python3-inside-a-container is needed. The Python driver
+# runs on the runner, which always has python3.
+PSQL_WRAPPER="${WORK}/psql-in-source.sh"
+cat >"$PSQL_WRAPPER" <<WRAP
+#!/usr/bin/env bash
+exec docker exec -i -e PGPASSWORD=it-${RUN_ID} ${SRC} psql -U assetflow -d assetflow -X -q -tA -v ON_ERROR_STOP=1 "\$@"
+WRAP
+chmod +x "$PSQL_WRAPPER"
 CONSTRAINT_OK=false
-if docker run --rm --network "$NET" \
-    -e RESTORE_TEST_DB_URL="$SRC_URL" -e PGPASSWORD="it-${RUN_ID}" \
-    -v "${REPO}:/repo:ro" -w /repo --entrypoint bash "${PG_CLIENT_IMAGE}" -c '
-        command -v psql >/dev/null || { echo "missing psql in the client container"; exit 3; }
-        command -v python3 >/dev/null || { echo "missing python3 in the client container"; exit 3; }
-        python3 /repo/infra/tests/integration/verify-constraint-sql.py' >"${WORK}/constraint.log" 2>&1
+if PSQL_BIN="$PSQL_WRAPPER" RESTORE_TEST_DB_URL="ignored" \
+    python3 infra/tests/integration/verify-constraint-sql.py >"${WORK}/constraint.log" 2>&1
 then
     CONSTRAINT_OK=true
 fi
@@ -281,14 +285,21 @@ fi
 # ------------------------------------------------ drive the real script ------
 run_restore() { # dump expected_exit label
     local dump="$1" want="$2" label="$3"
-    local out="${WORK}/case-${RANDOM}.log"
+    local slug out
+    slug="$(printf '%s' "$label" | tr -c 'a-zA-Z0-9' '_')"
+    out="${WORK}/case-${slug}.log"
     RESTORE_MIGRATE_IMAGE="$MIGRATE_IMAGE" LOG_FILE=/dev/null \
+        timeout --kill-after=10s 300s \
         bash infra/scripts/restore-verify.sh --from "$dump" >"$out" 2>&1
     local got=$?
     if [ "$got" = "$want" ]; then
         record "$label" PASS "exit ${got}"
     else
-        record "$label" FAIL "exit ${got}, wanted ${want}: $(tail -2 "$out" | tr '\n' ' ')"
+        # Report the last meaningful line, plus any restore container state, so
+        # an infrastructure race is distinguishable from a real verdict.
+        local detail
+        detail="$(grep -v '^+ ' "$out" | tail -3 | tr '\n' ' ')"
+        record "$label" FAIL "exit ${got}, wanted ${want}: ${detail}"
     fi
 }
 

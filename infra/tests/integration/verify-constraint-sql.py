@@ -22,6 +22,10 @@ REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
 CHECK_SQL = os.path.join(REPO, 'infra', 'scripts', 'lib', 'restore-constraints.sql')
 
 PG = ['psql', '-v', 'ON_ERROR_STOP=1', '-tA', '-X', '-q']
+# PSQL_BIN lets the harness route psql into the database container, so no client
+# image (and no python3 inside a container) is needed. Otherwise a local psql is
+# used, which is what the CI runner has.
+PSQL_BIN = os.environ.get('PSQL_BIN')
 BASE = os.environ.get('RESTORE_TEST_DB_URL')
 if not BASE:
     sys.exit('RESTORE_TEST_DB_URL is required')
@@ -29,8 +33,9 @@ if not BASE:
 
 def psql(sql, url=BASE):
     """Run SQL on the given database and return stripped stdout; raise on failure."""
+    command = ([PSQL_BIN] if PSQL_BIN else PG) + [url, '-f', '-']
     result = subprocess.run(
-        PG + [url, '-f', '-'],
+        command,
         input=sql, text=True, capture_output=True)
     if result.returncode != 0:
         raise RuntimeError(f'psql failed: {result.stderr.strip()}\nSQL: {sql[:400]}')
