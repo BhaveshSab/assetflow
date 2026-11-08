@@ -100,6 +100,20 @@ emit_results() {
         echo "results: passed=${PASS} failed=${FAIL} skipped=${SKIP} overall=${status}"
         printf '%s\n' "${CASES[@]}" | while IFS=$'\t' read -r n v d; do echo "  ${v} ${n} ${d}"; done
     } >"${RESULTS}.txt"
+    # Surface the failures as annotations too. Log download needs repository admin
+    # rights, and artifact download needs authentication, so without this a
+    # failing run is visible only as "exit code 1".
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        local row name verdict detail
+        for row in "${CASES[@]}"; do
+            IFS=$'\t' read -r name verdict detail <<<"$row"
+            [ "$verdict" = FAIL ] || continue
+            detail="${detail//'%'/'%25'}"; detail="${detail//$'\r'/'%0D'}"; detail="${detail//$'\n'/'%0A'}"
+            printf '::error title=restore integration: %s::%s\n' "$name" "$detail"
+        done
+        printf '::notice title=restore integration counts::passed=%s failed=%s skipped=%s overall=%s\n' \
+            "$PASS" "$FAIL" "$SKIP" "$status"
+    fi
 }
 
 # ------------------------------------------------------------------ cleanup --
