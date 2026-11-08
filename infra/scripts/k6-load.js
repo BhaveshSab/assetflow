@@ -27,6 +27,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
+import { formatLoadSummary, SUMMARY_TREND_STATS } from './lib/k6-summary.js';
 
 const BASE_URL = env('BASE_URL', 'http://localhost:4000');
 const VUS = Number(env('VUS', 10));
@@ -86,6 +87,8 @@ function login(credentials) {
 }
 
 export const options = {
+  // k6 omits p(99) unless it is explicitly requested.
+  summaryTrendStats: SUMMARY_TREND_STATS,
   // A label on every metric, so two runs in one report cannot be mixed up.
   tags: { tag: TAG },
   scenarios: {
@@ -158,42 +161,10 @@ export default function () {
  * `key=value` file is written for `load-test.sh`.
  */
 export function handleSummary(data) {
-  const metric = (name) => data.metrics[name] || {};
-  const values = metric('http_req_duration').values || {};
-  const failed = metric('http_req_failed').values || {};
-  const requests = metric('http_reqs').values || {};
-  const iterations = metric('iterations').values || {};
-  const checks = metric('checks').values || {};
-  const bytes = metric('assetflow_response_bytes').values || {};
-  const loginFails = metric('assetflow_login_errors').values || {};
-  const throttledCount = metric('assetflow_throttled_429').values || {};
-
-  const lines = [
-    `tag=${TAG}`,
-    `vus=${VUS}`,
-    `duration=${DURATION}`,
-    `rps=${(requests.rate || 0).toFixed(2)}`,
-    `requests=${requests.count || 0}`,
-    `iterations=${iterations.count || 0}`,
-    `p50_ms=${(values.med || 0).toFixed(1)}`,
-    `p95_ms=${(values['p(95)'] || 0).toFixed(1)}`,
-    `p99_ms=${(values['p(99)'] || 0).toFixed(1)}`,
-    `max_ms=${(values.max || 0).toFixed(1)}`,
-    `error_rate=${(failed.rate || 0).toFixed(5)}`,
-    `checks_rate=${(checks.rate || 0).toFixed(4)}`,
-    `avg_response_bytes=${Math.round(bytes.avg || 0)}`,
-    `throttled_429=${throttledCount.count || 0}`,
-    `login_errors=${loginFails.count || 0}`,
-  ];
-
-  const stdout = [
-    '',
-    `  ${TAG}: ${(requests.rate || 0).toFixed(2)} req/s · p95 ${(values['p(95)'] || 0).toFixed(1)} ms · errors ${((failed.rate || 0) * 100).toFixed(2)} %` +
-      ` · 429s ${throttledCount.count || 0}`,
-    '',
-  ].join('\n');
-
-  const result = { stdout };
-  if (SUMMARY_FILE) result[SUMMARY_FILE] = `${lines.join('\n')}\n`;
-  return result;
+  return formatLoadSummary(data, {
+    tag: TAG,
+    vus: VUS,
+    duration: DURATION,
+    summaryFile: SUMMARY_FILE,
+  });
 }

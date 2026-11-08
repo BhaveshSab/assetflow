@@ -160,8 +160,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Install infrastructure validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck python3-yaml
+
+      - name: Reject duplicate YAML keys and test CI diagnostics
+        run: |
+          /usr/bin/python3 infra/scripts/check-yaml.py
+          /usr/bin/python3 -m unittest discover -s infra/tests -p 'test_*.py' -v
 
       - name: Check the shell scripts
         run: |
@@ -180,21 +185,7 @@ jobs:
       - name: Check the compose files
         run: |
           cp infra/.env.example infra/.env
-          status=0
-          for args in "-f infra/docker-compose.yml" \
-                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml" \
-                      "--profile jobs -f infra/docker-compose.yml"; do
-            output=$(docker compose $args config --quiet 2>&1)
-            code=$?
-            if [ "$code" -ne 0 ]; then
-              status=1
-              echo "::error title=compose::docker compose $args → exit $code"
-              while IFS= read -r line; do
-                echo "::error title=compose::${line}"
-              done <<< "$output"
-            fi
-          done
-          exit $status
+          bash infra/scripts/check-compose.sh
 
       - name: Validate Prometheus config and test every alert rule
         run: |
@@ -303,6 +294,8 @@ jobs:
           npx prisma migrate deploy
           npm run seed:loadtest -- --users 5 --assets 500
           npm run build
+      - name: Test k6 summary reporting
+        run: node --test infra/tests/k6-summary.test.mjs
       - name: Exercise sign-in and asset listing (5 users, 45 seconds)
         run: |
           mkdir -p test-results
