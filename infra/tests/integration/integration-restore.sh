@@ -122,20 +122,17 @@ trap cleanup EXIT INT TERM
 say() { printf '%s\n' "$*"; }
 
 # ------------------------------------------------------- build the image ----
-say "== building the migration image (real Prisma tooling) =="
-if ! docker build -q -t "$MIGRATE_IMAGE" -f - . <<'DOCKERFILE' >/dev/null
-FROM node:22-alpine
-WORKDIR /app
-COPY backend/package.json backend/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts >/dev/null 2>&1 || npm ci --omit=dev >/dev/null 2>&1
-COPY backend/prisma ./prisma
-RUN npx prisma generate >/dev/null 2>&1
-DOCKERFILE
-then
-    record "build migration image" FAIL "docker build failed"
+say "== building the migration image (the real migrate target) =="
+# Reuse the shipped migrate stage rather than a hand-rolled Dockerfile: the
+# Prisma CLI is a devDependency, so an `npm ci --omit=dev` image would not
+# contain node_modules/prisma/build/index.js and the restore would fail for a
+# reason unrelated to the backup. This target is what production runs.
+if ! docker build -q -f infra/docker/Dockerfile.api --target migrate \
+    -t "$MIGRATE_IMAGE" . >"${WORK}/build.log" 2>&1; then
+    record "build migration image" FAIL "$(tail -3 "${WORK}/build.log" | tr '\n' ' ')"
     emit_results FAIL; write_summary FAIL; exit 1
 fi
-record "build migration image" PASS "$MIGRATE_IMAGE"
+record "build migration image" PASS "$MIGRATE_IMAGE (target migrate)"
 
 # ------------------------------------------------- a database to dump from ---
 say "== creating the synthetic source database =="
