@@ -11,7 +11,7 @@ tests:
     values: 0+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="AssetflowApiDown",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 90s
     exp_samples: []
   - expr: ALERTS{alertname="AssetflowApiDown",alertstate="firing"}
     eval_time: 30m
@@ -36,7 +36,7 @@ tests:
     values: 0+90x40
   promql_expr_test:
   - expr: ALERTS{alertname="AssetflowHighErrorRate",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 570s
     exp_samples: []
   - expr: ALERTS{alertname="AssetflowHighErrorRate",alertstate="firing"}
     eval_time: 30m
@@ -65,7 +65,7 @@ tests:
     values: 0+60x40
   promql_expr_test:
   - expr: ALERTS{alertname="AssetflowHighLatency",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 570s
     exp_samples: []
   - expr: ALERTS{alertname="AssetflowHighLatency",alertstate="firing"}
     eval_time: 30m
@@ -94,7 +94,7 @@ tests:
     values: 100+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 270s
     exp_samples: []
   - expr: ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}
     eval_time: 30m
@@ -121,7 +121,7 @@ tests:
     values: 100+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 30s
     exp_samples: []
   - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
     eval_time: 30m
@@ -148,7 +148,7 @@ tests:
     values: 100+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HostMemoryPressure",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 570s
     exp_samples: []
   - expr: ALERTS{alertname="HostMemoryPressure",alertstate="firing"}
     eval_time: 30m
@@ -173,7 +173,7 @@ tests:
     values: 0+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HostCpuSaturated",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 870s
     exp_samples: []
   - expr: ALERTS{alertname="HostCpuSaturated",alertstate="firing"}
     eval_time: 30m
@@ -196,7 +196,7 @@ tests:
     values: 0+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="PostgresDown",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 90s
     exp_samples: []
   - expr: ALERTS{alertname="PostgresDown",alertstate="firing"}
     eval_time: 30m
@@ -219,7 +219,7 @@ tests:
     values: 81+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="PostgresConnectionsHigh",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 570s
     exp_samples: []
   - expr: ALERTS{alertname="PostgresConnectionsHigh",alertstate="firing"}
     eval_time: 30m
@@ -242,7 +242,7 @@ tests:
     values: -100000+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="BackupTooOld",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 870s
     exp_samples: []
   - expr: ALERTS{alertname="BackupTooOld",alertstate="firing"}
     eval_time: 30m
@@ -265,7 +265,7 @@ tests:
     values: 1+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="ThrottleStoreDegraded",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 270s
     exp_samples: []
   - expr: ALERTS{alertname="ThrottleStoreDegraded",alertstate="firing"}
     eval_time: 30m
@@ -308,7 +308,7 @@ tests:
     values: 0+60x40
   promql_expr_test:
   - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 90s
     exp_samples: []
   - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
     eval_time: 30m
@@ -331,7 +331,7 @@ tests:
     values: 604800+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HttpsCertificateExpiring",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 270s
     exp_samples: []
   - expr: ALERTS{alertname="HttpsCertificateExpiring",alertstate="firing"}
     eval_time: 30m
@@ -354,7 +354,7 @@ tests:
     values: 0+0x40
   promql_expr_test:
   - expr: ALERTS{alertname="HttpsProbeFailed",alertstate="firing"}
-    eval_time: 0m
+    eval_time: 90s
     exp_samples: []
   - expr: ALERTS{alertname="HttpsProbeFailed",alertstate="firing"}
     eval_time: 30m
@@ -379,5 +379,28 @@ tests:
     values: 0 1+0x35
   promql_expr_test:
   - expr: ALERTS{alertname=~"AssetflowApiDown|ContainerOomKilled",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: container replacements retain service identity; a single replacement is quiet
+  interval: 1m
+  input_series:
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="a"}
+    values: 0 0 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="b"}
+    values: _ _ 120 120 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="c"}
+    values: _ _ _ _ 240 240 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="d"}
+    values: _ _ _ _ _ _ 360+0x24
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 3m
+    exp_samples: []
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="ContainerRestartLoop",alertstate="firing",container_label_com_docker_compose_service="api",severity="warning"}'
+      value: 1
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
     eval_time: 30m
     exp_samples: []

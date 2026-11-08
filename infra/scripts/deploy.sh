@@ -189,7 +189,19 @@ else
     compose up -d --no-deps cadvisor blackbox prometheus alertmanager
     # Bind-mounted config content changes do not always recreate a container.
     # Reload via the internal network, not a publicly exposed lifecycle port.
-    compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload
+    reloaded=false
+    for attempt in $(seq 1 15); do
+        if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload; then
+            reloaded=true
+            break
+        fi
+        sleep 2
+    done
+    if [ "$reloaded" != true ]; then
+        warn "API is healthy, but Prometheus did not reload; inspect monitoring logs"
+        compose logs --tail 30 prometheus cadvisor blackbox alertmanager || true
+        exit 1
+    fi
 fi
 
 # 5. Reclaim the superseded images -------------------------------------------
