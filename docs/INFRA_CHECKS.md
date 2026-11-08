@@ -84,3 +84,45 @@ Missing exporter series do not mean healthy. Target failures and unsupported
 metrics must be investigated separately. See [RUNBOOK](RUNBOOK.md) for exact
 inspection commands. No notification delivery or live OOM/TLS drill is claimed
 solely from a passing CI run.
+
+## CI diagnostics and measurement regression guards
+
+The older failing CI run `42459592756` tested integration commit `33f2791`,
+not the current Phase 1/main baseline. Its extra test suite expected the critical
+`HostDiskFull` alert with only 90% disk usage, checked `ApiRestarting` at 10
+minutes even though its second synthetic start-time change was at minute 6
+and its hold period was five minutes, and its Compose file repeated the
+`cadvisor` service key. Those old files are not reintroduced here. Production
+alert thresholds remain unchanged.
+
+Current regression coverage explicitly keeps `HostDiskFull` quiet at 90% and
+95% usage, fires it at 96% after its one-minute hold, and checks the current
+container restart alert both before and at its hold-time boundary.
+
+- `infra/scripts/check-yaml.py` rejects duplicate mapping keys before Docker
+  runs. It permits valid anchors/merge overrides. CI uses system PyYAML.
+- `bash infra/scripts/check-compose.sh` checks base/local/jobs variants, retains
+  the actual Docker diagnostic and exit code, and continues checking the other
+  variants. A conditional capture avoids GitHub's `bash -e` exiting before the
+  error can be printed. It expects an existing `infra/.env`; CI copies only the
+  sample environment on its disposable runner.
+- k6 explicitly requests p99 in `summaryTrendStats`. The shared summary
+  formatter reports missing measurements as `NA`, never invented zero latency
+  or zero error rates. Unsampled error-only counters still mean zero events.
+- The staged load driver rejects missing required measurements; a nonzero
+  threshold result cannot be labelled healthy merely because latency/error
+  thresholds happened to pass.
+
+Reproduce the fast diagnostic/reporting tests without contacting production:
+
+```sh
+# Requires PyYAML; CI installs python3-yaml for /usr/bin/python3.
+python3 -m unittest discover -s infra/tests -p 'test_*.py' -v
+python3 infra/scripts/check-yaml.py
+node --test infra/tests/k6-summary.test.mjs
+```
+
+Re-run k6 to obtain a measured p99. An old artifact containing `p99_ms=0.0`
+from the fallback formatter cannot be repaired into a real percentile after
+those samples have been discarded. The existing CI load test remains the same
+5-user, 45-second regression workload, not a maximum-capacity test.

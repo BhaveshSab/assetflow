@@ -10,6 +10,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { ActivityModule } from './activity/activity.module';
+import { JobsModule } from './jobs/jobs.module';
 import { MailModule } from './mail/mail.module';
 import { AllocationsModule } from './allocations/allocations.module';
 import { AssetsModule } from './assets/assets.module';
@@ -79,6 +80,7 @@ import { ReportsModule } from './reports/reports.module';
     OrgModule, // #3 Organization setup
     AssetsModule, // #4 Asset registration & directory
     AllocationsModule, // #5 Allocation & transfer
+    JobsModule,
     BookingsModule, // #6 Resource booking
     MaintenanceModule, // #7 Maintenance
     AuditsModule, // #8 Audit cycles

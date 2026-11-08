@@ -53,6 +53,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in infra/.env}@redis:6379
       # Prometheus scrapes this endpoint.
       METRICS_ENABLED: "true"
+      JOBS_ENABLED: ${JOBS_ENABLED:-false}
       # Optional: the public Google OAuth client id (no client secret).
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     depends_on:
@@ -130,6 +131,65 @@ services:
       retries: 5
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    logging: *default-logging
+
+  # Opt-in: enable JOBS_ENABLED on API and worker together; the rate-limit
+  # Redis uses LRU eviction and must NOT hold durable queue state.
+  jobs-redis:
+    profiles: [jobs]
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - sh
+      - -ec
+      - 'exec redis-server --requirepass "$${JOBS_REDIS_PASSWORD:?set JOBS_REDIS_PASSWORD}" --appendonly yes --appendfsync everysec --maxmemory 128mb --maxmemory-policy noeviction'
+    environment:
+      JOBS_REDIS_PASSWORD: ${JOBS_REDIS_PASSWORD:-}
+    volumes:
+      - jobs-redis-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$JOBS_REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    logging: *default-logging
+
+  worker:
+    profiles: [jobs]
+    image: ${API_IMAGE:-ghcr.io/bhaveshsab/assetflow-api:latest}
+    command: ["node", "dist/worker.js"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      JOBS_ENABLED: ${JOBS_ENABLED:-false}
+      JOBS_REDIS_URL: redis://:${JOBS_REDIS_PASSWORD:-}@jobs-redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}
+    depends_on:
+      jobs-redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -385,6 +445,7 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  jobs-redis-data:
   grafana-data:
   prometheus-data:
   alertmanager-data:

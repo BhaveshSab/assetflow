@@ -74,14 +74,17 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   async sweepReminders(now: Date = new Date()) {
     const soon = new Date(now.getTime() + 30 * 60 * 1000);
 
-    const upcomingBookings = await this.prisma.booking.findMany({
-      where: {
-        status: { not: BookingStatus.CANCELLED },
-        startTime: { gt: now, lte: soon },
-      },
-      include: { asset: { select: { name: true, assetTag: true } } },
-      take: 200,
-    });
+    const upcomingBookings =
+      process.env.JOBS_ENABLED === 'true'
+        ? []
+        : await this.prisma.booking.findMany({
+            where: {
+              status: { not: BookingStatus.CANCELLED },
+              startTime: { gt: now, lte: soon },
+            },
+            include: { asset: { select: { name: true, assetTag: true } } },
+            take: 200,
+          });
 
     let bookingReminders = 0;
     for (const booking of upcomingBookings) {

@@ -37,3 +37,7 @@ pnpm-debug.log*
 infra/certs/
 infra/certbot-www/
 infra/textfile/
+
+# Python validation caches
+__pycache__/
+*.pyc

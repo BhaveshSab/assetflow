@@ -168,6 +168,12 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
   // Optional: the shared store for the rate-limit counters. When it is set
   // the limits are global (all instances/replicas share them) instead of
   // per-process.
+  if (
+    raw.JOBS_ENABLED !== undefined &&
+    !['', 'true', 'false'].includes(asString(raw.JOBS_ENABLED))
+  ) {
+    throw new Error('JOBS_ENABLED must be exactly true or false.');
+  }
   const redisUrl = asString(raw.REDIS_URL).trim();
   if (redisUrl && !/^rediss?:\/\//i.test(redisUrl)) {
     throw new Error(

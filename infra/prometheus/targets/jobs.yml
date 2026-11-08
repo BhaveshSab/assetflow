@@ -1,0 +1,2 @@
+# When enabling jobs, replace [] with: [{targets: ["worker:4001"]}]
+[]

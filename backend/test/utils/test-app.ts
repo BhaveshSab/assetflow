@@ -67,7 +67,7 @@ export async function createTestApp(
 export async function resetDatabase(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "AssetTagCounter", "PasswordResetToken", "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
+    'TRUNCATE TABLE "JobOutbox", "AssetTagCounter", "PasswordResetToken", "Notification", "ActivityLog", "AuditItem", "AuditAssignment", "AuditCycle", "MaintenanceRequest", "Booking", "TransferRequest", "Allocation", "Asset", "AssetCategory", "Department", "User" CASCADE',
   );
 
   // The asset-tag counter is durable state (that is the point of it: deleting
