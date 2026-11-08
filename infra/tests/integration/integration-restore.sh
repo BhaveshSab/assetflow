@@ -404,4 +404,10 @@ write_summary "$STATUS"
 say ""
 say "passed=${PASS} failed=${FAIL} skipped=${SKIP} overall=${STATUS}"
 say "results written to ${RESULTS}"
-[ "$STATUS" = PASS ]
+# Exit explicitly on the verdict. Under `set -o pipefail` the surrounding CI step
+# takes its status from this script, and any late non-zero from a reporting helper
+# must not be mistaken for a test failure.
+if [ "$STATUS" = PASS ]; then
+    exit 0
+fi
+exit 1
