@@ -124,10 +124,13 @@ tests:
     eval_time: 30s
     exp_samples: []
   - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
-    eval_time: 30m
-    exp_samples:
+    eval_time: 1m
+    exp_samples: &id001
     - labels: '{__name__="ALERTS",alertname="HostDiskFull",alertstate="firing",fstype="ext4",mountpoint="/",severity="critical"}'
       value: 1
+  - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: *id001
 - name: HostDiskFull stays quiet on healthy or boundary input
   interval: 1m
   input_series:
@@ -397,10 +400,27 @@ tests:
     eval_time: 3m
     exp_samples: []
   - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
-    eval_time: 10m
-    exp_samples:
+    eval_time: 450s
+    exp_samples: []
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 8m
+    exp_samples: &id002
     - labels: '{__name__="ALERTS",alertname="ContainerRestartLoop",alertstate="firing",container_label_com_docker_compose_service="api",severity="warning"}'
       value: 1
   - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 10m
+    exp_samples: *id002
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
     eval_time: 30m
+    exp_samples: []
+- name: 90 percent used is not a critical disk alert (old failing fixture regression)
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{mountpoint="/",fstype="ext4"}
+    values: 10+0x10
+  - series: node_filesystem_size_bytes{mountpoint="/",fstype="ext4"}
+    values: 100+0x10
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
+    eval_time: 2m
     exp_samples: []

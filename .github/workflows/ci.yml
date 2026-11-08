@@ -62,7 +62,13 @@ jobs:
         run: npm run test:unit
 
       - name: End-to-end tests
-        run: npm run test:e2e
+        run: |
+          status=0
+          npm run test:e2e -- --json --outputFile=/tmp/e2e-results.json || status=$?
+          # Surface assertion failures even when Actions blob logs cannot be
+          # downloaded. Preserve Jest's exit status; never retry failures away.
+          node scripts/annotate-test-failures.cjs /tmp/e2e-results.json
+          exit "$status"
 
       - name: Build
         run: npm run build
@@ -160,8 +166,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Install infrastructure validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck python3-yaml
+
+      - name: Reject duplicate YAML keys and test CI diagnostics
+        run: |
+          /usr/bin/python3 infra/scripts/check-yaml.py
+          /usr/bin/python3 -m unittest discover -s infra/tests -p 'test_*.py' -v
 
       - name: Check the shell scripts
         run: |
@@ -180,21 +191,7 @@ jobs:
       - name: Check the compose files
         run: |
           cp infra/.env.example infra/.env
-          status=0
-          for args in "-f infra/docker-compose.yml" \
-                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml" \
-                      "--profile jobs -f infra/docker-compose.yml"; do
-            output=$(docker compose $args config --quiet 2>&1)
-            code=$?
-            if [ "$code" -ne 0 ]; then
-              status=1
-              echo "::error title=compose::docker compose $args → exit $code"
-              while IFS= read -r line; do
-                echo "::error title=compose::${line}"
-              done <<< "$output"
-            fi
-          done
-          exit $status
+          bash infra/scripts/check-compose.sh
 
       - name: Validate Prometheus config and test every alert rule
         run: |
@@ -303,6 +300,8 @@ jobs:
           npx prisma migrate deploy
           npm run seed:loadtest -- --users 5 --assets 500
           npm run build
+      - name: Test k6 summary reporting
+        run: node --test infra/tests/k6-summary.test.mjs
       - name: Exercise sign-in and asset listing (5 users, 45 seconds)
         run: |
           mkdir -p test-results
@@ -325,6 +324,22 @@ jobs:
             -e LOADTEST_USERS -e LOADTEST_PASSWORD -e TAG=ci \
             -e SUMMARY_FILE=test-results/k6-summary.txt \
             grafana/k6:0.54.0 run infra/scripts/k6-load.js
+          node --input-type=module - <<'VERIFY'
+          import fs from 'node:fs';
+          const raw = fs.readFileSync('test-results/k6-summary.txt', 'utf8');
+          const fields = Object.fromEntries(raw.trim().split('\n').map(line => line.split('=')));
+          const keys = ['p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'rps', 'requests', 'iterations', 'error_rate', 'checks_rate'];
+          for (const key of keys) {
+            if (!/^[0-9]+(?:\.[0-9]+)?$/.test(fields[key] || '')) {
+              throw new Error(`Missing or invalid measured k6 field: ${key}`);
+            }
+          }
+          if (+fields.p99_ms < +fields.p95_ms || +fields.max_ms < +fields.p99_ms) {
+            throw new Error('Inconsistent k6 latency percentiles');
+          }
+          console.log(`::notice title=k6 measured results::${keys.map(key => `${key}=${fields[key]}`).join(', ')}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Measured k6 regression results\n\n5 users, 45 seconds, disposable CI database. Not a capacity benchmark.\n\n\`\`\`text\n${raw}\`\`\`\n`);
+          VERIFY
       - name: Keep load-test evidence (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4

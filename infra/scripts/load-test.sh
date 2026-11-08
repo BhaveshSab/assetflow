@@ -276,7 +276,16 @@ for stage in "${STAGE_LIST[@]}"; do
     value() { grep -m1 "^$1=" "$SUMMARY" 2>/dev/null | cut -d= -f2- || true; }
     RPS="$(value rps)"; P95="$(value p95_ms)"; ERR="$(value error_rate)"
     THROTTLED="$(value throttled_429)"; REQUESTS="$(value requests)"
-    RPS="${RPS:-0}"; P95="${P95:-0}"; ERR="${ERR:-0}"; THROTTLED="${THROTTLED:-0}"; REQUESTS="${REQUESTS:-0}"
+    # Missing data is not a zero-latency, zero-error result. Fail closed before
+    # awk can coerce NA (or an empty summary) to zero and label a stage healthy.
+    for measurement in "$RPS" "$P95" "$ERR"; do
+        [[ "$measurement" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+            || die "missing/invalid k6 measurement in ${SUMMARY}; inspect ${RAW}"
+    done
+    for measurement in "$THROTTLED" "$REQUESTS"; do
+        [[ "$measurement" =~ ^[0-9]+$ ]] \
+            || die "missing/invalid k6 count in ${SUMMARY}; inspect ${RAW}"
+    done
 
     # The sampler's worst row for this stage.
     MAX_CPU="-"; MAX_API="-"; MAX_CONNS="-"; MAX_LOCKS="-"
@@ -296,6 +305,8 @@ for stage in "${STAGE_LIST[@]}"; do
         VERDICT="SATURATED · errors"
     elif [ "$broke_p95" = "1" ]; then
         VERDICT="SATURATED · p95"
+    elif [ "$K6_EXIT" -eq 99 ]; then
+        VERDICT="SATURATED · correctness/iteration threshold"
     fi
 
     if [ "$(awk -v r="$RPS" -v p="$PEAK_RPS" 'BEGIN{print (r+0 > p+0) ? 1 : 0}')" = "1" ]; then
