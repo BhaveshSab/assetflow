@@ -145,19 +145,21 @@ fi
 # 2. The migrations ---------------------------------------------------------
 say "+ applying the migrations (one-shot container)"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm -T --pull never migrate"
+    say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm -T migrate"
 else
     # -T: do not attach stdin. The GitHub workflow pipes this script into
     # `ssh bash -s`, and an attached container would consume the rest of it.
     #
-    # --pull never: the image was pulled at step 1 under its pinned commit tag,
-    # and compose would otherwise fall back to `latest` from the registry.
-    #
-    # Do NOT add --no-build here: `docker compose run` has no such flag (it
-    # belongs to `up`), and passing it aborts the deployment with
-    # "unknown flag: --no-build" before the migration and the new container.
-    # Nothing needs building either — step 1 already pulled the pinned image.
-    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T --pull never migrate
+    # No --no-build and no --pull here, deliberately:
+    #   * `docker compose run` has no --no-build (it belongs to `up`); passing
+    #     it aborted every deployment with "unknown flag: --no-build" before
+    #     the migration and before the new container ever started.
+    #   * `run --pull` only exists on newer Compose plugins, and the host's
+    #     version is not pinned by this repository. The image is already local:
+    #     step 1 pulled it under its exact commit tag and MIGRATE_IMAGE carries
+    #     that tag, so compose has nothing to build and no `latest` to fetch.
+    # This is the same invocation provision-host.sh uses on the same host.
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T migrate
 fi
 
 # 3. The new container ------------------------------------------------------

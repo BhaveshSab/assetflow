@@ -78,8 +78,10 @@ by this patch.
 ## First rollout prerequisites
 
 The deploy user needs Bash, GNU `timeout`, `flock`, Git and modern Docker Compose
-v2 (including `up --no-build`, `run --pull`, and `up --wait` — note that
-`--no-build` exists only on `up`, not on `run`). The existing database,
+v2 (including `up --no-build` and `up --wait`). The migration one-shot is
+started with plain `compose run --rm -T migrate`: `--no-build` is not a `run`
+flag, and `run --pull` is missing from older plugins, so the pinned commit tag
+in `MIGRATE_IMAGE` — already pulled — is what keeps the run reproducible. The existing database,
 secrets and TLS configuration stay on the host.
 
 The host must be able to pull **all three** GHCR packages:

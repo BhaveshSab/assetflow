@@ -153,7 +153,7 @@ case "$1" in
   compose)
     case "$*" in
       *'ps -q api') echo test-container ;;
-      *'run --rm -T --pull never migrate')
+      *'run --rm -T migrate')
         if [ "$MODE" = migration-fails ]; then exit 18; fi ;;
     esac ;;
 esac
@@ -184,7 +184,7 @@ esac
             self.assertIn(f'pull {image}', calls)
         migration = next(i for i, c in enumerate(calls) if 'run --rm' in c)
         self.assertTrue(all(calls.index(f'pull {image}') < migration for image in [API, MIGRATE, WEB]))
-        self.assertIn('--pull never migrate', calls[migration])
+        self.assertIn('run --rm -T migrate', calls[migration])
         starts = [c for c in calls if 'up -d' in c]
         self.assertTrue(starts)
         self.assertTrue(all('--no-build' in c for c in starts))
@@ -208,7 +208,10 @@ esac
         self.assertTrue(runs, 'deploy.sh must run the migrations')
         for line in runs:
             self.assertNotIn('--no-build', line, f'--no-build is invalid for `compose run`: {line.strip()}')
-            self.assertIn('--pull never', line, f'the run must stay pinned to the pulled image: {line.strip()}')
+            # `run --pull` only exists on newer Compose plugins, and the host's
+            # version is not pinned here; the pinned tag comes from MIGRATE_IMAGE.
+            self.assertNotIn('--pull', line, f'--pull is not portable on `compose run`: {line.strip()}')
+            self.assertIn('MIGRATE_IMAGE=', line, f'the migration run must use the pinned image: {line.strip()}')
 
     def test_missing_web_or_failed_migration_does_not_replace_running_api(self):
         for mode in ['missing-web', 'migration-fails']:
