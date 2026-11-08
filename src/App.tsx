@@ -6,12 +6,12 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import AuthLayout from "@/pages/AuthLayout";
 import AuthPage from "@/pages/AuthPage";
 
-
 /*
  * The dashboard is a separate file: a visitor who only opens the sign-in
  * page does not download the charts, the tables and the eight views behind
  * it.
  */
+const ScanPage = lazy(() => import("@/pages/ScanPage"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 /*
  * The account screens are lazy too: someone who is signing in should not
@@ -32,7 +32,11 @@ function RouteFallback() {
       aria-live="polite"
       className="min-h-screen bg-canvas flex items-center justify-center gap-2 text-ink-muted text-sm"
     >
-      <Loader2 size={18} className="animate-spin text-info" aria-hidden="true" />
+      <Loader2
+        size={18}
+        className="animate-spin text-info"
+        aria-hidden="true"
+      />
       Loading AssetFlow…
     </div>
   );
@@ -84,6 +88,15 @@ export default function App() {
             element={
               <Suspense fallback={<RouteFallback />}>
                 <Dashboard />
+              </Suspense>
+            }
+          />
+
+          <Route
+            path="/scan"
+            element={
+              <Suspense fallback={<RouteFallback />}>
+                <ScanPage />
               </Suspense>
             }
           />

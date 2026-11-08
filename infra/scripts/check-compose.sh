@@ -22,4 +22,5 @@ check_config() {
 check_config -f infra/docker-compose.yml
 check_config -f infra/docker-compose.yml -f infra/docker-compose.local.yml
 check_config --profile jobs -f infra/docker-compose.yml
+check_config --profile jobs -f infra/docker-compose.yml -f infra/docker-compose.tracing.yml
 exit "$status"

@@ -6,6 +6,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { startJobsWorker } from '../src/jobs/jobs-worker';
 import { queueConnection } from '../src/jobs/queue-config';
 import { scheduleBookingReminder } from '../src/jobs/booking-reminder';
+import { ImportsService } from '../src/imports/imports.service';
 import { JobsService } from '../src/jobs/jobs.service';
 import {
   createAsset,
@@ -74,6 +75,11 @@ queueSuite('BullMQ publisher/worker integration (disposable Redis)', () => {
       close = undefined;
     }
     await queue.obliterate({ force: true }); // Only this suite's unique queue.
+    const importsQueue = new Queue(`${name}-imports`, {
+      connection: queueConnection(process.env.TEST_JOBS_REDIS_URL),
+    });
+    await importsQueue.obliterate({ force: true });
+    await importsQueue.close();
     await queue.close();
   });
   async function fixture() {
@@ -89,6 +95,33 @@ queueSuite('BullMQ publisher/worker integration (disposable Redis)', () => {
       return scheduleBookingReminder(tx, booking);
     });
   }
+  it('publishes and processes a confirmed CSV using real BullMQ, then survives duplicate publishing', async () => {
+    const category = await prisma.assetCategory.findFirstOrThrow();
+    const imports = app.get(ImportsService);
+    const actor = {
+      id: userId,
+      email: 'queue@example.com',
+      role: 'ADMIN' as const,
+      departmentId: null,
+    };
+    const preview = await imports.preview(
+      `name,categoryId\nFromQueue,${category.id}`,
+      actor,
+    );
+    await imports.transition(preview.id!, actor, 'confirm');
+    close = await startJobsWorker(prisma, name);
+    await waitFor(
+      async () =>
+        (
+          await prisma.assetImport.findUniqueOrThrow({
+            where: { id: preview.id! },
+          })
+        ).status === 'DONE',
+    );
+    expect(await prisma.asset.count({ where: { name: 'FromQueue' } })).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 5500));
+    expect(await prisma.asset.count({ where: { name: 'FromQueue' } })).toBe(1);
+  });
   it('publishes due rows, processes real jobs and serves dependency/queue metrics', async () => {
     const event = await fixture();
     close = await startJobsWorker(prisma, name);

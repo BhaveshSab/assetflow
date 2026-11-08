@@ -61,6 +61,7 @@ export class RequestContextMiddleware implements NestMiddleware {
           level: res.statusCode >= 500 ? 'error' : 'info',
           event: 'http_request',
           requestId,
+          traceId: res.getHeader('x-trace-id') || undefined,
           method: req.method,
           route,
           path: req.originalUrl,

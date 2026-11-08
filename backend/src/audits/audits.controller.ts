@@ -16,6 +16,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthUser } from '../auth/jwt.strategy';
+import { LookupAssetDto } from '../assets/dto/lookup-asset.dto';
 import { AuditsService } from './audits.service';
 import { AssignAuditorsDto } from './dto/assign-auditors.dto';
 import { CreateAuditDto } from './dto/create-audit.dto';
@@ -57,6 +58,12 @@ export class AuditsController {
     });
   }
 
+  /** Assigned employees can discover their own open cycles without seeing all cycles. */
+  @Get('assigned')
+  assigned(@CurrentUser() user: AuthUser) {
+    return this.audits.assigned(user);
+  }
+
   /** Cycle detail: assignments (auditors) + a summary of item results. */
   @Get(':id')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)
@@ -75,6 +82,16 @@ export class AuditsController {
       take: query.take,
       skip: query.skip,
     });
+  }
+
+  /** Resolve a scanned tag only within an authorized cycle. Mark explicitly afterwards. */
+  @Post(':id/scan')
+  scan(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: LookupAssetDto,
+  ) {
+    return this.audits.scan(user, id, dto.tag);
   }
 
   /** Mark an item VERIFIED | MISSING | DAMAGED. Assigned auditor or manager only. */

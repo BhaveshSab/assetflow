@@ -1,3 +1,4 @@
+import './telemetry/init';
 import { NestFactory } from '@nestjs/core';
 import type { Request, Response } from 'express';
 

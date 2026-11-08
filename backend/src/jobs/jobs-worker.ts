@@ -5,6 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { queueConnection } from './queue-config';
 import { processReminder } from './reminder-processor';
 
+import { processImport } from '../imports/import-processor';
+import { traced } from '../telemetry/tracing';
 const QUEUE = 'assetflow-booking-reminders';
 
 /** Runs only in the dedicated worker entry point, never inside an API import. */
@@ -30,7 +32,13 @@ export async function startJobsWorker(
     queueName,
     async (job) => {
       const { eventId, epoch } = job.data;
-      await processReminder(prisma, eventId, epoch);
+      const source = await prisma.jobOutbox.findUnique({
+        where: { id: eventId },
+        select: { traceparent: true },
+      });
+      await traced('booking.reminder.process', source?.traceparent, () =>
+        processReminder(prisma, eventId, epoch),
+      );
     },
     {
       connection: { ...connection, maxRetriesPerRequest: null },
@@ -58,6 +66,40 @@ export async function startJobsWorker(
         })
         .catch(safeError);
     }
+  });
+  const importQueue = new Queue(`${queueName}-imports`, {
+    connection: {
+      ...connection,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+    },
+  });
+  const importWorker = new Worker<{ id: string; epoch: number }>(
+    `${queueName}-imports`,
+    (job) => processImport(prisma, job.data.id, job.data.epoch),
+    {
+      connection: { ...connection, maxRetriesPerRequest: null },
+      concurrency: 1,
+    },
+  );
+  importQueue.on('error', safeError);
+  importWorker.on('error', safeError);
+  importWorker.on('failed', (job) => {
+    if (job && job.attemptsMade >= 3)
+      void prisma.assetImport
+        .updateMany({
+          where: {
+            id: job.data.id,
+            retryEpoch: job.data.epoch,
+            status: { in: ['PENDING', 'QUEUED'] },
+          },
+          data: {
+            status: 'FAILED',
+            lastError: 'ImportDeliveryFailed',
+            leaseUntil: null,
+          },
+        })
+        .catch(safeError);
   });
   const registry = new Registry();
   const states = new Gauge({
@@ -114,6 +156,27 @@ export async function startJobsWorker(
         },
       );
     }
+    // Durable lease + stable job ID recover from publisher/Redis loss.
+    const imports = await prisma.$queryRaw<
+      { id: string; retryEpoch: number }[]
+    >`
+      UPDATE "AssetImport" SET status='QUEUED', "leaseUntil"=NOW()+interval '5 minutes'
+      WHERE id IN (SELECT id FROM "AssetImport" WHERE status IN ('PENDING','QUEUED')
+        AND ("leaseUntil" IS NULL OR "leaseUntil"<NOW())
+        ORDER BY "createdAt" LIMIT 5 FOR UPDATE SKIP LOCKED)
+      RETURNING id, "retryEpoch"`;
+    for (const job of imports)
+      await importQueue.add(
+        'asset.import',
+        { id: job.id, epoch: job.retryEpoch },
+        {
+          jobId: `${job.id}-${job.retryEpoch}`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: { age: 86400, count: 1000 },
+          removeOnFail: { age: 604800, count: 1000 },
+        },
+      );
     const counts = await queue.getJobCounts(
       'waiting',
       'active',
@@ -182,7 +245,9 @@ export async function startJobsWorker(
     clearInterval(timer);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await worker.close();
+    await importWorker.close();
     await inFlight;
     await queue.close();
+    await importQueue.close();
   };
 }

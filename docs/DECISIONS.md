@@ -62,3 +62,13 @@ answer one, it is not in the stack.
 | A message queue | There is no asynchronous work in the application. A queue would be there to look impressive. |
 | PgBouncer in front of Postgres | The connection count of one API container is far below the PostgreSQL limit. It matters when there are many replicas. |
 | Prometheus in the app *and* a log shipper (Loki/ELK) | One observability stack is enough to demonstrate the discipline. |
+
+
+## Extension: private files without API-local blob storage
+
+The earlier external-URL-only document decision is extended, not silently migrated.
+New private files use verified, version-pinned S3 objects and short-lived authorized
+URLs; only metadata is in Postgres. Legacy public document links remain legacy links.
+CSV jobs extend the existing dedicated worker instead of adding microservices.
+Tracing is opt-in with bounded export/storage; it is not the append-only audit log.
+See ASSET_EXTENSIONS.md for permission and rollout boundaries.

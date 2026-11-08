@@ -1,4 +1,6 @@
+import './telemetry/init';
 import 'reflect-metadata';
+import { shutdownTracing } from './telemetry/init';
 import { NestFactory } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -20,6 +22,7 @@ async function main() {
       const timeout = setTimeout(() => process.exit(1), 25000);
       timeout.unref();
       void close()
+        .then(() => shutdownTracing())
         .then(() => app.close())
         .then(() => process.exit(0))
         .catch(() => process.exit(1));

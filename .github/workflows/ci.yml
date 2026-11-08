@@ -238,6 +238,9 @@ jobs:
           grep -E '^container_start_time_seconds\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
           grep -E '^container_oom_events_total\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
 
+      - name: Smoke test optional tracing backend (real OTLP ingest and query)
+        run: bash infra/scripts/check-tracing.sh
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 

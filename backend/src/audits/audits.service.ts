@@ -289,6 +289,33 @@ export class AuditsService {
   // MARK ITEM
   // -------------------------------------------------------------------------
 
+  async assigned(user: AuthUser) {
+    return this.prisma.auditCycle.findMany({
+      where: {
+        status: AuditCycleStatus.OPEN,
+        assignments: { some: { auditorId: user.id } },
+      },
+      select: { id: true, name: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
+  async scan(user: AuthUser, id: string, assetTag: string) {
+    await this.assertCanMark(user, id);
+    const cycle = await this.prisma.auditCycle.findUnique({ where: { id } });
+    if (!cycle) throw new NotFoundException('Audit cycle not found');
+    if (cycle.status === AuditCycleStatus.CLOSED)
+      throw new ConflictException('Audit cycle is closed');
+    const item = await this.prisma.auditItem.findFirst({
+      where: { auditCycleId: id, asset: { assetTag } },
+      include: { asset: { select: ASSET_SELECT } },
+    });
+    if (!item)
+      throw new NotFoundException('Scanned asset is not in this audit cycle');
+    return item;
+  }
+
   async markItem(
     user: AuthUser,
     id: string,
@@ -305,6 +332,7 @@ export class AuditsService {
     await this.assertCanMark(user, id);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "AuditCycle" WHERE id=${id} FOR UPDATE`;
       const cycle = await tx.auditCycle.findUnique({ where: { id } });
       if (!cycle) throw new NotFoundException('Audit cycle not found');
       if (cycle.status === AuditCycleStatus.CLOSED) {
@@ -398,6 +426,7 @@ export class AuditsService {
 
   async close(user: AuthUser, id: string) {
     const summary = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "AuditCycle" WHERE id=${id} FOR UPDATE`;
       const cycle = await tx.auditCycle.findUnique({
         where: { id },
         include: { assignments: { select: { auditorId: true } } },

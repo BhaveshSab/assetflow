@@ -16,10 +16,18 @@ import {
 } from "lucide-react";
 
 import { getAssets, type Asset } from "@/api/assetServices";
-import AllocateAssetModal, { type Asset as ModalAsset } from "@/components/dashboard/AllocateAssetModal";
+import AllocateAssetModal, {
+  type Asset as ModalAsset,
+} from "@/components/dashboard/AllocateAssetModal";
+import AssetExtensions from "./AssetExtensions";
+import AssetImport from "./AssetImport";
+import { getSession } from "@/lib/auth";
 import RegisterAssetModal from "@/components/dashboard/RegisterAssetModal";
 
-interface Toast { msg: string; type: string; }
+interface Toast {
+  msg: string;
+  type: string;
+}
 
 // Animation variants for staggered row entrance
 const containerVariants = {
@@ -52,8 +60,7 @@ const getCategoryIcon = (category: string) => {
   const cat = category?.toLowerCase() || "";
   if (cat.includes("electronic") || cat.includes("laptop"))
     return <Laptop size={18} />;
-  if (cat.includes("vehicle") || cat.includes("car"))
-    return <Car size={18} />;
+  if (cat.includes("vehicle") || cat.includes("car")) return <Car size={18} />;
   if (cat.includes("screen") || cat.includes("monitor"))
     return <Monitor size={18} />;
   if (cat.includes("furniture") || cat.includes("chair"))
@@ -62,6 +69,16 @@ const getCategoryIcon = (category: string) => {
 };
 
 export default function AssetDirectory() {
+  const [filesAsset, setFilesAsset] = useState<Asset | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const manager = ["ADMIN", "ASSET_MANAGER"].includes(
+    getSession()?.user.role ?? "",
+  );
+  const refreshAssets = () => {
+    void getAssets()
+      .then(setAssets)
+      .catch((e) => setError((e as Error).message));
+  };
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +89,9 @@ export default function AssetDirectory() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [showAllocate, setShowAllocate] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
-  const [preSelectedAsset, setPreSelectedAsset] = useState<ModalAsset | null>(null);
+  const [preSelectedAsset, setPreSelectedAsset] = useState<ModalAsset | null>(
+    null,
+  );
   const [toast, setToast] = useState<Toast | null>(null);
 
   const showToast = (msg: string, type = "success") => {
@@ -93,7 +112,7 @@ export default function AssetDirectory() {
         setAssets(data);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "An unexpected error occurred."
+          err instanceof Error ? err.message : "An unexpected error occurred.",
         );
       } finally {
         setIsLoading(false);
@@ -127,7 +146,8 @@ export default function AssetDirectory() {
       asset.category?.toLowerCase().includes(searchLower);
     const matchesCategory =
       categoryFilter === "all" || asset.category === categoryFilter;
-    const matchesStatus = statusFilter === "all" || asset.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" || asset.status === statusFilter;
     return Boolean(matchesSearch && matchesCategory && matchesStatus);
   });
 
@@ -137,12 +157,47 @@ export default function AssetDirectory() {
       animate={{ opacity: 1, y: 0 }}
       className="w-full space-y-6"
     >
+      {filesAsset && (
+        <AssetExtensions
+          asset={filesAsset}
+          onClose={() => setFilesAsset(null)}
+        />
+      )}
+      {showImport && (
+        <AssetImport
+          onClose={() => setShowImport(false)}
+          onImported={refreshAssets}
+        />
+      )}
+      <div className="flex gap-4">
+        <a href="/scan" className="text-info underline">
+          Scan / look up asset
+        </a>
+        {manager && (
+          <button
+            className="text-info underline"
+            onClick={() => setShowImport(true)}
+          >
+            Import assets from CSV
+          </button>
+        )}
+      </div>
       {/* Toast */}
       <AnimatePresence>
         {toast && (
-          <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 40 }}
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 40 }}
             className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl text-sm font-medium shadow-xl border ${toast.type === "error" ? "bg-danger/25 border-danger/40 text-danger" : "bg-success/25 border-success/40 text-success"}`}
-          >{toast.type === "error" ? <X size={14} className="inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}{toast.msg}</motion.div>
+          >
+            {toast.type === "error" ? (
+              <X size={14} className="inline mr-1.5" />
+            ) : (
+              <CheckCircle2 size={14} className="inline mr-1.5" />
+            )}
+            {toast.msg}
+          </motion.div>
         )}
       </AnimatePresence>
       {/* --- Page Header --- */}
@@ -236,7 +291,10 @@ export default function AssetDirectory() {
 
       {/* --- Error State --- */}
       {error && (
-        <div role="alert" className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger">
+        <div
+          role="alert"
+          className="bg-danger/10 border border-danger/20 rounded-xl p-4 flex items-center gap-4 text-danger"
+        >
           <AlertCircle size={20} />
           <p className="text-sm">{error}</p>
           <button
@@ -317,7 +375,10 @@ export default function AssetDirectory() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                     >
-                      <td colSpan={5} className="py-12 text-center text-ink-subtle">
+                      <td
+                        colSpan={5}
+                        className="py-12 text-center text-ink-subtle"
+                      >
                         <Box size={40} className="mx-auto mb-3 opacity-20" />
                         No assets found. Try adjusting your search.
                       </td>
@@ -342,6 +403,13 @@ export default function AssetDirectory() {
                               <p className="text-xs text-ink-subtle font-mono mt-0.5">
                                 {asset.assetTag}
                               </p>
+                              <button
+                                className="text-info text-xs underline"
+                                onClick={() => setFilesAsset(asset)}
+                                aria-label={`Files and QR for ${asset.name}`}
+                              >
+                                Files &amp; QR label
+                              </button>
                             </div>
                           </div>
                         </td>
@@ -382,7 +450,11 @@ export default function AssetDirectory() {
                                 Allocate
                               </button>
                             )}
-                            <button className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors" aria-label="More actions" disabled>
+                            <button
+                              className="text-ink-subtle hover:text-ink p-1.5 rounded-lg hover:bg-surface-3 transition-colors"
+                              aria-label="More actions"
+                              disabled
+                            >
                               <MoreVertical size={18} />
                             </button>
                           </div>
@@ -400,12 +472,17 @@ export default function AssetDirectory() {
       {/* Allocate Asset Modal */}
       <AllocateAssetModal
         open={showAllocate}
-        onClose={() => { setShowAllocate(false); setPreSelectedAsset(null); }}
+        onClose={() => {
+          setShowAllocate(false);
+          setPreSelectedAsset(null);
+        }}
         onSuccess={(allocationId) => {
           setShowAllocate(false);
           setPreSelectedAsset(null);
           showToast(`Asset allocated successfully! ID: ${allocationId}`);
-          getAssets().then(setAssets).catch(() => {});
+          getAssets()
+            .then(setAssets)
+            .catch(() => {});
         }}
         preSelectedAsset={preSelectedAsset}
       />
@@ -416,7 +493,9 @@ export default function AssetDirectory() {
         onClose={() => setShowRegister(false)}
         onSuccess={(newAsset) => {
           setShowRegister(false);
-          showToast(`Asset "${newAsset.name}" registered! Tag: ${newAsset.assetTag}`);
+          showToast(
+            `Asset "${newAsset.name}" registered! Tag: ${newAsset.assetTag}`,
+          );
           // Refresh asset list to show the new asset
           setIsLoading(true);
           getAssets()

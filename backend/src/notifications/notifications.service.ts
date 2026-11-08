@@ -195,6 +195,9 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         relatedEntityType: params.relatedEntityType,
         relatedEntityId: params.relatedEntityId,
       },
+      // This event writer does not need the internal reminder deduplication key.
+      // An implicit RETURNING * would unnecessarily require that new column.
+      select: { id: true },
     });
   }
 
@@ -224,6 +227,19 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         where: { userId, ...(onlyUnread ? { isRead: false } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 100,
+        // Keep the public bell independent of worker-only columns (dedupeKey).
+        // This also allows reads during an additive migration rollout. Queue
+        // workers still require the outbox migration; readiness reports drift.
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          message: true,
+          isRead: true,
+          relatedEntityType: true,
+          relatedEntityId: true,
+          createdAt: true,
+        },
       }),
       this.prisma.notification.count({ where: { userId, isRead: false } }),
     ]);

@@ -8,15 +8,10 @@ opt-in Compose services and tests. This phase delivers **in-app booking
 reminders**, not email reminders or asynchronous exports. Overdue allocation
 reminders remain on the existing API sweeper. No frontend job console yet.
 
-Further agreed phases, not implemented here:
-
-1. Private S3 attachments with upload verification and authorisation.
-2. Validated, previewable bulk asset import using the worker foundation.
-3. QR asset lookup and authenticated audit verification.
-4. OpenTelemetry tracing across API and worker, with a resource-conscious
-   collector/backend choice.
-
-Do not describe those future phases as implemented on a resume or README.
+Phases 2–5 now have a separate implementation and rollout guide:
+[private attachments, CSV imports, QR scanning and tracing](ASSET_EXTENSIONS.md).
+The worker also runs the bounded asset-import queue. Live cloud rollout must be
+verified separately; this phase-1 guide still describes reminder semantics.
 
 ## Delivery model
 

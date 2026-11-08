@@ -1,6 +1,6 @@
-import path from "path"
-import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import path from "path";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
@@ -40,6 +40,9 @@ export default defineConfig({
          */
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
+          if (id.includes("html5-qrcode")) return "qr-scanner";
+          if (id.includes("/qrcode/") || id.includes("/dijkstrajs/"))
+            return "qr-labels";
           if (
             id.includes("recharts") ||
             id.includes("d3-") ||
@@ -103,4 +106,4 @@ export default defineConfig({
     // visible in the build output instead of being discovered in production.
     chunkSizeWarningLimit: 400,
   },
-})
+});

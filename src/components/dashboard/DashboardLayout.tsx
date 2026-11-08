@@ -64,12 +64,22 @@ export default function DashboardLayout({
           tabIndex={-1}
           className={`flex-1 overflow-y-auto p-4 sm:p-6 ${className ?? ""}`}
         >
+          <a
+            href="/scan"
+            className="inline-block mb-4 text-info underline text-sm"
+          >
+            Scan / look up an asset
+          </a>
           <motion.div
             key={currentView}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            transition={{ type: "spring" as const, stiffness: 350, damping: 30 }}
+            transition={{
+              type: "spring" as const,
+              stiffness: 350,
+              damping: 30,
+            }}
           >
             {children}
           </motion.div>

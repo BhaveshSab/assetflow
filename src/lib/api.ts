@@ -26,7 +26,9 @@ export { getToken } from "@/lib/session";
  * "Bearer " (an empty credential) would turn a public request into a 401.
  */
 export const authHeaders = (): Record<string, string> => {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
@@ -66,7 +68,10 @@ async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(`${BASE_URL}${path}`, { ...init, signal: controller.signal });
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") {
       throw new Error("The request timed out. Please try again.");
@@ -96,12 +101,23 @@ async function request<T>(
     const message = Array.isArray(body?.message)
       ? body.message[0]
       : body?.message;
-    throw new Error(
-      message ??
-        (res.status === 401
+    let detail =
+      typeof message === "string"
+        ? message
+        : res.status === 401
           ? "Your session has expired. Please sign in again."
-          : `Request failed (${res.status})`),
-    );
+          : `Request failed (${res.status})`;
+    if (res.status >= 500) {
+      if (!message || message === "Internal server error")
+        detail = "The server could not load this data. Please retry.";
+      const reference = body?.requestId ?? res.headers?.get("x-request-id");
+      if (
+        typeof reference === "string" &&
+        /^[a-zA-Z0-9._:-]{1,128}$/.test(reference)
+      )
+        detail += ` (reference: ${reference})`;
+    }
+    throw new Error(detail);
   }
   // Await first, then narrow — `as Promise<T>` only silenced the compiler
   // without ever checking the shape of the answer.
@@ -127,7 +143,9 @@ export async function apiSend<T>(
 }
 
 /** Normalize { items, total } list responses into a plain array. */
-export function unwrapList<T>(data: { items?: T[] } | T[] | null | undefined): T[] {
+export function unwrapList<T>(
+  data: { items?: T[] } | T[] | null | undefined,
+): T[] {
   if (Array.isArray(data)) return data;
   return data?.items ?? [];
 }
