@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiGet, apiSend } from "@/lib/api";
+import AssignedAudits from "./AssignedAudits";
 import AssetScanner from "./AssetScanner";
 import AssetAttachments from "./AssetAttachments";
 import AssetImport from "./AssetImport";
@@ -107,6 +108,33 @@ describe("Asset extension workflows", () => {
       expect(apiSend).toHaveBeenCalledWith(
         "/asset-imports/preview/confirm",
         "POST",
+      ),
+    );
+  });
+  it("shows copyable active category IDs without requiring a developer console", async () => {
+    vi.mocked(apiGet).mockImplementation(async (path) =>
+      path.startsWith("/org/categories")
+        ? { items: [{ id: "category-id", name: "Electronics" }] }
+        : [],
+    );
+    render(<AssetImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(await screen.findByLabelText("Electronics category ID")).toHaveValue(
+      "category-id",
+    );
+  });
+  it("lets assigned employees open their own audit workflow from the scan screen", async () => {
+    vi.mocked(apiGet).mockImplementation(async (path) =>
+      path === "/audits/assigned"
+        ? [{ id: "cycle", name: "Quarterly audit" }]
+        : { items: [] },
+    );
+    render(<AssignedAudits />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Quarterly audit" }),
+    );
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith(
+        expect.stringContaining("/audits/cycle/items"),
       ),
     );
   });

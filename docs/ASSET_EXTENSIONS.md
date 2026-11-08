@@ -81,7 +81,7 @@ Upload or paste CSV, validate, inspect the preview/errors, then explicitly confi
 The modal shows recent job status/counts, cancellation, retry and refresh controls.
 
 Required headers: `name,categoryId`. Optional: `serialNumber,location,condition,isBookable`.
-Use active category IDs from the organization API or the existing category editor.
+Expand **Category IDs for your CSV** in the import dialog to select/copy an active category ID.
 
 ```csv
 name,categoryId,serialNumber,location,condition,isBookable
@@ -123,7 +123,7 @@ DRAFT → PENDING → QUEUED → DONE / FAILED; cancellation → CANCELLED.
 ## 4. QR lookup and audit scanning
 
 **UI:** Download a PNG QR label from Files & QR. Scan at `/scan`, or inside an
-open audit's Continue Audit panel. Camera access is explicit and stops on close;
+open audit's Continue Audit panel. Assigned employees can open **My assigned open audits** on `/scan`; the API returns only their own open assignments. Camera access is explicit and stops on close;
 HTTPS/camera permission is needed. Manual entry is always available.
 
 Payload: `assetflow:AF-0001`. It is an identifier, **not authentication**, an access

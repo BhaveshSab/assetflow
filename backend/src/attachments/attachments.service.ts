@@ -57,6 +57,16 @@ export class AttachmentsService {
   }
   async begin(assetId: string, dto: UploadAttachmentDto, user: AuthUser) {
     await this.asset(assetId);
+    const extensions: Record<string, RegExp> = {
+      'application/pdf': /\.pdf$/i,
+      'image/png': /\.png$/i,
+      'image/jpeg': /\.jpe?g$/i,
+      'text/plain': /\.txt$/i,
+    };
+    if (!extensions[dto.contentType]?.test(dto.filename))
+      throw new BadRequestException(
+        'Filename extension must match the allowed content type',
+      );
     const objectKey = `attachments/${assetId}/${randomUUID()}`;
     const uploadUrl = await this.store.upload(
       objectKey,

@@ -101,6 +101,7 @@ describe('Asset extensions: HTTP + migrated Postgres, mocked S3 boundary', () =>
     for (const invalid of [
       { size: 5242881 },
       { filename: '../evil.html' },
+      { filename: 'evil.html' },
       { contentType: 'text/html' },
     ])
       await request(app.getHttpServer())
@@ -383,9 +384,19 @@ describe('Asset extensions: HTTP + migrated Postgres, mocked S3 boundary', () =>
       .set(auth(employee))
       .send({ tag })
       .expect(403);
+    const unassigned = await request(app.getHttpServer())
+      .get('/api/audits/assigned')
+      .set(auth(employee))
+      .expect(200);
+    expect(unassigned.body).toEqual([]);
     await db.auditAssignment.create({
       data: { auditCycleId: id, auditorId: employeeId },
     });
+    const assigned = await request(app.getHttpServer())
+      .get('/api/audits/assigned')
+      .set(auth(employee))
+      .expect(200);
+    expect(assigned.body).toEqual([{ id, name: 'QR audit', status: 'OPEN' }]);
     const scanned = await request(app.getHttpServer())
       .post(`/api/audits/${id}/scan`)
       .set(auth(employee))

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { apiGet } from "@/lib/api";
+import AssignedAudits from "./AssignedAudits";
 import AssetScanner from "./AssetScanner";
 import AssetAttachments from "./AssetAttachments";
 interface Asset {
@@ -49,6 +50,7 @@ export default function AssetLookup() {
           <AssetAttachments key={asset.id} assetId={asset.id} />
         </article>
       )}
+      <AssignedAudits />
     </section>
   );
 }

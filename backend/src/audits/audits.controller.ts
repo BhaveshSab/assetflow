@@ -58,6 +58,12 @@ export class AuditsController {
     });
   }
 
+  /** Assigned employees can discover their own open cycles without seeing all cycles. */
+  @Get('assigned')
+  assigned(@CurrentUser() user: AuthUser) {
+    return this.audits.assigned(user);
+  }
+
   /** Cycle detail: assignments (auditors) + a summary of item results. */
   @Get(':id')
   @Roles(Role.ADMIN, Role.ASSET_MANAGER, Role.DEPARTMENT_HEAD)

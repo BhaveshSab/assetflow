@@ -289,6 +289,18 @@ export class AuditsService {
   // MARK ITEM
   // -------------------------------------------------------------------------
 
+  async assigned(user: AuthUser) {
+    return this.prisma.auditCycle.findMany({
+      where: {
+        status: AuditCycleStatus.OPEN,
+        assignments: { some: { auditorId: user.id } },
+      },
+      select: { id: true, name: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
   async scan(user: AuthUser, id: string, assetTag: string) {
     await this.assertCanMark(user, id);
     const cycle = await this.prisma.auditCycle.findUnique({ where: { id } });

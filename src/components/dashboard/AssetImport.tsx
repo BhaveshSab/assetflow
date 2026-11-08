@@ -26,6 +26,24 @@ export default function AssetImport({
     "name,categoryId,serialNumber,location,condition,isBookable\n",
   );
   const [preview, setPreview] = useState<Preview>();
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    let active = true;
+    void apiGet<{ items: { id: string; name: string }[] }>(
+      "/org/categories?status=ACTIVE&pageSize=200",
+    )
+      .then((data) => {
+        if (active) setCategories(data.items ?? []);
+      })
+      .catch((e) => {
+        if (active) setError((e as Error).message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,6 +115,27 @@ export default function AssetImport({
           Organization Setup. Validate first, then explicitly confirm. Every
           batch commits all rows or none.
         </p>
+        <details>
+          <summary>
+            Category IDs for your CSV (first 200 active categories)
+          </summary>
+          <ul>
+            {categories.map((c) => (
+              <li key={c.id} className="py-2">
+                <label>
+                  {c.name}
+                  <input
+                    className="block bg-canvas border border-line p-1 w-full font-mono"
+                    aria-label={`${c.name} category ID`}
+                    readOnly
+                    value={c.id}
+                    onFocus={(e) => e.target.select()}
+                  />
+                </label>
+              </li>
+            ))}
+          </ul>
+        </details>
         <label>
           CSV file
           <input
