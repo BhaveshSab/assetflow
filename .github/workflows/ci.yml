@@ -198,9 +198,19 @@ jobs:
           docker run --rm --entrypoint promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
-          docker run --rm --entrypoint promtool \
+          if output=$(docker run --rm --entrypoint promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
-            prom/prometheus:v2.54.1 test rules /etc/prometheus/tests/alerts.test.yml /etc/prometheus/tests/legacy-alerts.test.yml
+            prom/prometheus:v2.54.1 test rules /etc/prometheus/tests/alerts.test.yml /etc/prometheus/tests/legacy-alerts.test.yml 2>&1); then
+            printf '%s\n' "$output"
+          else
+            printf '%s\n' "$output"
+            detail=${output:0:12000}
+            detail=${detail//'%'/'%25'}
+            detail=${detail//$'\r'/'%0D'}
+            detail=${detail//$'\n'/'%0A'}
+            printf '::error title=promtool::%s\n' "$detail"
+            exit 1
+          fi
 
       - name: Smoke test exporter startup and container metric labels
         run: |
