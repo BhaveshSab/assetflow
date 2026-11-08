@@ -78,7 +78,8 @@ by this patch.
 ## First rollout prerequisites
 
 The deploy user needs Bash, GNU `timeout`, `flock`, Git and modern Docker Compose
-v2 (including `--no-build`, `--pull`, and `up --wait`). The existing database,
+v2 (including `up --no-build`, `run --pull`, and `up --wait` — note that
+`--no-build` exists only on `up`, not on `run`). The existing database,
 secrets and TLS configuration stay on the host.
 
 The host must be able to pull **all three** GHCR packages:

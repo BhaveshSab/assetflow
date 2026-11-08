@@ -153,7 +153,7 @@ case "$1" in
   compose)
     case "$*" in
       *'ps -q api') echo test-container ;;
-      *'run --rm -T --no-build --pull never migrate')
+      *'run --rm -T --pull never migrate')
         if [ "$MODE" = migration-fails ]; then exit 18; fi ;;
     esac ;;
 esac
@@ -184,13 +184,31 @@ esac
             self.assertIn(f'pull {image}', calls)
         migration = next(i for i, c in enumerate(calls) if 'run --rm' in c)
         self.assertTrue(all(calls.index(f'pull {image}') < migration for image in [API, MIGRATE, WEB]))
-        self.assertIn('--no-build --pull never migrate', calls[migration])
+        self.assertIn('--pull never migrate', calls[migration])
         starts = [c for c in calls if 'up -d' in c]
         self.assertTrue(starts)
         self.assertTrue(all('--no-build' in c for c in starts))
         self.assertFalse(any(' build ' in c for c in calls))
         self.assertFalse(any('wrong' in c for c in calls))
         self.assertNotIn(f'rmi {MIGRATE}', calls, 'cleanup must retain the current migration image')
+
+    def test_migration_never_passes_flags_compose_run_rejects(self):
+        """`docker compose run` has no --no-build; passing it aborts every deploy.
+
+        The flag belongs to `docker compose up`. A deploy failed for real with
+        `unknown flag: --no-build` at the migration step, so assert on the CLI
+        contract instead of on one exact command string.
+        """
+        script = (ROOT / 'infra/scripts/deploy.sh').read_text().splitlines()
+        runs = [
+            line
+            for line in script
+            if 'compose run' in line and not line.lstrip().startswith('#')
+        ]
+        self.assertTrue(runs, 'deploy.sh must run the migrations')
+        for line in runs:
+            self.assertNotIn('--no-build', line, f'--no-build is invalid for `compose run`: {line.strip()}')
+            self.assertIn('--pull never', line, f'the run must stay pinned to the pulled image: {line.strip()}')
 
     def test_missing_web_or_failed_migration_does_not_replace_running_api(self):
         for mode in ['missing-web', 'migration-fails']:
