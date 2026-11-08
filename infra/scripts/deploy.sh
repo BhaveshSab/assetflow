@@ -179,6 +179,31 @@ if [ "$HEALTHY" != true ]; then
     exit 1
 fi
 
+# Monitoring config is shipped with the checkout, not the API image. Reconcile
+# these services explicitly or a successful API deploy leaves the new exporters
+# absent and Prometheus using its old mounts/configuration.
+say "+ reconciling monitoring services"
+if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] compose up -d --no-deps cadvisor blackbox prometheus alertmanager"
+else
+    compose up -d --no-deps cadvisor blackbox prometheus alertmanager
+    # Bind-mounted config content changes do not always recreate a container.
+    # Reload via the internal network, not a publicly exposed lifecycle port.
+    reloaded=false
+    for attempt in $(seq 1 15); do
+        if compose exec -T prometheus wget -qO- --post-data='' http://127.0.0.1:9090/-/reload; then
+            reloaded=true
+            break
+        fi
+        sleep 2
+    done
+    if [ "$reloaded" != true ]; then
+        warn "API is healthy, but Prometheus did not reload; inspect monitoring logs"
+        compose logs --tail 30 prometheus cadvisor blackbox alertmanager || true
+        exit 1
+    fi
+fi
+
 # 5. Reclaim the superseded images -------------------------------------------
 # Every deployment adds a `:<sha>` tag. Keeping them all is what filled the disk
 # and broke a deployment, so the old ones go now that the new image is healthy.

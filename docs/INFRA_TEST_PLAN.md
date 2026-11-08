@@ -1,3 +1,10 @@
+> **Implementation update:** The inventory and gaps below are the original
+> planning baseline, not a claim about today's deployed system. Items 4–7 are
+> now implemented in the repository; see [Infrastructure checks](INFRA_CHECKS.md)
+> for commands, CI evidence, scope changes and remaining live checks. In
+> particular, the original claim that Prometheus already forwarded to
+> Alertmanager was incorrect: the missing `alerting` destination is now added.
+
 # Infrastructure: what's tested, what isn't, and the shortest path to better
 
 Reviewed against the repository at `main` @ `a7d08a5` plus this branch (`ee7c0e8`). Everything in §1 was checked in the code, not taken from the summary.
