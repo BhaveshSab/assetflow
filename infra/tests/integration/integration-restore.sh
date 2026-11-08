@@ -166,13 +166,29 @@ if ! docker run -d --name "$SRC" --network "$NET" --network-alias src-db \
 fi
 DB="$SRC"
 
-for _ in $(seq 1 60); do
-    docker exec "$SRC" pg_isready -U assetflow -d assetflow >/dev/null 2>&1 && break
+# Readiness: poll, and report the last response rather than guessing. The first
+# attempt can legitimately fail while initdb runs on a fresh volume.
+ready=false
+last_probe=""
+for attempt in $(seq 1 90); do
+    if probe=$(docker exec "$SRC" pg_isready -U assetflow -d assetflow 2>&1); then
+        ready=true
+        last_probe="$probe (attempt ${attempt})"
+        break
+    fi
+    last_probe="$probe"
+    # A container that exited will never become ready; stop waiting on it.
+    if [ "$(docker inspect -f '{{.State.Running}}' "$SRC" 2>/dev/null)" != true ]; then
+        last_probe="container exited: $(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}}' "$SRC" 2>/dev/null); ${last_probe}"
+        break
+    fi
     sleep 1
 done
-docker exec "$SRC" pg_isready -U assetflow -d assetflow >/dev/null 2>&1 \
-    || { record "postgres ready" FAIL "did not become ready: $(docker logs --tail 5 "$SRC" 2>&1 | tr '\n' ' ')"; emit_results FAIL; write_summary FAIL; exit 1; }
-record "postgres ready" PASS "$PG_IMAGE"
+if [ "$ready" != true ]; then
+    record "postgres ready" FAIL "${last_probe}; logs: $(docker logs --tail 8 "$SRC" 2>&1 | tr '\n' ' ')"
+    emit_results FAIL; write_summary FAIL; exit 1
+fi
+record "postgres ready" PASS "$PG_IMAGE (${last_probe})"
 
 # Apply the real migrations, then insert synthetic rows.
 say "== applying migrations and seeding synthetic data =="
