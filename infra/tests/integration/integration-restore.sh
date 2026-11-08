@@ -258,8 +258,8 @@ run_restore() { # dump expected_exit label
     else
         record "$label" FAIL "exit ${got}, wanted ${want}: $(tail -2 "$out" | tr '\n' ' ')"
     fi
-    LAST_LOG="$out"
 }
+
 
 say "== restore cases through the real script =="
 if [ -s "$CURRENT_DUMP" ]; then
