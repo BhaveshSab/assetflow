@@ -101,6 +101,31 @@ class HistoryTests(unittest.TestCase):
         self.assertIn('RESTORE_MIGRATE_IMAGE must have a full release-SHA tag', body)
         self.assertIn('indisvalid', (SCRIPTS / 'lib/restore-constraints.sql').read_text())
 
+    def test_constraint_literals_survive_pg_get_constraintdef_quoting(self):
+        # pg_get_constraintdef renders a quoted column as "status", while the
+        # canonical form used to keep double quotes. The literal therefore said
+        # WHEREstatus<>... against a real WHERE"status"<>..., so the check could
+        # only ever fail against a correct restored database. Quotes are
+        # formatting, so they must be stripped on both sides.
+        import re
+        body = (SCRIPTS / 'lib/restore-constraints.sql').read_text()
+        self.assertNotIn("'[[:space:]()]'", body)
+        self.assertEqual(body.count("'[[:space:]()\"]'"), 4)
+        def canon(text):
+            return re.sub(r'[ \t\n\r()"]', '', text)
+        # Reconstructed from the migrations that create these objects.
+        for rendered, literal in (
+                ('CHECK ("endTime" > "startTime")', 'CHECKendTime>startTime'),
+                ('EXCLUDE USING gist ("assetId" WITH =, tsrange("startTime", "endTime")'
+                 ' WITH &&) WHERE ("status" <> \'CANCELLED\'::"BookingStatus")',
+                 'EXCLUDEUSINGgistassetIdWITH=,tsrangestartTime,endTimeWITH&&'
+                 'WHEREstatus<>\'CANCELLED\'::BookingStatus'),
+                ('status = \'ACTIVE\'::"AllocationStatus"',
+                 "status='ACTIVE'::AllocationStatus")):
+            with self.subTest(literal=literal):
+                self.assertEqual(canon(rendered), literal)
+                self.assertIn(literal.replace("'", "''"), body)
+
 
 class RestoreCleanupTests(unittest.TestCase):
     def test_failed_checksum_download_removes_private_temporary_dump(self):

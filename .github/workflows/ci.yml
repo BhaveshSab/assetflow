@@ -373,3 +373,79 @@ jobs:
           name: k6-regression-${{ github.sha }}
           path: test-results/
           retention-days: 14
+
+  # Real PostgreSQL 16 + the real Prisma migration image, synthetic data only.
+  #
+  # The unit tests model the restore script's orchestration with stubs. This job
+  # runs the *shipped* script against a real database so that the things a stub
+  # cannot show are actually observed: pg_get_constraintdef formatting, migration
+  # history checksums, Prisma migrate deploy on restored data, internal networking
+  # and owned-resource cleanup.
+  #
+  # No AWS access, no credentials, no production service. Every resource is named
+  # after the run and every case is bounded by the job timeout.
+  #
+  # This is an integration result. It is NOT an AWS performance measurement and
+  # NOT production recovery evidence.
+  restore-integration:
+    name: Restore integration (real PostgreSQL, synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck python3-yaml
+
+      - name: Lint the integration harness
+        run: |
+          shellcheck --severity=warning --external-sources infra/tests/integration/integration-restore.sh
+          python3 -c "import ast,sys; ast.parse(open('infra/tests/integration/verify-constraint-sql.py').read())"
+
+      - name: Run the isolated restore integration
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          infra/tests/integration/integration-restore.sh "$PWD" 2>&1 | tee test-results/restore-integration.log
+          # The harness writes JSON plus a text summary regardless of outcome.
+          test -s test-results/restore-integration.txt
+
+      - name: Publish the outcome in the job summary
+        if: always()
+        run: |
+          if [ -f test-results/restore-integration.txt ]; then
+            {
+              echo '## Isolated restore integration'
+              echo
+              echo '```text'
+              cat test-results/restore-integration.txt
+              echo '```'
+              echo
+              echo 'Synthetic data, disposable PostgreSQL 16, no AWS or production access.'
+              echo 'This is not an AWS performance measurement or production recovery evidence.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The harness produced no summary; see the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep restore-integration evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-integration-${{ github.sha }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Remove any leftover integration resources
+        if: always()
+        run: |
+          # Belt and braces: the harness cleans up per run, but a killed step can
+          # leave something behind. Only names this job created are touched.
+          docker ps -aq --filter "name=assetflow-restore-verify-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-restore-verify-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-restore-verify-" | xargs -r docker network rm
+          docker ps -aq --filter "name=assetflow-it-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-it-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-it-" | xargs -r docker network rm

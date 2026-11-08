@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+#
+# Isolated restore integration for CI.
+#
+# Exercises infra/scripts/restore-verify.sh against real PostgreSQL 16 and the
+# real Prisma migration image, using only synthetic data. Nothing here touches
+# AWS, production, or any credential: the S3 paths are not used, and the dumps
+# are generated locally from a database this run creates.
+#
+# The point of the script is to prove the *failure* paths as well as the success
+# path, because a verification step that cannot fail is not a verification step.
+#
+# Usage: integration-restore.sh <repo-root>
+#
+# Environment:
+#   RESTORE_MIGRATE_IMAGE  image tag to build the migration tooling as
+#                          (default: from the checkout SHA)
+# Every resource is prefixed with this run's id and removed on exit, on failure
+# and on interruption.
+
+set -uo pipefail
+
+REPO="${1:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+cd "$REPO" || { echo "cannot enter ${REPO}" >&2; exit 1; }
+
+RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+PREFIX="assetflow-it-${RUN_ID}"
+PG_IMAGE="${POSTGRES_IMAGE:-postgres:16.4-alpine}"
+# Debian-based, so a client container can add python3 and psql without apk.
+PG_CLIENT_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:16.4}"
+SHA="$(git rev-parse HEAD)"
+MIGRATE_IMAGE="${RESTORE_MIGRATE_IMAGE:-assetflow-it-migrate:${SHA}}"
+WORK="$(mktemp -d)"
+RESULTS="${RESULTS_FILE:-${WORK}/results.json}"
+
+PASS=0
+FAIL=0
+SKIP=0
+declare -a CASES=()
+
+# ---------------------------------------------------------------- reporting --
+record() { # name status detail
+    local name="$1" status="$2" detail="${3:-}"
+    CASES+=("$(printf '%s\t%s\t%s' "$name" "$status" "$detail")")
+    printf '  %-46s %-6s %s\n' "$name" "$status" "$detail"
+    case "$status" in
+        PASS) PASS=$((PASS + 1)) ;;
+        FAIL) FAIL=$((FAIL + 1)) ;;
+        SKIP) SKIP=$((SKIP + 1)) ;;
+    esac
+}
+
+write_summary() {
+    local status="$1"
+    [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+    {
+        echo "### Isolated restore integration (synthetic data, no production)"
+        echo
+        echo "Commit \`${SHA}\`. PostgreSQL 16 + real Prisma migration image."
+        echo "This is a CI integration result. It is **not** an AWS performance"
+        echo "measurement and **not** production recovery evidence."
+        echo
+        echo "| Result | Count |"
+        echo "|---|---|"
+        echo "| Passed | ${PASS} |"
+        echo "| Failed | ${FAIL} |"
+        echo "| Skipped | ${SKIP} |"
+        echo
+        echo "| Case | Outcome | Detail |"
+        echo "|---|---|---|"
+        local row name verdict detail
+        for row in "${CASES[@]}"; do
+            IFS=$'\t' read -r name verdict detail <<<"$row"
+            echo "| ${name} | ${verdict} | ${detail//|/\\|} |"
+        done
+        echo
+        echo "Overall: **${status}**"
+    } >>"$GITHUB_STEP_SUMMARY"
+}
+
+emit_results() {
+    local status="$1"
+    {
+        printf '{\n  "commit": "%s",\n  "overall": "%s",\n' "$SHA" "$status"
+        printf '  "passed": %d, "failed": %d, "skipped": %d,\n' "$PASS" "$FAIL" "$SKIP"
+        printf '  "cases": [\n'
+        local row name verdict detail first=1
+        for row in "${CASES[@]}"; do
+            IFS=$'\t' read -r name verdict detail <<<"$row"
+            [[ $first -eq 1 ]] || printf ',\n'
+            first=0
+            detail="${detail//\\/\\\\}"; detail="${detail//\"/\\\"}"
+            printf '    {"name": "%s", "outcome": "%s", "detail": "%s"}' "$name" "$verdict" "$detail"
+        done
+        printf '\n  ]\n}\n'
+    } >"$RESULTS"
+    {
+        echo "== isolated restore integration =="
+        echo "commit: ${SHA}"
+        echo "results: passed=${PASS} failed=${FAIL} skipped=${SKIP} overall=${status}"
+        printf '%s\n' "${CASES[@]}" | while IFS=$'\t' read -r n v d; do echo "  ${v} ${n} ${d}"; done
+    } >"${RESULTS}.txt"
+}
+
+# ------------------------------------------------------------------ cleanup --
+DB=""
+NET=""
+VOL=""
+CLEANED=false
+cleanup() {
+    local code=$?
+    if [ "$CLEANED" = true ]; then return $code; fi
+    CLEANED=true
+    [ -z "$DB" ] || docker rm -f "$DB" >/dev/null 2>&1 || true
+    [ -z "$VOL" ] || docker volume rm "$VOL" >/dev/null 2>&1 || true
+    [ -z "$NET" ] || docker network rm "$NET" >/dev/null 2>&1 || true
+    rm -rf "$WORK"
+    return $code
+}
+trap cleanup EXIT INT TERM
+
+say() { printf '%s\n' "$*"; }
+
+# ------------------------------------------------------- build the image ----
+say "== building the migration image (real Prisma tooling) =="
+if ! docker build -q -t "$MIGRATE_IMAGE" -f - . <<'DOCKERFILE' >/dev/null
+FROM node:22-alpine
+WORKDIR /app
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts >/dev/null 2>&1 || npm ci --omit=dev >/dev/null 2>&1
+COPY backend/prisma ./prisma
+RUN npx prisma generate >/dev/null 2>&1
+DOCKERFILE
+then
+    record "build migration image" FAIL "docker build failed"
+    emit_results FAIL; write_summary FAIL; exit 1
+fi
+record "build migration image" PASS "$MIGRATE_IMAGE"
+
+# ------------------------------------------------- a database to dump from ---
+say "== creating the synthetic source database =="
+NET="${PREFIX}-net"
+VOL="${PREFIX}-vol"
+SRC="${PREFIX}-src"
+docker network create --internal "$NET" >/dev/null || { record "create network" FAIL; emit_results FAIL; write_summary FAIL; exit 1; }
+docker volume create "$VOL" >/dev/null
+docker run -d --name "$SRC" --pull never --network "$NET" --network-alias src-db \
+    -e POSTGRES_USER=assetflow -e POSTGRES_PASSWORD="it-${RUN_ID}" -e POSTGRES_DB=assetflow \
+    -v "${VOL}:/var/lib/postgresql/data" "$PG_IMAGE" >/dev/null
+DB="$SRC"
+
+for _ in $(seq 1 60); do
+    docker exec "$SRC" pg_isready -U assetflow -d assetflow >/dev/null 2>&1 && break
+    sleep 1
+done
+docker exec "$SRC" pg_isready -U assetflow -d assetflow >/dev/null 2>&1 \
+    || { record "postgres ready" FAIL "did not become ready"; emit_results FAIL; write_summary FAIL; exit 1; }
+record "postgres ready" PASS "$PG_IMAGE"
+
+# Apply the real migrations, then insert synthetic rows.
+say "== applying migrations and seeding synthetic data =="
+SRC_URL="postgresql://assetflow:it-${RUN_ID}@src-db:5432/assetflow"
+if docker run --rm --pull never --network "$NET" -e DATABASE_URL="$SRC_URL" \
+    --entrypoint node "$MIGRATE_IMAGE" node_modules/prisma/build/index.js migrate deploy >/dev/null 2>&1
+then
+    record "prisma migrate deploy (source)" PASS "all migrations applied"
+else
+    record "prisma migrate deploy (source)" FAIL "migrations did not apply"
+    emit_results FAIL; write_summary FAIL; exit 1
+fi
+
+SEED_SQL=$(cat <<'SQL'
+INSERT INTO "Department"(id,name,"createdAt","updatedAt") VALUES ('d1','Ops',now(),now());
+INSERT INTO "AssetCategory"(id,name,"createdAt","updatedAt") VALUES ('c1','Tools',now(),now());
+INSERT INTO "User"(id,email,name,role,status,"createdAt","updatedAt")
+  VALUES ('u1','admin@example.test','Admin','ADMIN','ACTIVE',now(),now()),
+         ('u2','emp@example.test','Emp','EMPLOYEE','ACTIVE',now(),now());
+INSERT INTO "Asset"(id,"assetTag",name,"categoryId",status,"createdAt","updatedAt")
+  VALUES ('a1','TAG-1','Drill','c1','AVAILABLE',now(),now());
+INSERT INTO "Booking"(id,"assetId","bookedById","startTime","endTime",status,"createdAt","updatedAt")
+  VALUES ('b1','a1','u1',now(),now()+interval '1 hour','UPCOMING',now(),now());
+SQL
+)
+if printf '%s\n' "$SEED_SQL" | docker exec -i "$SRC" psql -U assetflow -d assetflow -v ON_ERROR_STOP=1 -q >${WORK}/seed.log 2>&1; then
+    record "seed synthetic data" PASS "2 users, 1 asset, 1 booking"
+else
+    record "seed synthetic data" FAIL "$(tail -2 ${WORK}/seed.log | tr '\n' ' ')"
+    emit_results FAIL; write_summary FAIL; exit 1
+fi
+
+# --------------------------------------------- the constraint SQL contract ---
+say "== verifying the shipped constraint SQL against real PostgreSQL =="
+# Run against the source database from a throwaway client container that carries
+# both psql and python3, on the same isolated network. The database itself keeps
+# no published port.
+CONSTRAINT_OK=false
+if docker run --rm --pull never --network "$NET" \
+    -e RESTORE_TEST_DB_URL="$SRC_URL" -e PGPASSWORD="it-${RUN_ID}" \
+    -v "${REPO}:/repo:ro" -w /repo --entrypoint bash "${PG_CLIENT_IMAGE}" -c '
+        export DEBIAN_FRONTEND=noninteractive
+        (apt-get update -qq && apt-get install -y -qq postgresql-client python3) >/dev/null 2>&1 || true
+        command -v psql >/dev/null && command -v python3 >/dev/null || { echo "missing psql or python3 in the client container"; exit 3; }
+        python3 /repo/infra/tests/integration/verify-constraint-sql.py' >"${WORK}/constraint.log" 2>&1
+then
+    CONSTRAINT_OK=true
+fi
+if [ "$CONSTRAINT_OK" = true ]; then
+    record "constraint SQL contract (real pg)" PASS "$(grep -c '^  ok' "${WORK}/constraint.log") assertions"
+else
+    record "constraint SQL contract (real pg)" FAIL "$(tail -4 "${WORK}/constraint.log" | tr '\n' ' ')"
+fi
+
+# --------------------------------------------------- dump: current release --
+say "== creating backups for the restore cases =="
+CURRENT_DUMP="${WORK}/assetflow-current.dump"
+docker exec "$SRC" pg_dump -U assetflow -d assetflow --no-owner --no-privileges -Fc >"$CURRENT_DUMP" 2>/dev/null
+if [ -s "$CURRENT_DUMP" ]; then
+    ( cd "$WORK" && sha256sum "$(basename "$CURRENT_DUMP")" > "assetflow-current.dump.sha256" )
+    record "dump current release" PASS "$(du -h "$CURRENT_DUMP" | cut -f1)"
+else
+    record "dump current release" FAIL "pg_dump produced nothing"
+fi
+
+# An older backup: the schema as it was before the constraint migrations.
+# This is what a backup taken by a previous release looks like — valid data, but
+# a schema the current release must migrate forward.
+OLDER_DUMP="${WORK}/assetflow-older.dump"
+OLDER_OK=true
+docker exec -i "$SRC" psql -U assetflow -d assetflow -q -v ON_ERROR_STOP=1 >${WORK}/relax.log 2>&1 <<'SQL' || OLDER_OK=false
+DROP INDEX IF EXISTS "Allocation_one_active_per_asset";
+ALTER TABLE "Booking" DROP CONSTRAINT IF EXISTS "Booking_no_overlap";
+ALTER TABLE "Booking" DROP CONSTRAINT IF EXISTS "Booking_time_order";
+DELETE FROM "_prisma_migrations" WHERE migration_name IN
+  ('20261108090000_allocation_one_active_per_asset','20261108090100_booking_no_overlap');
+SQL
+if [ "$OLDER_OK" = true ]; then
+    docker exec "$SRC" pg_dump -U assetflow -d assetflow --no-owner --no-privileges -Fc >"$OLDER_DUMP" 2>/dev/null
+    ( cd "$WORK" && sha256sum "$(basename "$OLDER_DUMP")" > "assetflow-older.dump.sha256" )
+    if [ -s "$OLDER_DUMP" ]; then
+        record "build older backup" PASS "constraint migrations absent"
+    else
+        record "build older backup" FAIL "pg_dump produced nothing"
+        OLDER_OK=false
+    fi
+else
+    record "build older backup" FAIL "could not relax the schema"
+fi
+
+# ------------------------------------------------ drive the real script ------
+run_restore() { # dump expected_exit label
+    local dump="$1" want="$2" label="$3"
+    local out="${WORK}/case-${RANDOM}.log"
+    RESTORE_MIGRATE_IMAGE="$MIGRATE_IMAGE" LOG_FILE=/dev/null \
+        bash infra/scripts/restore-verify.sh --from "$dump" >"$out" 2>&1
+    local got=$?
+    if [ "$got" = "$want" ]; then
+        record "$label" PASS "exit ${got}"
+    else
+        record "$label" FAIL "exit ${got}, wanted ${want}: $(tail -2 "$out" | tr '\n' ' ')"
+    fi
+    LAST_LOG="$out"
+}
+
+say "== restore cases through the real script =="
+if [ -s "$CURRENT_DUMP" ]; then
+    run_restore "$CURRENT_DUMP" 0 "current backup restores and verifies"
+fi
+if [ -s "$OLDER_DUMP" ]; then
+    run_restore "$OLDER_DUMP" 0 "older backup migrates forward and verifies"
+fi
+
+# Checksum corruption: flip a byte in the dump, keep the old sidecar.
+if [ -s "$CURRENT_DUMP" ]; then
+    cp "$CURRENT_DUMP" "${WORK}/corrupt.dump"
+    cp "${WORK}/assetflow-current.dump.sha256" "${WORK}/corrupt.dump.sha256"
+    printf 'X' | dd of="${WORK}/corrupt.dump" bs=1 seek=200 conv=notrunc status=none 2>/dev/null
+    run_restore "${WORK}/corrupt.dump" 1 "corrupt dump is refused"
+
+    # A missing sidecar must also be refused: an unverifiable dump is not restorable.
+    cp "$CURRENT_DUMP" "${WORK}/nosidecar.dump"
+    run_restore "${WORK}/nosidecar.dump" 1 "dump without checksum is refused"
+
+    # A sidecar naming a different file must be refused.
+    cp "$CURRENT_DUMP" "${WORK}/misnamed.dump"
+    cp "${WORK}/assetflow-current.dump.sha256" "${WORK}/misnamed.dump.sha256"
+    run_restore "${WORK}/misnamed.dump" 1 "misnamed checksum sidecar is refused"
+fi
+
+# Migration history mismatch: a dump whose _prisma_migrations disagrees.
+if [ -s "$CURRENT_DUMP" ]; then
+    docker exec -i "$SRC" psql -U assetflow -d assetflow -q -v ON_ERROR_STOP=1 \
+        -c "UPDATE \"_prisma_migrations\" SET checksum = repeat('0',64) WHERE migration_name = '20260712071016_init'" >/dev/null 2>&1
+    MISMATCH="${WORK}/assetflow-mismatch.dump"
+    docker exec "$SRC" pg_dump -U assetflow -d assetflow --no-owner --no-privileges -Fc >"$MISMATCH" 2>/dev/null
+    ( cd "$WORK" && sha256sum "$(basename "$MISMATCH")" > "assetflow-mismatch.dump.sha256" )
+    run_restore "$MISMATCH" 1 "migration history mismatch is refused"
+fi
+
+# Incorrect constraints: a dump whose migration history claims the constraint
+# migrations ran, but whose objects are absent. This is the dangerous case — the
+# schema lies about what it enforces. Migrations will not re-run, so the check
+# must fail rather than pass on a database that has lost its guarantees.
+if [ -s "$CURRENT_DUMP" ] && [ "$OLDER_OK" = true ]; then
+    docker exec -i "$SRC" psql -U assetflow -d assetflow -q -v ON_ERROR_STOP=1 >${WORK}/lie.log 2>&1 <<'SQL'
+DROP INDEX IF EXISTS "Allocation_one_active_per_asset";
+ALTER TABLE "Booking" DROP CONSTRAINT IF EXISTS "Booking_no_overlap";
+SQL
+    LIE="${WORK}/assetflow-lie.dump"
+    docker exec "$SRC" pg_dump -U assetflow -d assetflow --no-owner --no-privileges -Fc >"$LIE" 2>/dev/null
+    ( cd "$WORK" && sha256sum "$(basename "$LIE")" > "assetflow-lie.dump.sha256" )
+    # History still says applied, so this must be rejected.
+    run_restore "$LIE" 1 "constraints missing despite applied history is refused"
+fi
+
+# ------------------------------------------------- interruptions and cleanup --
+say "== interruption leaves nothing behind =="
+if [ -s "$CURRENT_DUMP" ]; then
+    # Start a restore and interrupt it. The trap must remove the run-owned
+    # network, volume and container even though the run never finished.
+    if [ -f "${WORK}/assetflow-current.dump.sha256" ]; then
+        RESTORE_MIGRATE_IMAGE="$MIGRATE_IMAGE" LOG_FILE=/dev/null \
+            bash infra/scripts/restore-verify.sh --from "$CURRENT_DUMP" >"${WORK}/interrupt.log" 2>&1 &
+        inter=$!
+        sleep 6
+        kill -TERM "$inter" 2>/dev/null || true
+        wait "$inter" 2>/dev/null
+        sleep 2
+        leaked=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
+        leaked_v=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+        if [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ]; then
+            record "interrupted run cleans up" PASS "SIGTERM handled"
+        else
+            record "interrupted run cleans up" FAIL "containers=${leaked} volumes=${leaked_v}"
+        fi
+    fi
+fi
+
+# ------------------------------------------------- owned-resource cleanup ----
+say "== owned-resource cleanup =="
+leftover_containers=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
+leftover_volumes=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+leftover_networks=$(docker network ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+if [ "$leftover_containers" -eq 0 ] && [ "$leftover_volumes" -eq 0 ] && [ "$leftover_networks" -eq 0 ]; then
+    record "no restore resources leaked" PASS "containers=0 volumes=0 networks=0"
+else
+    record "no restore resources leaked" FAIL "containers=${leftover_containers} volumes=${leftover_volumes} networks=${leftover_networks}"
+fi
+
+# -------------------------------------------------------------- verdict ------
+if [ "$FAIL" -eq 0 ]; then
+    STATUS=PASS
+else
+    STATUS=FAIL
+fi
+emit_results "$STATUS"
+write_summary "$STATUS"
+
+say ""
+say "passed=${PASS} failed=${FAIL} skipped=${SKIP} overall=${STATUS}"
+say "results written to ${RESULTS}"
+[ "$STATUS" = PASS ]
