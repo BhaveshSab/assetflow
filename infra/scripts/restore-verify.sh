@@ -194,14 +194,25 @@ docker create --name "$CONTAINER" --pull never --network "$NETWORK" --network-al
 DB_CREATED=true
 docker start "$CONTAINER" >/dev/null
 
-for _ in $(seq 1 60); do
-    if docker exec "$CONTAINER" pg_isready -U "$RESTORE_USER" -d "$RESTORE_DB" >/dev/null 2>&1; then
-        break
-    fi
+# Wait for the database to accept a real TCP connection, not merely for
+# pg_isready to answer. On a fresh volume initdb runs a *temporary* server on the
+# unix socket and then restarts; pg_isready can succeed against that temporary
+# server, so a fast machine would break out of the loop and then race the
+# restart — the next command saw "the database system is shutting down". Asking
+# the target database a real query over TCP (-h 127.0.0.1) cannot succeed until
+# the real server is up, which is the condition every later step depends on.
+db_ready() {
+    docker exec "$CONTAINER" psql -h 127.0.0.1 -U "$RESTORE_USER" -d "$RESTORE_DB" -tAc 'select 1' \
+        >/dev/null 2>&1
+}
+ready=false
+for _ in $(seq 1 90); do
+    if db_ready; then ready=true; break; fi
+    # A container that exited will never answer; stop waiting on it.
+    if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != true ]; then break; fi
     sleep 1
 done
-docker exec "$CONTAINER" pg_isready -U "$RESTORE_USER" -d "$RESTORE_DB" >/dev/null \
-    || die "the throwaway database did not start"
+[ "$ready" = true ] || die "the throwaway database did not start"
 
 say "+ restoring the dump"
 docker cp "$DUMP_FILE" "${CONTAINER}:/tmp/restore.dump"

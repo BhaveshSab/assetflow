@@ -68,17 +68,23 @@ def main():
         SELECT pg_get_constraintdef(oid)
         FROM pg_constraint WHERE conname = 'Booking_no_overlap'""")
     print(f'  raw Booking_no_overlap: {rendered}')
-    if '"assetId"' not in rendered or '"status"' not in rendered:
-        problems.append('expected quoted identifiers in the rendered EXCLUDE definition')
-    if '::"BookingStatus"' not in rendered:
-        problems.append('expected the enum cast in the rendered EXCLUDE definition')
+    # PostgreSQL only quotes an identifier when it must. These columns are
+    # lowercase and not reserved, so the rendered definition may omit quotes
+    # even though the migration wrote them. Accept either form; what matters is
+    # that the tokens are present and the shipped check accepts the result.
+    for token, label in (('assetId', 'assetId column'), ('status', 'status column'),
+                         ('CANCELLED', 'CANCELLED filter'), ('BookingStatus', 'enum cast')):
+        if token not in rendered:
+            problems.append(f'expected the {label} in the rendered EXCLUDE definition')
 
     idx = psql(r"""
         SELECT pg_get_expr(indpred, indrelid) FROM pg_index
         WHERE indexrelid = to_regclass('public."Allocation_one_active_per_asset"')""")
     print(f'  raw allocation predicate: {idx}')
-    if '"status"' not in idx:
-        problems.append('expected a quoted column in the rendered index predicate')
+    for token, label in (('status', 'status column'), ('ACTIVE', 'ACTIVE literal'),
+                         ('AllocationStatus', 'enum cast')):
+        if token not in idx:
+            problems.append(f'expected the {label} in the rendered index predicate')
 
     print('== 3. each assertion still fails when its object is weakened ==')
     # Work on private scratch databases so the good database stays good.
