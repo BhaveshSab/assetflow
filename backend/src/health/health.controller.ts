@@ -1,9 +1,10 @@
-import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Res } from '@nestjs/common';
 
 import { SkipStartupCheck } from '../common/decorators/skip-startup-check.decorator';
 import { RedisService } from '../common/redis/redis.service';
 import { startupStatus } from '../config/startup-status';
-import { PrismaService } from '../prisma/prisma.service';
+import type { Response } from 'express';
+import { DatabaseReadinessService } from './database-readiness.service';
 
 /**
  * Public health endpoints — `GET /api/health` and `GET /api/health/ready`.
@@ -16,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 @Controller('health')
 export class HealthController {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly databaseReadiness: DatabaseReadinessService,
     private readonly redis: RedisService,
   ) {}
 
@@ -27,20 +28,19 @@ export class HealthController {
   async check() {
     const startupError = startupStatus.getError();
 
-    let database: 'up' | 'down' = 'down';
-    let databaseError: string | null = null;
-    try {
-      await this.prisma.$queryRaw`SELECT 1`;
-      database = 'up';
-    } catch (err) {
-      databaseError =
-        err instanceof Error ? err.message.split('\n')[0] : String(err);
-    }
+    const { database, schema } = await this.databaseReadiness.check();
+    const databaseError =
+      database === 'down'
+        ? 'Database is temporarily unavailable.'
+        : schema === 'outdated'
+          ? 'Database migrations or schema permissions require attention.'
+          : null;
 
-    const ok = !startupError && database === 'up';
+    const ok = !startupError && database === 'up' && schema === 'current';
     return {
       status: ok ? 'ok' : 'degraded',
       database,
+      schema,
       // Where the rate-limit counters live: `redis` = shared by every
       // instance, `memory` = per process.
       rateLimitStore: this.redis.enabled ? 'redis' : 'memory',
@@ -66,23 +66,22 @@ export class HealthController {
   @Get('ready')
   @SkipStartupCheck()
   @HttpCode(HttpStatus.OK)
-  async ready() {
+  async ready(@Res({ passthrough: true }) response: Response) {
     const startupError = startupStatus.getError();
 
-    let database: 'up' | 'down' = 'down';
-    let databaseError: string | null = null;
-    try {
-      await this.prisma.$queryRaw`SELECT 1`;
-      database = 'up';
-    } catch (err) {
-      databaseError =
-        err instanceof Error ? err.message.split('\n')[0] : String(err);
-    }
-
-    const ready = !startupError && database === 'up';
+    const { database, schema } = await this.databaseReadiness.check();
+    const ready = !startupError && database === 'up' && schema === 'current';
+    const databaseError =
+      database === 'down'
+        ? 'Database is temporarily unavailable.'
+        : schema === 'outdated'
+          ? 'Database migrations or schema permissions require attention.'
+          : null;
+    response.status(ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
     return {
       status: ready ? 'ready' : 'not-ready',
       database,
+      schema,
       ...(databaseError ? { databaseError } : {}),
       ...(startupError ? { startupError } : {}),
       timestamp: new Date().toISOString(),

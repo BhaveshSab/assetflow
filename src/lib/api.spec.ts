@@ -45,7 +45,9 @@ describe("api client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      const result = await apiGet<{ items: unknown[]; total: number }>("/assets");
+      const result = await apiGet<{ items: unknown[]; total: number }>(
+        "/assets",
+      );
       expect(result.total).toBe(0);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(String(fetchMock.mock.calls[0][0])).toContain("/assets");
@@ -77,14 +79,54 @@ describe("api client", () => {
       await expect(apiGet("/assets")).rejects.toThrow("name must be longer");
     });
 
+    it("shows a safe server error with a reference instead of a generic 500", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue({
+            ok: false,
+            status: 500,
+            headers: new Headers({ "x-request-id": "request-123" }),
+            json: async () => ({ message: "Internal server error" }),
+          }),
+      );
+      await expect(apiGet("/assets")).rejects.toThrow(
+        "The server could not load this data. Please retry. (reference: request-123)",
+      );
+    });
+    it("preserves actionable migration errors and their reference", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue({
+            ok: false,
+            status: 503,
+            json: async () => ({
+              message: "Apply the database migrations",
+              requestId: "migration-123",
+            }),
+          }),
+      );
+      await expect(apiGet("/bookings")).rejects.toThrow(
+        "Apply the database migrations (reference: migration-123)",
+      );
+    });
     it("explains an unreachable backend", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("failed")));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new TypeError("failed")),
+      );
 
       await expect(apiGet("/assets")).rejects.toThrow(/Could not reach/);
     });
 
     it("names both causes of a failed request: API down, or this page not allowed", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("failed")));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new TypeError("failed")),
+      );
 
       // A CORS block and a dead API are the same event in the browser, so the
       // message must not assert one of them.
@@ -95,13 +137,21 @@ describe("api client", () => {
 
     it("drops the session and sends the user back to the sign-in page on a 401", async () => {
       localStorage.setItem("token", "expired-token");
-      localStorage.setItem("session", JSON.stringify({ token: "expired-token" }));
+      localStorage.setItem(
+        "session",
+        JSON.stringify({ token: "expired-token" }),
+      );
 
       const assign = vi.fn();
       // jsdom cannot navigate, so the redirect is observed instead.
       Object.defineProperty(window, "location", {
         configurable: true,
-        value: { ...window.location, pathname: "/Dashboard", search: "", assign },
+        value: {
+          ...window.location,
+          pathname: "/Dashboard",
+          search: "",
+          assign,
+        },
       });
 
       vi.stubGlobal(

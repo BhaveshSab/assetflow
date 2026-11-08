@@ -1,4 +1,4 @@
-import { BASE_URL } from "@/lib/api";
+import { apiGet, unwrapList } from "@/lib/api";
 import { fieldStr, type ApiRecord } from "@/types/api";
 
 /**
@@ -32,12 +32,8 @@ const STATUS_LABEL: Record<string, string> = {
  * GET /assets → { items: [...], total }.
  */
 export async function getAssets(): Promise<Asset[]> {
-  const res = await fetch(`${BASE_URL}/assets`, {
-    headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch assets (${res.status})`);
-  const data = await res.json();
-  const items = Array.isArray(data) ? data : (data.items ?? []);
+  const data = await apiGet<{ items?: ApiRecord[] } | ApiRecord[]>("/assets");
+  const items = unwrapList(data);
   return items.map((a: ApiRecord) => ({
     id: fieldStr(a, "", "id"),
     name: fieldStr(a, "Unnamed asset", "name"),
