@@ -3,6 +3,13 @@
 #   api:4000            -> the application metrics (/api/metrics)
 #   node-exporter:9100  -> CPU, memory, disk, network of the host
 #   postgres-exporter   -> database connections, transactions, locks
+#   cadvisor:8080       -> per-container memory/CPU, so an imminent OOM kill is
+#                          visible before it happens
+#   blackbox-exporter   -> probes the public HTTPS endpoint and reports the
+#                          certificate's expiry date
+#
+# This file is a TEMPLATE: render.sh substitutes PUBLIC_BASE_URL at start-up
+# and writes the real configuration to /tmp/prometheus.yml.
 #
 # Everything is scraped over the internal Docker network — no metric endpoint
 # is reachable from the internet.
@@ -42,27 +49,29 @@ scrape_configs:
         labels:
           service: postgres
 
+  # Per-container resource use. node-exporter sees the host as one box; this is
+  # what shows "the API container is at 94% of its memory limit".
   - job_name: cadvisor
     static_configs:
       - targets: ['cadvisor:8080']
+        labels:
+          service: cadvisor
 
-  - job_name: blackbox-https
+  # The certificate probe. Prometheus asks the blackbox exporter to fetch
+  # the PUBLIC_BASE_URL target; the exporter answers with probe_* metrics whose
+  # `instance` label is the probed URL.
+  - job_name: blackbox-tls
     metrics_path: /probe
     params:
       module: [https_2xx]
-    file_sd_configs:
-      - files: [/etc/prometheus/targets/https.yml]
+    static_configs:
+      - targets: ['${PUBLIC_BASE_URL}']
+        labels:
+          service: tls
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: blackbox:9115
-
-  # Empty file by default: enabling jobs must not create a permanently DOWN
-  # target for deployments that deliberately use the legacy sweeper.
-  - job_name: assetflow-jobs
-    metrics_path: /metrics
-    file_sd_configs:
-      - files: [/etc/prometheus/targets/jobs.yml]
+        replacement: blackbox-exporter:9115

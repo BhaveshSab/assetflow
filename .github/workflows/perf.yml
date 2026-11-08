@@ -1,0 +1,176 @@
+# The load test, on a timer.
+#
+# `infra/scripts/k6-load.js` is a real load test with thresholds; run by hand it
+# is a demo, run on a schedule it is a regression test. This workflow boots the
+# API against a throwaway Postgres + Redis, seeds a load-test fixture (one
+# account per virtual user, so the run measures the API and not the rate
+# limiter), and fails if p95 or the error rate breaks the budget.
+#
+# Nightly drift is the point: a slow query or an extra round trip per request
+# shows up here the night it lands, not the day a user notices.
+name: Performance
+
+on:
+  schedule:
+    # 03:15 UTC — after the nightly backup (02:30) on the host.
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: 'Virtual users'
+        required: false
+        default: '10'
+      duration:
+        description: 'How long the load runs (k6 duration syntax)'
+        required: false
+        default: '60s'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+env:
+  # --- the database the API talks to -------------------------------------
+  DATABASE_URL: postgresql://assetflow:assetflow@127.0.0.1:5432/assetflow
+  DATABASE_URL_UNPOOLED: postgresql://assetflow:assetflow@127.0.0.1:5432/assetflow
+  REDIS_URL: redis://127.0.0.1:6379
+  JWT_SECRET: ci-load-test-only-not-a-real-secret
+  # `test` keeps the reminder timer and the SMTP transport out of the run.
+  NODE_ENV: test
+  PORT: '4000'
+  # --- the run -----------------------------------------------------------
+  VUS: ${{ github.event.inputs.vus || '10' }}
+  DURATION: ${{ github.event.inputs.duration || '60s' }}
+  # Budgets. They are deliberately looser than the production alerts (p95 1 s)
+  # because a shared GitHub runner is slower and noisier than the server.
+  P95_THRESHOLD_MS: '800'
+  ERROR_RATE_THRESHOLD: '0.01'
+  # Generated per run; the accounts are useless after it.
+  LOADTEST_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-loadtest
+
+jobs:
+  load:
+    name: k6 (thresholds gate the run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: assetflow
+          POSTGRES_PASSWORD: assetflow
+          POSTGRES_DB: assetflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U assetflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install the dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate the Prisma client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Apply the migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      - name: Seed the demo data
+        working-directory: backend
+        run: npm run seed
+
+      # One account per virtual user: the API limits a client to 300 requests a
+      # minute, so a run that reuses one login measures the limiter instead of
+      # the stack.
+      - name: Seed the load-test fixture
+        working-directory: backend
+        run: npm run seed:loadtest -- --users "$VUS" --assets 500
+
+      - name: Build
+        working-directory: backend
+        run: npm run build
+
+      - name: Start the API
+        working-directory: backend
+        run: |
+          node dist/main.js > /tmp/api.log 2>&1 &
+          echo "$!" > /tmp/api.pid
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/health/ready" >/dev/null; then
+              echo "API is ready"
+              curl -fsS "http://127.0.0.1:${PORT}/api/health/ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error title=API did not start::see /tmp/api.log"
+          tail -100 /tmp/api.log
+          exit 1
+
+      - name: Install k6
+        run: |
+          curl -sSL "https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz" | tar xz
+          sudo mv k6-v0.54.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Run the load test
+        run: |
+          set -o pipefail
+          k6 run \
+            -e BASE_URL="http://127.0.0.1:${PORT}" \
+            -e VUS="$VUS" \
+            -e DURATION="$DURATION" \
+            -e LOADTEST_USERS="$VUS" \
+            -e LOADTEST_PASSWORD="$LOADTEST_PASSWORD" \
+            -e P95_THRESHOLD_MS="$P95_THRESHOLD_MS" \
+            -e ERROR_RATE_THRESHOLD="$ERROR_RATE_THRESHOLD" \
+            -e SLEEP=1 \
+            -e TAG=ci \
+            --summary-export /tmp/k6-summary.json \
+            infra/scripts/k6-load.js | tee /tmp/k6.log
+
+      - name: Show the API log when the run failed
+        if: failure()
+        run: tail -200 /tmp/api.log
+
+      - name: Keep the k6 output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-${{ github.run_id }}
+          path: |
+            /tmp/k6.log
+            /tmp/k6-summary.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Stop the API
+        if: always()
+        run: |
+          if [ -f /tmp/api.pid ]; then kill "$(cat /tmp/api.pid)" || true; fi

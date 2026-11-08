@@ -111,6 +111,56 @@ jobs:
             }
           "
 
+  alerts:
+    name: Alerts (promtool)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Both commands run inside the same Prometheus image the host deploys, so
+      # a rule that passes here parses there. `check rules` catches a typo in
+      # an expression; `test rules` catches a metric that was renamed — a rule
+      # that can never fire looks exactly like a rule that never needed to.
+      - name: Check the alert rules
+        run: |
+          docker run --rm \
+            -v "$PWD/infra/prometheus/rules:/rules:ro" \
+            --entrypoint promtool \
+            prom/prometheus:v2.54.1 \
+            check rules /rules/assetflow.yml
+
+      # promtool prints the whole failing case as one long line per problem;
+      # replaying it as annotations puts the message on the pull request instead
+      # of three clicks into the log.
+      - name: Test the alert rules
+        run: |
+          set +e
+          output=$(docker run --rm \
+            -v "$PWD/infra/prometheus/rules:/rules:ro" \
+            --entrypoint promtool \
+            prom/prometheus:v2.54.1 \
+            test rules /rules/assetflow.test.yml 2>&1)
+          code=$?
+          echo "$output"
+          if [ "$code" -ne 0 ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=promtool::${line}"
+            done <<< "$output"
+          fi
+          exit $code
+
+      # The blackbox exporter's config is small but a typo silently stops the
+      # certificate probe, so it is validated in the same image that runs it.
+      - name: Check the blackbox configuration
+        run: |
+          docker run --rm \
+            -v "$PWD/infra/blackbox:/etc/blackbox:ro" \
+            --entrypoint /bin/blackbox_exporter \
+            prom/blackbox-exporter:v0.25.0 \
+            --config.file=/etc/blackbox/blackbox.yml --config.check
+
   frontend:
     name: Frontend (lint, type check, tests, build)
     runs-on: ubuntu-latest
