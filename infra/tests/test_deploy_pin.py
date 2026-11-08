@@ -11,7 +11,7 @@ TARGET = 'b' * 40
 
 
 class DeployCommitPinTests(unittest.TestCase):
-    def run_guard(self, mode='forward', image=None):
+    def run_guard(self, mode='forward', image=None, web_sha=TARGET):
         workflow = yaml.safe_load((ROOT / '.github/workflows/deploy.yml').read_text())
         run = next(s['run'] for s in workflow['jobs']['deploy']['steps'] if s.get('name') == 'Deploy')
         fragment = run[run.index('target_commit="${image##*:}"'):run.index('chmod +x')]
@@ -36,7 +36,9 @@ esac
             stub.chmod(0o755)
             calls = path / 'calls'
             env = {**os.environ, 'PATH': f'{path}:{os.environ["PATH"]}', 'MODE': mode,
-                   'CALLS': str(calls), 'HEAD_FILE': str(head), 'image': image or f'ghcr.io/example/api:{TARGET}'}
+                   'CALLS': str(calls), 'HEAD_FILE': str(head), 'image': image or f'ghcr.io/example/api:{TARGET}',
+                   'migrate_image': f'ghcr.io/example/migrate:{TARGET}',
+                   'web_image': f'ghcr.io/example/web:{web_sha}'}
             result = subprocess.run(['bash', '-uc', fragment], env=env, text=True, capture_output=True)
             return result, calls.read_text() if calls.exists() else '', head.read_text()
 
@@ -66,6 +68,12 @@ esac
             with self.subTest(mode=mode):
                 result, _, _ = self.run_guard(mode)
                 self.assertEqual(result.returncode, 4)
+
+    def test_mismatched_web_release_is_rejected_before_git(self):
+        result, calls, _ = self.run_guard(web_sha='c' * 40)
+        self.assertEqual(result.returncode, 4)
+        self.assertEqual(calls, '')
+        self.assertIn('same commit SHA', result.stdout)
 
     def test_mutable_image_tag_is_rejected_before_git(self):
         result, calls, _ = self.run_guard(image='ghcr.io/example/api:latest')
