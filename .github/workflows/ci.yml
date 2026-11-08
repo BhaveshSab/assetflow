@@ -62,7 +62,13 @@ jobs:
         run: npm run test:unit
 
       - name: End-to-end tests
-        run: npm run test:e2e
+        run: |
+          status=0
+          npm run test:e2e -- --json --outputFile=/tmp/e2e-results.json || status=$?
+          # Surface assertion failures even when Actions blob logs cannot be
+          # downloaded. Preserve Jest's exit status; never retry failures away.
+          node scripts/annotate-test-failures.cjs /tmp/e2e-results.json
+          exit "$status"
 
       - name: Build
         run: npm run build
