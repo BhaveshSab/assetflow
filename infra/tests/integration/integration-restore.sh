@@ -27,7 +27,7 @@ RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 PREFIX="assetflow-it-${RUN_ID}"
 PG_IMAGE="${POSTGRES_IMAGE:-postgres:16.4-alpine}"
 # Debian-based, so a client container can add python3 and psql without apk.
-PG_CLIENT_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:16.4}"
+PG_CLIENT_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:16.4-bookworm}"
 SHA="$(git rev-parse HEAD)"
 MIGRATE_IMAGE="${RESTORE_MIGRATE_IMAGE:-assetflow-it-migrate:${SHA}}"
 WORK="$(mktemp -d)"
@@ -155,9 +155,15 @@ VOL="${PREFIX}-vol"
 SRC="${PREFIX}-src"
 docker network create --internal "$NET" >/dev/null || { record "create network" FAIL; emit_results FAIL; write_summary FAIL; exit 1; }
 docker volume create "$VOL" >/dev/null
-docker run -d --name "$SRC" --pull never --network "$NET" --network-alias src-db \
+# Pull is allowed for these disposable test images: the runner has no preloaded
+# Postgres, and nothing here is a production artefact. ($PG_IMAGE and
+# $PG_CLIENT_IMAGE are the only images this harness is permitted to fetch.)
+if ! docker run -d --name "$SRC" --network "$NET" --network-alias src-db \
     -e POSTGRES_USER=assetflow -e POSTGRES_PASSWORD="it-${RUN_ID}" -e POSTGRES_DB=assetflow \
-    -v "${VOL}:/var/lib/postgresql/data" "$PG_IMAGE" >/dev/null
+    -v "${VOL}:/var/lib/postgresql/data" "$PG_IMAGE" >"${WORK}/pg-run.log" 2>&1; then
+    record "start postgres" FAIL "$(tail -3 "${WORK}/pg-run.log" | tr '\n' ' ')"
+    emit_results FAIL; write_summary FAIL; exit 1
+fi
 DB="$SRC"
 
 for _ in $(seq 1 60); do
@@ -165,7 +171,7 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 docker exec "$SRC" pg_isready -U assetflow -d assetflow >/dev/null 2>&1 \
-    || { record "postgres ready" FAIL "did not become ready"; emit_results FAIL; write_summary FAIL; exit 1; }
+    || { record "postgres ready" FAIL "did not become ready: $(docker logs --tail 5 "$SRC" 2>&1 | tr '\n' ' ')"; emit_results FAIL; write_summary FAIL; exit 1; }
 record "postgres ready" PASS "$PG_IMAGE"
 
 # Apply the real migrations, then insert synthetic rows.
@@ -205,12 +211,11 @@ say "== verifying the shipped constraint SQL against real PostgreSQL =="
 # both psql and python3, on the same isolated network. The database itself keeps
 # no published port.
 CONSTRAINT_OK=false
-if docker run --rm --pull never --network "$NET" \
+if docker run --rm --network "$NET" \
     -e RESTORE_TEST_DB_URL="$SRC_URL" -e PGPASSWORD="it-${RUN_ID}" \
     -v "${REPO}:/repo:ro" -w /repo --entrypoint bash "${PG_CLIENT_IMAGE}" -c '
-        export DEBIAN_FRONTEND=noninteractive
-        (apt-get update -qq && apt-get install -y -qq postgresql-client python3) >/dev/null 2>&1 || true
-        command -v psql >/dev/null && command -v python3 >/dev/null || { echo "missing psql or python3 in the client container"; exit 3; }
+        command -v psql >/dev/null || { echo "missing psql in the client container"; exit 3; }
+        command -v python3 >/dev/null || { echo "missing python3 in the client container"; exit 3; }
         python3 /repo/infra/tests/integration/verify-constraint-sql.py' >"${WORK}/constraint.log" 2>&1
 then
     CONSTRAINT_OK=true
