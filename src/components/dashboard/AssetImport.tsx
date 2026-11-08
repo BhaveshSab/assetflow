@@ -26,6 +26,7 @@ export default function AssetImport({
     "name,categoryId,serialNumber,location,condition,isBookable\n",
   );
   const [preview, setPreview] = useState<Preview>();
+  const [error, setError] = useState("");
   const [categories, setCategories] = useState<{ id: string; name: string }[]>(
     [],
   );
@@ -45,7 +46,6 @@ export default function AssetImport({
     };
   }, []);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     setJobs(await apiGet<Job[]>("/asset-imports"));
