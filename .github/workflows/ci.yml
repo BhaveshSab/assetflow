@@ -408,9 +408,17 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-results
-          infra/tests/integration/integration-restore.sh "$PWD" 2>&1 | tee test-results/restore-integration.log
-          # The harness writes JSON plus a text summary regardless of outcome.
-          test -s test-results/restore-integration.txt
+          rc=0
+          infra/tests/integration/integration-restore.sh "$PWD" 2>&1 | tee test-results/restore-integration.log || rc=$?
+          # The harness's own exit status is the verdict; summarise it plainly.
+          echo "harness exit status: ${rc}"
+          if [ -f test-results/restore-integration.txt ]; then
+            cat test-results/restore-integration.txt
+          else
+            echo "::error title=restore integration::the harness wrote no result summary"
+            exit 1
+          fi
+          exit "$rc"
 
       - name: Publish the outcome in the job summary
         if: always()
