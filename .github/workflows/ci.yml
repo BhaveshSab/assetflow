@@ -324,6 +324,22 @@ jobs:
             -e LOADTEST_USERS -e LOADTEST_PASSWORD -e TAG=ci \
             -e SUMMARY_FILE=test-results/k6-summary.txt \
             grafana/k6:0.54.0 run infra/scripts/k6-load.js
+          node --input-type=module - <<'VERIFY'
+          import fs from 'node:fs';
+          const raw = fs.readFileSync('test-results/k6-summary.txt', 'utf8');
+          const fields = Object.fromEntries(raw.trim().split('\n').map(line => line.split('=')));
+          const keys = ['p50_ms', 'p95_ms', 'p99_ms', 'max_ms', 'rps', 'requests', 'iterations', 'error_rate', 'checks_rate'];
+          for (const key of keys) {
+            if (!/^[0-9]+(?:\.[0-9]+)?$/.test(fields[key] || '')) {
+              throw new Error(`Missing or invalid measured k6 field: ${key}`);
+            }
+          }
+          if (+fields.p99_ms < +fields.p95_ms || +fields.max_ms < +fields.p99_ms) {
+            throw new Error('Inconsistent k6 latency percentiles');
+          }
+          console.log(`::notice title=k6 measured results::${keys.map(key => `${key}=${fields[key]}`).join(', ')}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Measured k6 regression results\n\n5 users, 45 seconds, disposable CI database. Not a capacity benchmark.\n\n\`\`\`text\n${raw}\`\`\`\n`);
+          VERIFY
       - name: Keep load-test evidence (including failed runs)
         if: always()
         uses: actions/upload-artifact@v4
