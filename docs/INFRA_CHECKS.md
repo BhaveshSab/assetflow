@@ -126,3 +126,33 @@ Re-run k6 to obtain a measured p99. An old artifact containing `p99_ms=0.0`
 from the fallback formatter cannot be repaired into a real percentile after
 those samples have been discarded. The existing CI load test remains the same
 5-user, 45-second regression workload, not a maximum-capacity test.
+
+
+## Late-merge repair (PR21 after PR26)
+
+The later merge `b27e01c` put a second `cadvisor` definition into Compose,
+removed the current public-probe/optional-worker scrape jobs, reintroduced a
+rule fixture in the production `rules/*.yml` directory, and enabled an older
+alert-test job. CI correctly rejected it. The deploy for `8fd80df` also failed:
+it had pulled an image tagged `8fd80df`, but `git pull origin main` fetched the
+newer broken Compose file from `b27e01c` on the server.
+
+The repair keeps one compatible exporter of each kind, restores the secure
+public probe and optional worker discovery, and preserves both alert feature
+sets (18 rules). PR21 tests are moved to `tests/legacy-alerts.test.yml` and
+corrected, not discarded: 96% for the critical-disk fixture, and minute 11
+for the five-minute API-restart hold after the second change at minute 6.
+The canonical threshold/recovery suite also continues to run.
+
+Deploy now fetches the exact SHA from its immutable image tag and verifies
+that the checkout HEAD matches it. It refuses tracked changes, a downgrade,
+or a divergent checkout rather than resetting the server or mixing versions.
+Older queued deploy runs may therefore fail safely when a newer checkout is
+already present. They must not be treated as evidence that the newest commit
+was deployed. This does not gate production deployments on CI; merge only the
+repair PR after its checks pass.
+
+The duplicate Performance nightly schedule is removed; manual Performance
+runs remain and the established CI nightly remains. Live exporter compatibility,
+certificate success and Telegram delivery still need on-host verification after
+a successful approved deployment.

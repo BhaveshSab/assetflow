@@ -1,0 +1,344 @@
+# Preserved PR21 coverage, with corrected disk fixture and hold timing.
+rule_files:
+- ../rules/assetflow.yml
+evaluation_interval: 1m
+tests:
+- name: every alert fires when its condition holds
+  interval: 1m
+  input_series:
+  - series: up{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: '0x75'
+  - series: process_start_time_seconds{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: 0x3 100x1 200x71
+  - series: assetflow_http_requests_total{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",status="500"}
+    values: 0+30x75
+  - series: assetflow_http_requests_total{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",status="200"}
+    values: 0+270x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.005"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.01"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.025"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.05"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.1"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.25"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.5"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="1"}
+    values: '0x75'
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="2.5"}
+    values: 0+95x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="5"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="10"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="+Inf"}
+    values: 0+100x75
+  - series: node_filesystem_avail_bytes{job="node",instance="node-exporter:9100",service="host",fstype="ext4",mountpoint="/"}
+    values: 10x75
+  - series: node_filesystem_size_bytes{job="node",instance="node-exporter:9100",service="host",fstype="ext4",mountpoint="/"}
+    values: 100x75
+  - series: node_memory_MemAvailable_bytes{job="node",instance="node-exporter:9100",service="host"}
+    values: 50x75
+  - series: node_memory_MemTotal_bytes{job="node",instance="node-exporter:9100",service="host"}
+    values: 1000x75
+  - series: node_cpu_seconds_total{job="node",instance="node-exporter:9100",service="host",cpu="0",mode="idle"}
+    values: 0+3x75
+  - series: pg_up{job="postgres",instance="postgres-exporter:9187",service="postgres"}
+    values: '0x75'
+  - series: pg_stat_activity_count{job="postgres",instance="postgres-exporter:9187",service="postgres",datname="assetflow",state="active"}
+    values: 100x75
+  - series: assetflow_backup_last_success_timestamp_seconds{job="node",instance="node-exporter:9100",service="host"}
+    values: -100000x75
+  - series: assetflow_throttle_store_degraded{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: 1x75
+  - series: container_memory_working_set_bytes{job="cadvisor",instance="cadvisor:8080",service="cadvisor",name="assetflow-api-1"}
+    values: 950000000x75
+  - series: container_spec_memory_limit_bytes{job="cadvisor",instance="cadvisor:8080",service="cadvisor",name="assetflow-api-1"}
+    values: 1000000000x75
+  - series: probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://assetflow.example",service="tls"}
+    values: 200000x75
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: AssetflowApiDown
+    exp_alerts:
+    - exp_labels:
+        alertname: AssetflowApiDown
+        job: assetflow-api
+        instance: api:4000
+        service: assetflow-api
+        severity: critical
+      exp_annotations:
+        summary: The AssetFlow API does not answer
+        description: Prometheus has been unable to scrape api:4000 for 2 minutes. The API is either down or the
+          deployment failed.
+        runbook: docs/RUNBOOK.md#api-down
+  - eval_time: 14m
+    alertname: AssetflowHighErrorRate
+    exp_alerts:
+    - exp_labels:
+        alertname: AssetflowHighErrorRate
+        severity: critical
+      exp_annotations:
+        summary: More than 5% of the requests fail with a 5xx
+        description: The error ratio has been above 5% for 10 minutes. Check the API logs for the failing routes.
+        runbook: docs/RUNBOOK.md#many-5xx-errors
+  - eval_time: 14m
+    alertname: AssetflowHighLatency
+    exp_alerts:
+    - exp_labels:
+        alertname: AssetflowHighLatency
+        severity: warning
+      exp_annotations:
+        summary: The 95th percentile of the API latency is above one second
+        description: p95 is 2.5s. Check the database (slow query?) and the host (CPU, IO).
+  - eval_time: 6m
+    alertname: HostDiskAlmostFull
+    exp_alerts:
+    - exp_labels:
+        alertname: HostDiskAlmostFull
+        job: node
+        instance: node-exporter:9100
+        service: host
+        fstype: ext4
+        mountpoint: /
+        severity: warning
+      exp_annotations:
+        summary: The disk of / is more than 85% full
+        description: 90% of disk space is used. Docker images and log files are the usual suspects.
+        runbook: docs/RUNBOOK.md#disk-full
+  - eval_time: 11m
+    alertname: HostMemoryPressure
+    exp_alerts:
+    - exp_labels:
+        alertname: HostMemoryPressure
+        job: node
+        instance: node-exporter:9100
+        service: host
+        severity: warning
+      exp_annotations:
+        summary: The host uses more than 90% of its memory
+  - eval_time: 20m
+    alertname: HostCpuSaturated
+    exp_alerts:
+    - exp_labels:
+        alertname: HostCpuSaturated
+        severity: warning
+      exp_annotations:
+        summary: The host CPU has been above 90% for 15 minutes
+  - eval_time: 3m
+    alertname: PostgresDown
+    exp_alerts:
+    - exp_labels:
+        alertname: PostgresDown
+        job: postgres
+        instance: postgres-exporter:9187
+        service: postgres
+        severity: critical
+      exp_annotations:
+        summary: PostgreSQL is not reachable
+        description: Every API request that touches the database is failing.
+        runbook: docs/RUNBOOK.md#database-down
+  - eval_time: 11m
+    alertname: PostgresConnectionsHigh
+    exp_alerts:
+    - exp_labels:
+        alertname: PostgresConnectionsHigh
+        severity: warning
+      exp_annotations:
+        summary: The database has more than 80 open connections
+  - eval_time: 16m
+    alertname: BackupTooOld
+    exp_alerts:
+    - exp_labels:
+        alertname: BackupTooOld
+        job: node
+        instance: node-exporter:9100
+        service: host
+        severity: critical
+      exp_annotations:
+        summary: The last successful backup is older than 26 hours
+        description: The nightly backup has not completed. Without it a restore would lose a day of data.
+        runbook: docs/RUNBOOK.md#backup-failed
+  - eval_time: 6m
+    alertname: ThrottleStoreDegraded
+    exp_alerts:
+    - exp_labels:
+        alertname: ThrottleStoreDegraded
+        job: assetflow-api
+        instance: api:4000
+        service: assetflow-api
+        severity: warning
+      exp_annotations:
+        summary: The shared rate-limit store (Redis) is unavailable
+        description: "The API falls back to the per-process limiter \u2014 the limit is no longer global."
+  - eval_time: 11m
+    alertname: ContainerMemoryNearLimit
+    exp_alerts:
+    - exp_labels:
+        alertname: ContainerMemoryNearLimit
+        job: cadvisor
+        instance: cadvisor:8080
+        service: cadvisor
+        name: assetflow-api-1
+        severity: warning
+      exp_annotations:
+        summary: Container assetflow-api-1 is above 90% of its memory limit
+        description: It will be OOM-killed if it keeps growing. Check the container's logs and the deploy that changed
+          it.
+        runbook: docs/RUNBOOK.md#container-memory
+  - eval_time: 11m
+    alertname: ApiRestarting
+    exp_alerts:
+    - exp_labels:
+        alertname: ApiRestarting
+        job: assetflow-api
+        instance: api:4000
+        service: assetflow-api
+        severity: warning
+      exp_annotations:
+        summary: The API has restarted more than once in the last hour
+        description: A restart loop is usually an OOM kill or a crash during boot. Check the container exit code
+          and the boot logs.
+        runbook: docs/RUNBOOK.md#api-restarting
+  - eval_time: 65m
+    alertname: TlsCertificateExpiringSoon
+    exp_alerts:
+    - exp_labels:
+        alertname: TlsCertificateExpiringSoon
+        job: blackbox-https
+        instance: https://assetflow.example
+        service: tls
+        severity: critical
+      exp_annotations:
+        summary: The TLS certificate expires in less than 3 days
+        description: Renewal is failing. Run infra/scripts/renew-cert.sh, then check the daily cron entry (17 3
+          * * *) and its log in LOG_DIR.
+        runbook: docs/RUNBOOK.md#tls-expiry
+  - eval_time: 10m
+    alertname: ApiRestarting
+    exp_alerts: []
+- name: a healthy stack raises nothing
+  interval: 1m
+  input_series:
+  - series: up{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: 1x75
+  - series: process_start_time_seconds{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: '0x75'
+  - series: assetflow_http_requests_total{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",status="500"}
+    values: '0x75'
+  - series: assetflow_http_requests_total{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",status="200"}
+    values: 0+300x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.005"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.01"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.025"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.05"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.1"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.25"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="0.5"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="1"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="2.5"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="5"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="10"}
+    values: 0+100x75
+  - series: assetflow_http_request_duration_seconds_bucket{job="assetflow-api",instance="api:4000",service="assetflow-api",method="GET",route="/api/assets",le="+Inf"}
+    values: 0+100x75
+  - series: node_filesystem_avail_bytes{job="node",instance="node-exporter:9100",service="host",fstype="ext4",mountpoint="/"}
+    values: 80x75
+  - series: node_filesystem_size_bytes{job="node",instance="node-exporter:9100",service="host",fstype="ext4",mountpoint="/"}
+    values: 100x75
+  - series: node_memory_MemAvailable_bytes{job="node",instance="node-exporter:9100",service="host"}
+    values: 800x75
+  - series: node_memory_MemTotal_bytes{job="node",instance="node-exporter:9100",service="host"}
+    values: 1000x75
+  - series: node_cpu_seconds_total{job="node",instance="node-exporter:9100",service="host",cpu="0",mode="idle"}
+    values: 0+57x75
+  - series: pg_up{job="postgres",instance="postgres-exporter:9187",service="postgres"}
+    values: 1x75
+  - series: pg_stat_activity_count{job="postgres",instance="postgres-exporter:9187",service="postgres",datname="assetflow",state="active"}
+    values: 10x75
+  - series: assetflow_backup_last_success_timestamp_seconds{job="node",instance="node-exporter:9100",service="host"}
+    values: 1000000000000x75
+  - series: assetflow_throttle_store_degraded{job="assetflow-api",instance="api:4000",service="assetflow-api"}
+    values: '0x75'
+  - series: container_memory_working_set_bytes{job="cadvisor",instance="cadvisor:8080",service="cadvisor",name="assetflow-api-1"}
+    values: 100000000x75
+  - series: container_spec_memory_limit_bytes{job="cadvisor",instance="cadvisor:8080",service="cadvisor",name="assetflow-api-1"}
+    values: 1000000000x75
+  - series: probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://assetflow.example",service="tls"}
+    values: 1000000000000x75
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: AssetflowApiDown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: AssetflowHighErrorRate
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: AssetflowHighLatency
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: HostDiskAlmostFull
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: HostDiskFull
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: HostMemoryPressure
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: HostCpuSaturated
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: PostgresDown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: PostgresConnectionsHigh
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: BackupTooOld
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: ThrottleStoreDegraded
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: ContainerMemoryNearLimit
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: ApiRestarting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: TlsCertificateExpiringSoon
+    exp_alerts: []
+- name: critical disk alert uses 96 percent rather than 90 percent
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{fstype="ext4",mountpoint="/"}
+    values: 4x5
+  - series: node_filesystem_size_bytes{fstype="ext4",mountpoint="/"}
+    values: 100x5
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: HostDiskFull
+    exp_alerts:
+    - exp_labels:
+        fstype: ext4
+        mountpoint: /
+        severity: critical
+      exp_annotations:
+        summary: The disk of / is almost full
+        description: "The host is about to stop writing \u2014 the database and the API will fail."

@@ -254,19 +254,13 @@ services:
     image: prom/prometheus:v2.54.1
     restart: unless-stopped
     user: "65534:65534"
-    # render.sh substitutes ${PUBLIC_BASE_URL} into the template and writes
-    # /tmp/prometheus.yml (the /etc mount is read-only). The same trick as
-    # alertmanager/render.sh.
-    entrypoint: ["/bin/sh", "/render.sh"]
-    environment:
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://nginx}
     command:
+      - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.template.yml:ro
-      - ./prometheus/render.sh:/render.sh:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
       - prometheus-data:/prometheus
@@ -389,7 +383,6 @@ services:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}?sslmode=disable"
     networks: [backend]
     logging: *default-logging
-
 
 networks:
   edge:

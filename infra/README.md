@@ -10,7 +10,7 @@ internet ──▶ nginx (443, TLS) ──┬──▶ api (4000) ──▶ post
 
 prometheus ──▶ api, node-exporter, postgres-exporter     (internal network)
            ──▶ cadvisor         (per-container memory)
-           ──▶ blackbox-exporter ▶ the public HTTPS endpoint (certificate expiry)
+           ──▶ blackbox          ▶ the public HTTPS endpoint (certificate expiry)
 grafana    ──▶ prometheus                                  (127.0.0.1 only)
 alertmanager ─▶ telegram
 ```
@@ -24,7 +24,7 @@ alertmanager ─▶ telegram
 | `docker/Dockerfile.api` | the API image — multi-stage, non-root, with a health check |
 | `docker/Dockerfile.nginx` | Nginx + the built SPA (same-origin API calls) |
 | `nginx/` | the TLS configuration, the security headers, the rate limit |
-| `prometheus/` | the scrape configuration (a template — `render.sh` substitutes `PUBLIC_BASE_URL`), the alert rules and their `promtool` tests |
+| `prometheus/` | the static scrape configuration, file-discovered public targets, production alert rules and separate `tests/` fixtures |
 | `blackbox/` | the probe configuration for the certificate-expiry metric |
 | `grafana/` | the provisioned dashboard |
 | `alertmanager/` | the Telegram receiver (a template — the credentials come from the environment) |
@@ -34,29 +34,42 @@ alertmanager ─▶ telegram
 
 ## The alert rules, and how they are tested
 
-`prometheus/rules/assetflow.yml` holds 14 rules in five groups:
+`prometheus/rules/assetflow.yml` holds 18 rules in seven groups. There is one
+cAdvisor service and one blackbox exporter (`blackbox`); their endpoints have
+no published ports. Prometheus contacts them over private Docker networks.
 
 | Group | Rules |
 |-------|-------|
-| `assetflow-api` | the API is down, >5% of requests are 5xx, p95 latency is over a second |
-| `assetflow-host` | disk >85% and >95%, memory >90%, CPU >90% for 15 minutes |
-| `assetflow-data` | Postgres unreachable, >80 connections, the nightly backup is stale, Redis (the rate-limit store) is down |
-| `assetflow-containers` | a container is above 90% of its memory limit (cAdvisor), the API restarts more than once an hour |
-| `assetflow-tls` | the HTTPS certificate has less than 3 days left (blackbox exporter) |
+| `assetflow-api` | API unavailable, 5xx ratio, p95 latency |
+| `assetflow-host` | disk warnings/critical, memory and CPU pressure |
+| `assetflow-data` | Postgres unavailable/connections, backup age, rate-limit Redis |
+| `assetflow-containers` | actual OOM events and service-level restart loop |
+| `assetflow-https` | certificate warning and public HTTPS readiness failure |
+| `assetflow-container-capacity` | near-limit memory and API process restarts |
+| `assetflow-tls` | critical certificate expiry below three days |
 
-Every rule has a test in `prometheus/rules/assetflow.test.yml`: one case that
-makes it fire and asserts the labels **and** the exact annotation text, and one
-"healthy stack" case that asserts it stays quiet. Prometheus compares
-annotations exactly, so a reworded sentence fails the test — that is on purpose,
-it is how a broken template gets caught.
+Production `rules/` contains only rules. All fixtures live under `tests/`:
+`alerts.test.yml` checks state/labels, timing, thresholds and recovery;
+`legacy-alerts.test.yml` preserves PR21 coverage including annotation text.
+The critical disk test uses 96% usage; 90% does not trigger the >95% rule.
+The legacy API restart condition becomes true at minute 6 and fires after its
+five-minute hold at minute 11, not minute 10.
+
+Run from the repository root:
 
 ```bash
-# the same two commands CI runs (no Prometheus install needed)
-docker run --rm -v "$PWD/rules:/rules:ro" --entrypoint promtool \
-  prom/prometheus:v2.54.1 check rules /rules/assetflow.yml
-docker run --rm -v "$PWD/rules:/rules:ro" --entrypoint promtool \
-  prom/prometheus:v2.54.1 test rules /rules/assetflow.test.yml
+docker run --rm -v "$PWD/infra/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+  prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+docker run --rm -v "$PWD/infra/prometheus:/etc/prometheus:ro" --entrypoint promtool \
+  prom/prometheus:v2.54.1 test rules /etc/prometheus/tests/alerts.test.yml /etc/prometheus/tests/legacy-alerts.test.yml
 ```
+
+The public URL is in `prometheus/targets/https.yml`, not a rendered
+`PUBLIC_BASE_URL` placeholder. TLS verification is enabled. If the certificate
+uses a short-lived IP profile, review the 14-day warning threshold against its
+lifetime before enabling notifications; the critical expiry rule is three days.
+CI runs the nightly isolated regression; `Performance` remains available as a
+manual workflow without scheduling a second duplicate nightly load test.
 
 Two things to know when editing:
 
@@ -143,7 +156,7 @@ on a server those ports are reachable through an SSH tunnel only.
 |---|---|
 | Host | AWS EC2 `t3.micro`, `ap-southeast-2b`, Ubuntu, 1 GB RAM, 30 GB gp3 |
 | Entry point | <https://13.55.90.25> — a Let's Encrypt **IP certificate** (SAN `IP:13.55.90.25`), 6-day lifetime, renewed daily by cron |
-| Containers | 9 running: nginx, api, postgres, redis, prometheus, grafana, alertmanager, node-exporter, postgres-exporter. The repo also defines `cadvisor` and `blackbox-exporter` (container memory + certificate expiry); they need one `deploy.sh` run to appear |
+| Containers | 9 running: nginx, api, postgres, redis, prometheus, grafana, alertmanager, node-exporter, postgres-exporter. The repo also defines `cadvisor` and `blackbox` (container memory + certificate expiry); they need one `deploy.sh` run to appear |
 | Health | `{"status":"ok","database":"up","rateLimitStore":"redis","redis":"up"}` |
 
 The measurements are in [`../docs/results`](../docs/results):
