@@ -28,7 +28,10 @@
 #
 # Environment:
 #   BASE_URL             the API origin, no /api (default http://localhost:8080).
-#                        On the server: BASE_URL=https://3.107.83.86.sslip.io
+#                        Point it at a disposable or staging stack. Production
+#                        origins are refused unless ALLOW_PRODUCTION_LOAD_TEST=yes
+#                        is set explicitly, because this run is designed to bend
+#                        the stack it targets.
 #   P95_THRESHOLD_MS     the p95 that counts as "bending" (default 1000)
 #   ERROR_RATE_THRESHOLD the error rate that counts as "bending" (default 0.01)
 #   SLEEP                seconds between requests per VU (default 1)
@@ -93,6 +96,21 @@ say "identities: ${SAY_MODE}"
 say "thresholds: p95 < ${P95_THRESHOLD_MS} ms, errors < ${ERROR_RATE_THRESHOLD}"
 say "report:     ${REPORT}"
 
+# ------------------------------------------------------- production guard --
+# This script exists to find the point where the stack bends. Pointing it at the
+# live deployment would create an outage to measure one, so production origins
+# are refused unless the operator names that intent explicitly. Staging and
+# disposable stacks are unaffected.
+PRODUCTION_HOSTS="13.55.90.25 13.55.90.25.sslip.io"
+load_host="${BASE_URL#*://}"
+load_host="${load_host%%/*}"
+load_host="${load_host%%:*}"
+for production_host in $PRODUCTION_HOSTS; do
+    if [ "$load_host" = "$production_host" ] && [ "${ALLOW_PRODUCTION_LOAD_TEST:-no}" != yes ]; then
+        die "${BASE_URL} is the production deployment. A saturation run must not target it; use a staging or disposable stack, or set ALLOW_PRODUCTION_LOAD_TEST=yes if that is genuinely intended."
+    fi
+done
+
 # ------------------------------------------------------------------ dry-run --
 if [ "$DRY_RUN" = true ]; then
     say ""
@@ -145,7 +163,19 @@ mkdir -p "$RUN_DIR"
 
 # The accounts exist only for this run: the password is generated here, used by
 # the seed and by k6, and never written down.
-LOADTEST_PASSWORD="$(base64 </dev/urandom | tr -d '/+=' | cut -c1-40)"
+#
+# The read must be bounded. `base64 </dev/urandom` reads an endless stream: when
+# the consumer stops, the writer keeps producing until it is killed, so the
+# assignment could spin a CPU indefinitely on a small host instead of returning
+# a password. 64 random bytes are plenty for 40 alphanumerics.
+new_loadtest_password() {
+    head -c 64 /dev/urandom | base64 | tr -d '/+=\n' | cut -c1-40
+}
+
+LOADTEST_PASSWORD="$(new_loadtest_password)"
+if [ "${#LOADTEST_PASSWORD}" -ne 40 ]; then
+    die "could not generate a load-test password (got ${#LOADTEST_PASSWORD} characters)"
+fi
 
 say "+ seeding the fixture (${LOADTEST_USERS} accounts, ${LOADTEST_ASSETS} assets)"
 compose run --rm -T \
