@@ -27,6 +27,14 @@ could leave Actions silent for a long time.
   Compose build definitions remain available outside this deployment workflow.
 - Remote output streams through `tee` as it happens; `pipefail` preserves
   connection/command failures. Secrets are not printed with shell tracing.
+- The remote payload is fully saved to a private temporary file before running
+  it with stdin closed. A child Compose client must never be able to read the
+  remaining deployment commands from an SSH `bash -s` command stream. `-T`
+  disables a TTY; it does not detach stdin. Temporary script cleanup is attempted
+  on normal exit/failure; forced kill can leave a temporary file.
+- After web activation, actual running API and Nginx image IDs must match their
+  pulled release references. A full-SHA completion marker is required by the
+  runner as well. An old but healthy frontend can no longer pass this step.
 - The server-side command has a **15 minute deadline**, SSH a longer 18 minute
   deadline, the deploy step 20 minutes, and the entire job 45 minutes. Server
   discovery and final verification also have bounded SSH calls and keepalives.
@@ -107,3 +115,29 @@ Check all of the following, not just green CI:
   work after login. Vercel must be verified separately on its own deployment.
 - Host load/swap activity settles after deployment. Do not run saturation tests
   on this small production server.
+
+
+## Green deploy, old frontend
+
+If the web release image is present locally but Nginx uses another image ID,
+readiness alone is insufficient. Compare selected nonsecret fields with
+`docker inspect --format '{{.Name}} {{.Config.Image}} {{.Image}}'` and
+`docker image inspect --format '{{.Id}}'` for the agreed release reference.
+Do not dump complete inspect output containing environment secrets.
+
+A reproduced cause is stdin consumption: when commands arrive through
+`ssh ... bash -s`, a child using stdin can consume the rest of the script,
+skipping web activation with exit 0. Compose migration and Prometheus exec
+calls now explicitly receive `/dev/null`, and the workflow independently
+isolates the entire script payload. Real-Bash transport regressions exercise
+stdin-draining children, stale API/web IDs and missing completion. Infra CI
+also runs a real Compose exec-without-TTY check in its own temporary project.
+This is a reproduced defect, not proof of the cause of a particular host run
+without its execution logs.
+
+The completion check proves that the running image IDs match the locally
+pulled release references at verification time. It does not replace public
+HTTPS, served-asset/cache checks, authenticated business tests or database
+integrity verification. Image-ID mismatch fails the workflow; this is not an
+automatic whole-stack rollback. Never merge or rerun to fix production without
+the agreed backup/recovery and approval gates.

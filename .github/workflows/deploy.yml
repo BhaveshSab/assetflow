@@ -181,8 +181,20 @@ jobs:
           # that actually contains the compose file.
           # Quote each remote argument: ssh otherwise joins arguments as shell
           # text. Keep the server deadline shorter than the client/step deadline.
+          # Read the complete payload before executing it. bash -s shares its
+          # command stream with child stdin; interactive Docker/SSH clients can
+          # otherwise swallow the remaining commands and return a false success.
+          remote_bootstrap=$(cat <<'BOOTSTRAP'
+          set -euo pipefail
+          umask 077
+          script=$(mktemp)
+          trap 'rm -f "$script"' EXIT
+          cat > "$script"
+          bash "$script" "$@" </dev/null
+          BOOTSTRAP
+          )
           printf -v remote_command '%q ' timeout --signal=TERM --kill-after=30s 15m \
-            bash -s -- "${CONFIGURED_PATH:-}" "$IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"
+            bash -c "$remote_bootstrap" -- "${CONFIGURED_PATH:-}" "$IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"
           # pipefail preserves SSH/timeout failure even when tee succeeds.
           # Do not enable xtrace: the host sources its private .env file.
           if ! timeout --kill-after=30s 18m ssh -T \
@@ -257,6 +269,26 @@ jobs:
           echo "=== activating prebuilt web image $web_image ==="
           WEB_IMAGE="$web_image" docker compose --project-directory infra -f infra/docker-compose.yml \
             up -d --no-deps --no-build --pull never --wait --wait-timeout 90 nginx || exit 7
+
+          # Healthy old containers must not make a release look successful.
+          # Compare actual running image IDs, not mutable tags or bundle dates.
+          for service in api nginx; do
+            reference="$image"
+            [ "$service" != nginx ] || reference="$web_image"
+            expected_id=$(docker image inspect --format '{{.Id}}' "$reference") || exit 8
+            container_id=$(docker compose --project-directory infra -f infra/docker-compose.yml ps -q "$service") || exit 8
+            if [ -z "$container_id" ]; then
+              echo "release verification failed: no running $service container"
+              exit 8
+            fi
+            actual_id=$(docker inspect --format '{{.Image}}' "$container_id") || exit 8
+            if [ -z "$expected_id" ] || [ "$actual_id" != "$expected_id" ]; then
+              echo "release verification failed for $service: expected=$expected_id actual=$actual_id"
+              exit 8
+            fi
+            echo "verified $service image $actual_id ($reference)"
+          done
+          printf 'ASSETFLOW_DEPLOY_COMPLETE %s\n' "$target_commit"
           REMOTE
           then
             echo "::error title=Deploy failed::Remote deployment failed, timed out, or lost its connection. Inspect the live log and server state before retrying; timeout does not guarantee rollback."
@@ -264,6 +296,11 @@ jobs:
             exit 1
           fi
 
+          # SSH exit 0 alone is insufficient if execution stopped prematurely.
+          if ! grep -Fxq "ASSETFLOW_DEPLOY_COMPLETE ${IMAGE##*:}" "$out"; then
+            echo "::error title=Incomplete deployment::Remote execution ended without verified API/web completion. Inspect the log and host; do not blindly retry."
+            exit 1
+          fi
           tail -40 "$out"
 
       - name: Verify the deployment on the host
