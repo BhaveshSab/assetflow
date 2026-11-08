@@ -179,6 +179,21 @@ if [ "$HEALTHY" != true ]; then
     exit 1
 fi
 
+# The worker uses the exact API tag and is explicitly opt-in. Do not run it
+# alongside the legacy booking sweeper when the flag is disabled.
+if [ "${JOBS_ENABLED:-false}" = true ]; then
+    say "+ reconciling the booking worker and dedicated queue Redis"
+    if [ "$DRY_RUN" = true ]; then
+        say "[dry-run] API_IMAGE=${IMAGE} compose --profile jobs up -d --no-deps --wait jobs-redis worker"
+    else
+        API_IMAGE="$IMAGE" compose --profile jobs up -d --no-deps --wait --wait-timeout 90 jobs-redis worker
+    fi
+else
+    if [ "$DRY_RUN" != true ]; then
+        compose --profile jobs stop worker
+    fi
+fi
+
 # Monitoring config is shipped with the checkout, not the API image. Reconcile
 # these services explicitly or a successful API deploy leaves the new exporters
 # absent and Prometheus using its old mounts/configuration.

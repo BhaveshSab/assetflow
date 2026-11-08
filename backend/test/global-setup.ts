@@ -88,7 +88,12 @@ export default async function globalSetup() {
   // mocked token verifier.
   delete process.env.GOOGLE_CLIENT_ID;
 
-  return async () => {
+  // Jest ignores a returned cleanup function from globalSetup. Share cleanup
+  // with its actual globalTeardown hook so lifecycle tests can exit naturally.
+  const state = globalThis as typeof globalThis & {
+    __assetflowTestCleanup?: () => Promise<void>;
+  };
+  state.__assetflowTestCleanup = async () => {
     await server.stop();
     await db.close();
   };

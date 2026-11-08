@@ -89,6 +89,15 @@ following the OS until it is changed — see [`docs/FRONTEND.md`](docs/FRONTEND.
 labelled fields, a measured contrast table —
 [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)).
 
+### Optional durable booking reminders
+
+A separate **BullMQ worker** can deliver booking reminders from a transactional
+PostgreSQL outbox. It uses a dedicated persistent Redis (not the rate-limit LRU
+store), retry-safe in-app notifications, revision fencing for reschedules and
+cancellations, and administrator-only failed-job inspection/retry endpoints.
+It is **disabled by default**; Vercel API handlers never start a worker.
+See [background jobs](docs/BACKGROUND_JOBS.md) for rollout, limits and tests.
+
 The full, line-by-line contract lives in [`backend/API.md`](backend/API.md).
 
 ---
