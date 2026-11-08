@@ -15,6 +15,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import type { AuthUser } from '../auth/jwt.strategy';
+import { LookupAssetDto } from './dto/lookup-asset.dto';
 import { AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { QueryAssetsDto } from './dto/query-assets.dto';
@@ -37,6 +38,12 @@ export class AssetsController {
   @Get()
   findAll(@Query() query: QueryAssetsDto) {
     return this.assets.findAll(query);
+  }
+
+  /** QR contains a public identifier, never an authentication token. */
+  @Get('lookup/by-tag')
+  lookup(@Query() query: LookupAssetDto) {
+    return this.assets.lookup(query.tag);
   }
 
   /** Full detail for one asset. Any authenticated user. */

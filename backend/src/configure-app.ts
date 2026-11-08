@@ -64,6 +64,7 @@ export function configureApp(app: INestApplication) {
 
   app.enableCors({
     credentials: true,
+    exposedHeaders: ['x-request-id', 'x-trace-id'],
     origin: origins.includes('*') ? true : origins,
   });
 

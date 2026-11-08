@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 
+import AssetScanner from "./AssetScanner";
 import { apiGet, apiSend } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
@@ -73,6 +74,18 @@ export default function AuditCycleModal({
   onChanged,
 }: AuditCycleModalProps) {
   const [items, setItems] = useState<AuditItemRow[]>([]);
+  const [scanned, setScanned] = useState<AuditItemRow>();
+  const scan = async (tag: string) => {
+    setScanned(undefined);
+    setError(null);
+    try {
+      setScanned(
+        await apiSend<AuditItemRow>(`/audits/${cycleId}/scan`, "POST", { tag }),
+      );
+    } catch (e) {
+      setError(errorMessage(e, "Scan failed"));
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyItem, setBusyItem] = useState<string | null>(null);
@@ -133,8 +146,13 @@ export default function AuditCycleModal({
         >
           <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
             <div>
-              <h2 id="audit-cycle-title" className="text-sm font-semibold text-ink">
-                {mode === "discrepancies" ? "Discrepancy report" : "Audit items"}
+              <h2
+                id="audit-cycle-title"
+                className="text-sm font-semibold text-ink"
+              >
+                {mode === "discrepancies"
+                  ? "Discrepancy report"
+                  : "Audit items"}
               </h2>
               <p className="mt-0.5 text-xs text-ink-subtle">{title}</p>
             </div>
@@ -149,14 +167,51 @@ export default function AuditCycleModal({
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
+            {!readOnly && mode === "items" && (
+              <section className="mb-5 space-y-3">
+                <AssetScanner
+                  onTag={(tag) => {
+                    void scan(tag);
+                  }}
+                />
+                {scanned && (
+                  <div className="border border-line p-3 rounded">
+                    <p>
+                      {scanned.asset?.name} · {scanned.asset?.assetTag}
+                    </p>
+                    <p>Confirm the physical finding:</p>
+                    {MARKS.map((result) => (
+                      <button
+                        key={result}
+                        className="mr-3 underline"
+                        onClick={() => {
+                          void mark(scanned.id, result).then(() =>
+                            setScanned(undefined),
+                          );
+                        }}
+                      >
+                        {result}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
             {loading && (
-              <p className="flex items-center gap-2 text-sm text-ink-muted" role="status">
+              <p
+                className="flex items-center gap-2 text-sm text-ink-muted"
+                role="status"
+              >
                 <Loader2 size={14} className="animate-spin" /> Loading…
               </p>
             )}
 
             {error && !loading && (
-              <p role="alert" className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+              <p
+                role="alert"
+                className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+              >
                 <AlertCircle size={14} /> {error}
               </p>
             )}
@@ -203,7 +258,9 @@ export default function AuditCycleModal({
                         <button
                           key={result}
                           type="button"
-                          disabled={busyItem === item.id || item.result === result}
+                          disabled={
+                            busyItem === item.id || item.result === result
+                          }
                           onClick={() => void mark(item.id, result)}
                           className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${
                             item.result === result

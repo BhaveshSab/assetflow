@@ -1,3 +1,5 @@
+import './telemetry/init';
+import { shutdownTracing } from './telemetry/init';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
@@ -13,6 +15,13 @@ async function bootstrap() {
   // Trust the platform's proxy (Vercel) so `req.ip` is the real client IP.
   configureApp(app);
 
+  app.enableShutdownHooks();
+  process.once('SIGTERM', () => {
+    void shutdownTracing();
+  });
+  process.once('SIGINT', () => {
+    void shutdownTracing();
+  });
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port, '0.0.0.0');
 

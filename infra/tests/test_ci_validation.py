@@ -52,13 +52,13 @@ exit 0
         self.assertIn('duplicate service: cadvisor', result.stdout)
         self.assertIn('::error title=compose::', result.stdout)
         self.assertIn('exit 17', result.stdout)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertIn('--profile jobs', calls[-1])
 
     def test_all_valid_variants_exit_zero(self):
         result, calls = self.run_check(False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertNotIn('::error', result.stdout)
 
 

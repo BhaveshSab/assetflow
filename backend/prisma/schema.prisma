@@ -163,6 +163,8 @@ model User {
   headedDepartments Department[] @relation("DepartmentHead")
 
   // Reverse relations
+  attachments Attachment[]
+  assetImports AssetImport[]
   allocationsHeld     Allocation[]         @relation("AllocationHolder")
   allocationsMade     Allocation[]         @relation("AllocatedBy")
   transfersRequested  TransferRequest[]    @relation("TransferRequestedBy")
@@ -263,6 +265,7 @@ model Asset {
   categoryId String
   category   AssetCategory @relation(fields: [categoryId], references: [id])
 
+  attachments Attachment[]
   allocations         Allocation[]
   transferRequests    TransferRequest[]
   bookings            Booking[]
@@ -524,6 +527,7 @@ model ActivityLog {
 
 // Durable delivery source of truth; Redis jobs can be rebuilt from these rows.
 model JobOutbox {
+  traceparent String?
   retryEpoch Int @default(0)
   id String @id @default(cuid())
   topic String
@@ -538,4 +542,43 @@ model JobOutbox {
   completedAt DateTime?
   @@unique([bookingId, version])
   @@index([status, availableAt, leaseUntil])
+}
+
+// Private objects: never expose object keys or public URLs through asset detail.
+model Attachment {
+  id String @id @default(cuid())
+  assetId String
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+  filename String
+  contentType String
+  size Int
+  checksum String
+  objectKey String @unique
+  versionId String?
+  status String @default("PENDING")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([assetId, status])
+}
+
+// Validated immutable preview. Only its ID and retry epoch go into Redis.
+model AssetImport {
+  id String @id @default(cuid())
+  ownerId String
+  owner User @relation(fields: [ownerId], references: [id])
+  rows Json
+  status String @default("DRAFT")
+  total Int
+  imported Int @default(0)
+  attempts Int @default(0)
+  retryEpoch Int @default(0)
+  leaseUntil DateTime?
+  lastError String?
+  traceparent String?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  @@index([status, leaseUntil])
+  @@index([ownerId, createdAt])
 }

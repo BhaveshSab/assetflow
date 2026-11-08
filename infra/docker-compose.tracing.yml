@@ -1,0 +1,27 @@
+# Explicit opt-in overlay. API and worker reach Jaeger over the private network.
+services:
+  api:
+    environment:
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: assetflow-api
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-0.1}
+  worker:
+    environment:
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: assetflow-worker
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    restart: unless-stopped
+    command: ["--config=/etc/jaeger/config.yml"]
+    volumes:
+      - ./jaeger/config.yml:/etc/jaeger/config.yml:ro
+    ports:
+      - "127.0.0.1:16686:16686"
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M

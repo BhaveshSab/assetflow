@@ -174,6 +174,11 @@ services:
     environment:
       NODE_ENV: production
       JOBS_ENABLED: ${JOBS_ENABLED:-false}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: assetflow-worker
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_TRACE_SAMPLE_RATIO: ${OTEL_TRACE_SAMPLE_RATIO:-0.1}
       JOBS_REDIS_URL: redis://:${JOBS_REDIS_PASSWORD:-}@jobs-redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-assetflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-assetflow}
     depends_on:

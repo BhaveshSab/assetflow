@@ -5,7 +5,10 @@ import {
   RequestMethod,
 } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { AttachmentsModule } from './attachments/attachments.module';
+import { ImportsModule } from './imports/imports.module';
+import { TracingInterceptor } from './telemetry/tracing.interceptor';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
@@ -78,6 +81,8 @@ import { ReportsModule } from './reports/reports.module';
     AuthModule,
     // Feature modules.
     OrgModule, // #3 Organization setup
+    AttachmentsModule,
+    ImportsModule,
     AssetsModule, // #4 Asset registration & directory
     AllocationsModule, // #5 Allocation & transfer
     JobsModule,
@@ -90,6 +95,7 @@ import { ReportsModule } from './reports/reports.module';
   controllers: [AppController],
   providers: [
     AppService,
+    { provide: APP_INTERCEPTOR, useClass: TracingInterceptor },
     // Registered as a global guard so *every* route is rate limited — the
     // per-route JWT/RBAC guards still run afterwards.
     //

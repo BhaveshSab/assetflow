@@ -20,6 +20,15 @@ resource an organisation owns — from one laptop to a thousand.
 
 ---
 
+## Asset extensions (phases 2–5)
+
+Private, verified S3 attachments; validated/confirmed CSV imports on the dedicated
+worker; authenticated QR lookup and explicit audit scanning; opt-in redacted
+OpenTelemetry API/worker tracing. Frontend workflows, additive migration and
+regression tests are included. Storage/worker/tracing deployment configuration and
+live-cloud verification are separate from source-code completion.
+See [the setup, limits and test guide](docs/ASSET_EXTENSIONS.md).
+
 ## 📑 Table of contents
 
 - [What AssetFlow does](#-what-assetflow-does)
