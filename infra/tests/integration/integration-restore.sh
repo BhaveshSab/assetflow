@@ -33,6 +33,8 @@ WORK="$(mktemp -d)"
 # Results must survive cleanup, which removes $WORK: the CI step and the
 # artifact upload read them after the harness has exited.
 RESULTS="${RESULTS_FILE:-${REPO}/test-results/restore-integration.json}"
+# The human-readable summary sits beside the JSON with the same base name.
+RESULTS_TXT="${RESULTS%.json}.txt"
 mkdir -p "$(dirname "$RESULTS")"
 
 PASS=0
@@ -101,7 +103,7 @@ emit_results() {
         echo "commit: ${SHA}"
         echo "results: passed=${PASS} failed=${FAIL} skipped=${SKIP} overall=${status}"
         printf '%s\n' "${CASES[@]}" | while IFS=$'\t' read -r n v d; do echo "  ${v} ${n} ${d}"; done
-    } >"${RESULTS}.txt"
+    } >"$RESULTS_TXT"
     # Surface the failures as annotations too. Log download needs repository admin
     # rights, and artifact download needs authentication, so without this a
     # failing run is visible only as "exit code 1".
