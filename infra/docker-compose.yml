@@ -277,9 +277,10 @@ services:
   # Host-level container telemetry. These mounts are read-only, but cAdvisor
   # still sees host/container metadata: never publish its port to the internet.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:v0.60.6
     restart: unless-stopped
     privileged: true
+    cgroup: host
     devices:
       - /dev/kmsg:/dev/kmsg
     command:

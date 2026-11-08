@@ -5,9 +5,13 @@
 - **Prometheus rule tests:** `infra/prometheus/tests/alerts.test.yml` uses the
   actual production rule file, with firing and healthy/boundary inputs for all
   **15 alerts** (the original eleven plus OOM, restart loop, certificate expiry,
-  and HTTPS probe failure). Rules with a `for` delay are also checked at time
-  zero; recovery is checked for API availability and the OOM lookback window.
+  and HTTPS probe failure). Rules with a `for` delay are also checked just before that delay
+  expires; recovery is checked for API availability and the OOM lookback window.
   These are synthetic time-series tests, not a destructive production drill.
+- **Exporter smoke test:** CI starts the exporters and Prometheus, verifies
+  both scrape targets become UP, and requires Compose-labelled start-time and
+  OOM metrics. It does not require the production HTTPS probe to succeed from
+  the runner, and does not prove production host compatibility.
 - **cAdvisor:** container metrics on the private backend network, no published
   port. OOM events alert immediately; more than two start-time changes within
   fifteen minutes alert after two minutes. Start times aggregate by Compose

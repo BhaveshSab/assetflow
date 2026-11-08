@@ -193,6 +193,32 @@ jobs:
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             prom/prometheus:v2.54.1 test rules /etc/prometheus/tests/alerts.test.yml
 
+      - name: Smoke test exporter startup and container metric labels
+        run: |
+          trap 'docker compose -f infra/docker-compose.yml logs --tail=30 cadvisor blackbox prometheus; docker compose -f infra/docker-compose.yml down -v' EXIT
+          docker compose -f infra/docker-compose.yml up -d --no-deps cadvisor blackbox prometheus
+          python3 - <<'PYTEST'
+          import json, time, urllib.request
+          for attempt in range(40):
+              try:
+                  with urllib.request.urlopen('http://localhost:9090/api/v1/targets', timeout=5) as r:
+                      targets = json.load(r)['data']['activeTargets']
+                  jobs = {t['labels']['job']: t for t in targets}
+                  if all(jobs.get(j, {}).get('health') == 'up' for j in ['cadvisor', 'blackbox-https']):
+                      break
+              except (OSError, ValueError, KeyError):
+                  pass
+              time.sleep(3)
+          else:
+              raise SystemExit('cAdvisor/blackbox scrape did not become healthy')
+          print('cAdvisor and blackbox scrapes UP (public probe success is checked separately)')
+          PYTEST
+          docker compose -f infra/docker-compose.yml exec -T prometheus \
+            wget -qO- http://cadvisor:8080/metrics > /tmp/cadvisor.metrics
+          # An UP endpoint without Compose-labelled metrics would silence the rules.
+          grep -E '^container_start_time_seconds\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
+          grep -E '^container_oom_events_total\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
