@@ -30,7 +30,10 @@ PG_IMAGE="${POSTGRES_IMAGE:-postgres:16.4-alpine}"
 SHA="$(git rev-parse HEAD)"
 MIGRATE_IMAGE="${RESTORE_MIGRATE_IMAGE:-assetflow-it-migrate:${SHA}}"
 WORK="$(mktemp -d)"
-RESULTS="${RESULTS_FILE:-${WORK}/results.json}"
+# Results must survive cleanup, which removes $WORK: the CI step and the
+# artifact upload read them after the harness has exited.
+RESULTS="${RESULTS_FILE:-${REPO}/test-results/restore-integration.json}"
+mkdir -p "$(dirname "$RESULTS")"
 
 PASS=0
 FAIL=0
