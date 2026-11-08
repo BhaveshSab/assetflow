@@ -160,11 +160,23 @@ jobs:
           echo "=== deploying from $deploy_path as $(id -un)@$(hostname) ==="
           cd "$deploy_path"
 
-          # The scripts and the compose files are always the current ones.
-          if ! git pull --ff-only origin main; then
-            echo "git pull failed — the server checkout is not on a clean origin/main:"
-            git status --short || true
-            git log --oneline -3 || true
+          # A queued old run must not combine its image with newer Compose or
+          # migrations fetched from main. Fast-forward only to this image SHA;
+          # never reset/discard server changes or downgrade a newer checkout.
+          target_commit="${image##*:}"
+          if [[ ! "$target_commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "the image must be tagged with a full commit SHA"
+            exit 4
+          fi
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "server checkout has tracked changes; refusing to overwrite them"
+            git status --short
+            exit 4
+          fi
+          git fetch origin "$target_commit" || exit 4
+          if ! git merge --ff-only "$target_commit" || [ "$(git rev-parse HEAD)" != "$target_commit" ]; then
+            echo "server checkout is newer or divergent; refusing to mix code and image commits"
+            git log --oneline -3
             exit 4
           fi
 

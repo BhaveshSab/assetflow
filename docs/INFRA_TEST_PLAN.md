@@ -1,3 +1,10 @@
+> **Merge-repair update:** PR21 was merged after PR26 and reintroduced duplicate
+> exporters, an obsolete failing test suite and a second scrape configuration.
+> The reconciled configuration has 18 production rules, one cAdvisor, one
+> blackbox, and both test suites outside production `rules/`. The inventory
+> below is planning/history; use [infra/README.md](../infra/README.md) and
+> [INFRA_CHECKS.md](INFRA_CHECKS.md) for current commands and limitations.
+
 > **Implementation update:** The inventory and gaps below are the original
 > planning baseline, not a claim about today's deployed system. Items 4–7 are
 > now implemented in the repository; see [Infrastructure checks](INFRA_CHECKS.md)

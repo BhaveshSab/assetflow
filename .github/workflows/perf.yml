@@ -1,4 +1,4 @@
-# The load test, on a timer.
+# Additional manually triggered load test. Nightly regression lives in CI.
 #
 # `infra/scripts/k6-load.js` is a real load test with thresholds; run by hand it
 # is a demo, run on a schedule it is a regression test. This workflow boots the
@@ -11,9 +11,7 @@
 name: Performance
 
 on:
-  schedule:
-    # 03:15 UTC — after the nightly backup (02:30) on the host.
-    - cron: '15 3 * * *'
+  # Nightly regression already runs in ci.yml; this workflow is manual only.
   workflow_dispatch:
     inputs:
       vus:

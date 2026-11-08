@@ -45,7 +45,7 @@ groups:
           severity: warning
         annotations:
           summary: "The 95th percentile of the API latency is above one second"
-          description: "The 95th percentile has been above one second for 10 minutes. Check the database (slow query?) and the host (CPU, IO); the exact value is on the AssetFlow · latency panel."
+          description: "p95 is {{ $value }}s. Check the database (slow query?) and the host (CPU, IO)."
 
   - name: assetflow-host
     rules:
@@ -60,7 +60,7 @@ groups:
           severity: warning
         annotations:
           summary: "The disk of {{ $labels.mountpoint }} is more than 85% full"
-          description: "{{ $value | humanizePercentage }} of it is in use. Docker images and log files are the usual suspects."
+          description: "{{ $value | humanizePercentage }} of disk space is used. Docker images and log files are the usual suspects."
           runbook: "docs/RUNBOOK.md#disk-full"
 
       - alert: HostDiskFull
@@ -135,10 +135,61 @@ groups:
 
   - name: assetflow-containers
     rules:
+      - alert: ContainerOomKilled
+        expr: |
+          sum by (container_label_com_docker_compose_service) (
+            increase(container_oom_events_total{job="cadvisor",container_label_com_docker_compose_service!=""}[10m])
+          ) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A container was killed by the out-of-memory killer"
+          description: "Service {{ $labels.container_label_com_docker_compose_service }} had an OOM event in the last 10 minutes. Inspect its memory limit and logs."
+          runbook: "docs/RUNBOOK.md#container-oom-or-restarts"
+
+      - alert: ContainerRestartLoop
+        # Docker restarts reuse an ID; recreations change it. Aggregate by
+        # Compose service *before* changes() so both cases remain visible.
+        expr: |
+          changes((max by (container_label_com_docker_compose_service) (
+            container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service!=""}
+          ))[15m:30s]) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A container is restarting repeatedly"
+          description: "Service {{ $labels.container_label_com_docker_compose_service }} changed start time more than twice in 15 minutes. Inspect its exit code and logs."
+          runbook: "docs/RUNBOOK.md#container-oom-or-restarts"
+
+  - name: assetflow-https
+    rules:
+      - alert: HttpsCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time() < 14 * 86400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The HTTPS certificate expires in less than 14 days"
+          description: "Check certificate renewal for {{ $labels.instance }}. An expired certificate prevents browser sign-in."
+          runbook: "docs/RUNBOOK.md#https-probe-or-certificate"
+
+      - alert: HttpsProbeFailed
+        expr: probe_success{job="blackbox-https"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The public HTTPS readiness check fails"
+          description: "Check DNS, certificate trust/expiry, Nginx and API readiness for {{ $labels.instance }}."
+          runbook: "docs/RUNBOOK.md#https-probe-or-certificate"
+
+  - name: assetflow-container-capacity
+    rules:
       # Which container is about to be OOM-killed. On a 1 GB host this is the
       # failure mode that actually happens, and node-exporter cannot see it.
       #
-      # `name` is cAdvisor's container-name label since v0.47 (v0.49 is pinned
+      # `name` is cAdvisor's container-name label since v0.47 (v0.60.6 is pinned
       # in docker-compose.yml). If the rule matches nothing while
       # `container_memory_working_set_bytes{job="cadvisor"}` is not empty, the
       # label is called `container` on that build — check it in the Prometheus
@@ -190,7 +241,7 @@ groups:
       # means "two renewal attempts in a row have failed".
       - alert: TlsCertificateExpiringSoon
         expr: |
-          (probe_ssl_earliest_cert_expiry{job="blackbox-tls"} - time())
+          (probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time())
             < 3 * 24 * 3600
         for: 1h
         labels:
