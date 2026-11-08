@@ -10,6 +10,9 @@
 
 ---
 
+For a silent or long-running AWS deploy, see [deployment recovery](DEPLOY_RECOVERY.md)
+before cancelling or retrying jobs.
+
 ## API down {#api-down}
 
 **Symptom:** the site shows an error, or `/api/health` answers 503.

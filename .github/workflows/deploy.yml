@@ -37,6 +37,8 @@ jobs:
   deploy:
     name: Build, push and deploy
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -50,7 +52,12 @@ jobs:
       # reused by the build and the deploy.
       - name: The image name
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/assetflow-api" >> "$GITHUB_OUTPUT"
+        run: |
+          {
+            echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/assetflow-api"
+            echo "migrate=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/assetflow-migrate"
+            echo "web=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/assetflow-web"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to the container registry
         uses: docker/login-action@v3
@@ -72,8 +79,38 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,scope=api-runtime,mode=max
+
+      # All compilation happens on the runner, never on the small EC2 host.
+      # The runtime image has no Prisma CLI: publish the migrate stage too.
+      - name: Build and push the migration image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          target: migrate
+          push: true
+          tags: |
+            ${{ steps.image.outputs.migrate }}:latest
+            ${{ steps.image.outputs.migrate }}:${{ github.sha }}
+          cache-from: |
+            type=gha,scope=api-runtime
+            type=gha,scope=api-migrate
+          cache-to: type=gha,scope=api-migrate,mode=max
+
+      - name: Build and push the web image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.nginx
+          push: true
+          build-args: VITE_API_BASE_URL=/api
+          tags: |
+            ${{ steps.image.outputs.web }}:latest
+            ${{ steps.image.outputs.web }}:${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
 
       - name: Set up the SSH key
         uses: webfactory/ssh-agent@v0.9.0
@@ -100,7 +137,8 @@ jobs:
           for host in $hosts; do
             for user in $users; do
               echo "--- ${user}@${host}"
-              if ssh -o BatchMode=yes -o ConnectTimeout=8 \
+              if timeout --kill-after=5s 20s ssh -o BatchMode=yes -o ConnectTimeout=8 \
+                     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
                      -o StrictHostKeyChecking=accept-new \
                      "${user}@${host}" true 2>>"$attempts"; then
                 echo "reachable: ${user}@${host}"
@@ -126,11 +164,14 @@ jobs:
 
       # ---------------------------------------------------------- the deploy
       - name: Deploy
+        timeout-minutes: 20
         env:
           HOST: ${{ steps.find.outputs.host }}
           USER: ${{ steps.find.outputs.user }}
           CONFIGURED_PATH: ${{ steps.find.outputs.path }}
           IMAGE: ${{ steps.image.outputs.name }}:${{ github.sha }}
+          MIGRATE_IMAGE: ${{ steps.image.outputs.migrate }}:${{ github.sha }}
+          WEB_IMAGE: ${{ steps.image.outputs.web }}:${{ github.sha }}
         run: |
           set -uo pipefail
           out=/tmp/deploy-remote.log
@@ -138,13 +179,33 @@ jobs:
           # The checkout lives in a different place on a hand-built host than on
           # one made by provision-host.sh, so let the server pick the directory
           # that actually contains the compose file.
-          if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+          # Quote each remote argument: ssh otherwise joins arguments as shell
+          # text. Keep the server deadline shorter than the client/step deadline.
+          printf -v remote_command '%q ' timeout --signal=TERM --kill-after=30s 15m \
+            bash -s -- "${CONFIGURED_PATH:-}" "$IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"
+          # pipefail preserves SSH/timeout failure even when tee succeeds.
+          # Do not enable xtrace: the host sources its private .env file.
+          if ! timeout --kill-after=30s 18m ssh -T \
+                 -o BatchMode=yes -o ConnectTimeout=10 \
+                 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
                  -o StrictHostKeyChecking=accept-new \
-                 "${USER}@${HOST}" bash -s -- "${CONFIGURED_PATH:-}" "$IMAGE" \
-                 >"$out" 2>&1 <<'REMOTE'
-          set -uo pipefail
+                 "${USER}@${HOST}" "$remote_command" \
+                 2>&1 <<'REMOTE' | tee "$out"
+          set -euo pipefail
           configured_path="${1:-}"
           image="$2"
+          migrate_image="$3"
+          web_image="$4"
+
+          # A disconnected client can leave work behind. Serialise newer runs
+          # on the host too; never kill an unknown existing deployment.
+          state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/assetflow"
+          mkdir -p "$state_dir"
+          exec 9>"$state_dir/deploy.lock"
+          if ! flock -n 9; then
+            echo "another deployment holds the host lock; inspect it before retrying"
+            exit 2
+          fi
 
           for candidate in "$configured_path" /opt/assetflow "$HOME/assetflow" /home/ubuntu/assetflow; do
             [ -n "$candidate" ] || continue
@@ -168,6 +229,10 @@ jobs:
             echo "the image must be tagged with a full commit SHA"
             exit 4
           fi
+          if [ "${migrate_image##*:}" != "$target_commit" ] || [ "${web_image##*:}" != "$target_commit" ]; then
+            echo "API, migration and web images must use the same commit SHA"
+            exit 4
+          fi
           if ! git diff --quiet || ! git diff --cached --quiet; then
             echo "server checkout has tracked changes; refusing to overwrite them"
             git status --short
@@ -184,17 +249,17 @@ jobs:
 
           # deploy.sh pulls the image, migrates, starts the new version, checks
           # the health endpoint and rolls back on failure.
-          IMAGE="$image" infra/scripts/deploy.sh || exit 5
+          IMAGE="$image" MIGRATE_IMAGE="$migrate_image" WEB_IMAGE="$web_image" \
+            infra/scripts/deploy.sh || exit 5
 
-          # The SPA is served by the Nginx container on this host, and its image
-          # is built here from this checkout — deploy.sh only replaces the API.
-          # Without this step a frontend commit would be in main and never reach
-          # the browser. Recreate just that container.
-          docker compose --project-directory infra -f infra/docker-compose.yml build nginx || exit 6
-          docker compose --project-directory infra -f infra/docker-compose.yml up -d --no-deps nginx || exit 7
+          # Images were compiled on the runner and pulled by deploy.sh. Never
+          # fall back to compiling a missing image on the production server.
+          echo "=== activating prebuilt web image $web_image ==="
+          WEB_IMAGE="$web_image" docker compose --project-directory infra -f infra/docker-compose.yml \
+            up -d --no-deps --no-build --pull never --wait --wait-timeout 90 nginx || exit 7
           REMOTE
           then
-            echo "::error title=Deploy failed::$(tail -6 "$out" | tr '\n' ' ' | cut -c1-900)"
+            echo "::error title=Deploy failed::Remote deployment failed, timed out, or lost its connection. Inspect the live log and server state before retrying; timeout does not guarantee rollback."
             tail -60 "$out"
             exit 1
           fi
@@ -202,6 +267,7 @@ jobs:
           tail -40 "$out"
 
       - name: Verify the deployment on the host
+        timeout-minutes: 4
         env:
           HOST: ${{ steps.find.outputs.host }}
           USER: ${{ steps.find.outputs.user }}
@@ -211,13 +277,15 @@ jobs:
           # HTTP with a 301 to HTTPS, and `curl -f` accepts a 301 — the check
           # would pass even with the API down.
           for attempt in $(seq 1 10); do
-            if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            if timeout --kill-after=5s 12s ssh -o BatchMode=yes -o ConnectTimeout=5 \
+                 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 \
+                 -o StrictHostKeyChecking=accept-new \
                  "${USER}@${HOST}" \
-                 'curl -fsS --max-time 5 http://127.0.0.1/api/health/ready'; then
+                 'status=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1/api/health/ready); printf "readiness HTTP %s\n" "$status"; [ "$status" = 200 ]'; then
               echo "the API is healthy"
               exit 0
             fi
             sleep 10
           done
-          echo "::error title=Unhealthy after deploy::/api/health/ready did not answer on the host after 100s; deploy.sh rolls back on its own when the health check fails."
+          echo "::error title=Unhealthy after deploy::/api/health/ready did not answer on the host after bounded retries. Inspect the host; this verification step does not roll back the deployment."
           exit 1

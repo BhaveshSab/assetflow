@@ -252,8 +252,21 @@ jobs:
           target: runtime
           push: false
           tags: assetflow-api:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,scope=api-runtime,mode=max
+
+      - name: Build the migration image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          target: migrate
+          push: false
+          tags: assetflow-migrate:ci
+          cache-from: |
+            type=gha,scope=api-runtime
+            type=gha,scope=api-migrate
+          cache-to: type=gha,scope=api-migrate,mode=max
 
       - name: Build the web image
         uses: docker/build-push-action@v7
@@ -262,8 +275,8 @@ jobs:
           file: infra/docker/Dockerfile.nginx
           push: false
           tags: assetflow-web:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
 
   performance:
     name: API load regression (k6, isolated database)

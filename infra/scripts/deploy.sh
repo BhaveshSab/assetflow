@@ -11,6 +11,8 @@
 #
 # Environment:
 #   IMAGE        the image to deploy (default ghcr.io/bhaveshsab/assetflow-api:latest)
+#   MIGRATE_IMAGE migration image from the same commit (derived from IMAGE)
+#   WEB_IMAGE    optional prebuilt web image (workflow activates it afterwards)
 #   HEALTH_URL   the readiness endpoint (default http://127.0.0.1/api/health/ready)
 #   HEALTH_RETRIES  how often the check is repeated (default 10)
 #
@@ -18,9 +20,15 @@
 set -euo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
+# Host .env supplies defaults, but must not override explicit release pins.
+requested_image="${IMAGE:-}"
+requested_migrate_image="${MIGRATE_IMAGE:-}"
+requested_web_image="${WEB_IMAGE:-}"
 init_script "$@"
 
-IMAGE="${IMAGE:-ghcr.io/bhaveshsab/assetflow-api:latest}"
+IMAGE="${requested_image:-${IMAGE:-ghcr.io/bhaveshsab/assetflow-api:latest}}"
+MIGRATE_IMAGE="${requested_migrate_image:-${MIGRATE_IMAGE:-}}"
+WEB_IMAGE="${requested_web_image:-${WEB_IMAGE:-}}"
 # The migration image is built from the same commit, so its tag must match:
 #   …/assetflow-api:abc123  ->  …/assetflow-migrate:abc123
 # Any other image name keeps the compose default (or an explicit override).
@@ -64,7 +72,7 @@ reclaim_superseded_images() {
     {
         docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
             | grep -E 'assetflow-(api|migrate):' \
-            | grep -v -F -e "$IMAGE" \
+            | grep -v -F -e "$IMAGE" -e "$MIGRATE_IMAGE" \
             | { if [ -n "$CURRENT" ]; then grep -v -F -e "$CURRENT" || true; else cat; fi; } \
             | { if [ -n "$PREVIOUS" ]; then grep -v -F -e "$PREVIOUS" || true; else cat; fi; } \
             | while read -r image_ref; do
@@ -121,29 +129,37 @@ fi
 # 1. The image --------------------------------------------------------------
 if [ "$DRY_RUN" = true ]; then
     say "[dry-run] docker pull ${IMAGE}"
+    say "[dry-run] docker pull ${MIGRATE_IMAGE}"
+    [ -z "${WEB_IMAGE:-}" ] || say "[dry-run] docker pull ${WEB_IMAGE}"
 else
     say "+ docker pull ${IMAGE}"
     docker pull "$IMAGE"
+    say "+ docker pull ${MIGRATE_IMAGE}"
+    docker pull "$MIGRATE_IMAGE"
+    if [ -n "${WEB_IMAGE:-}" ]; then
+        say "+ docker pull ${WEB_IMAGE}"
+        docker pull "$WEB_IMAGE"
+    fi
 fi
 
 # 2. The migrations ---------------------------------------------------------
 say "+ applying the migrations (one-shot container)"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm migrate"
+    say "[dry-run] MIGRATE_IMAGE=${MIGRATE_IMAGE} compose run --rm -T --no-build --pull never migrate"
 else
     # -T: do not attach stdin. The GitHub workflow pipes this script into
     # `ssh bash -s`, and an attached container would consume the rest of it.
-    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T migrate
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" compose run --rm -T --no-build --pull never migrate
 fi
 
 # 3. The new container ------------------------------------------------------
 say "+ starting the new version"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] API_IMAGE=${IMAGE} compose up -d api"
+    say "[dry-run] API_IMAGE=${IMAGE} compose up -d --no-deps --no-build --pull never api"
 else
     # The compose file reads API_IMAGE; without it, compose would start the
     # `latest` tag and the deployment would silently ignore $IMAGE.
-    API_IMAGE="$IMAGE" compose up -d --no-deps api
+    API_IMAGE="$IMAGE" compose up -d --no-deps --no-build --pull never api
 fi
 
 # 4. The health check -------------------------------------------------------
@@ -171,7 +187,7 @@ if [ "$HEALTHY" != true ]; then
     if [ -f "$PREVIOUS_IMAGE_FILE" ] && [ "$DRY_RUN" != true ]; then
         PREVIOUS="$(cat "$PREVIOUS_IMAGE_FILE")"
         say "+ rolling back to ${PREVIOUS}"
-        API_IMAGE="$PREVIOUS" compose up -d --no-deps api
+        API_IMAGE="$PREVIOUS" compose up -d --no-deps --no-build --pull never api
     else
         say "+ no previous image known — the old container stays as it is"
     fi
@@ -184,9 +200,9 @@ fi
 if [ "${JOBS_ENABLED:-false}" = true ]; then
     say "+ reconciling the booking worker and dedicated queue Redis"
     if [ "$DRY_RUN" = true ]; then
-        say "[dry-run] API_IMAGE=${IMAGE} compose --profile jobs up -d --no-deps --wait jobs-redis worker"
+        say "[dry-run] API_IMAGE=${IMAGE} compose --profile jobs up -d --no-deps --no-build --wait jobs-redis worker"
     else
-        API_IMAGE="$IMAGE" compose --profile jobs up -d --no-deps --wait --wait-timeout 90 jobs-redis worker
+        API_IMAGE="$IMAGE" compose --profile jobs up -d --no-deps --no-build --wait --wait-timeout 90 jobs-redis worker
     fi
 else
     if [ "$DRY_RUN" != true ]; then
@@ -199,9 +215,9 @@ fi
 # absent and Prometheus using its old mounts/configuration.
 say "+ reconciling monitoring services"
 if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] compose up -d --no-deps cadvisor blackbox prometheus alertmanager"
+    say "[dry-run] compose up -d --no-deps --no-build cadvisor blackbox prometheus alertmanager"
 else
-    compose up -d --no-deps cadvisor blackbox prometheus alertmanager
+    compose up -d --no-deps --no-build cadvisor blackbox prometheus alertmanager
     # Bind-mounted config content changes do not always recreate a container.
     # Reload via the internal network, not a publicly exposed lifecycle port.
     reloaded=false
