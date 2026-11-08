@@ -95,8 +95,7 @@ tests:
         severity: warning
       exp_annotations:
         summary: The 95th percentile of the API latency is above one second
-        description: "The 95th percentile has been above one second for 10 minutes. Check the database (slow query?)\
-          \ and the host (CPU, IO); the exact value is on the AssetFlow \xB7 latency panel."
+        description: p95 is 2.5s. Check the database (slow query?) and the host (CPU, IO).
   - eval_time: 6m
     alertname: HostDiskAlmostFull
     exp_alerts:
