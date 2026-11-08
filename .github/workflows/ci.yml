@@ -26,6 +26,16 @@ jobs:
   backend:
     name: Backend (lint, unit, e2e, build)
     runs-on: ubuntu-latest
+    services:
+      jobs-redis:
+        image: redis:7.4-alpine
+        ports: ['16379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      # Dedicated disposable Redis; never uses production queue credentials.
+      TEST_JOBS_REDIS_URL: redis://localhost:16379
     defaults:
       run:
         working-directory: backend
@@ -171,7 +181,8 @@ jobs:
           cp infra/.env.example infra/.env
           status=0
           for args in "-f infra/docker-compose.yml" \
-                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml"; do
+                      "-f infra/docker-compose.yml -f infra/docker-compose.local.yml" \
+                      "--profile jobs -f infra/docker-compose.yml"; do
             output=$(docker compose $args config --quiet 2>&1)
             code=$?
             if [ "$code" -ne 0 ]; then

@@ -59,3 +59,10 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox:9115
+
+  # Empty file by default: enabling jobs must not create a permanently DOWN
+  # target for deployments that deliberately use the legacy sweeper.
+  - job_name: assetflow-jobs
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/jobs.yml]

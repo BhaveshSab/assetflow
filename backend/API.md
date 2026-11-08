@@ -247,3 +247,14 @@ to produce.
 - `GET /assets` is readable by every authenticated user — knowing that an asset exists is not sensitive, but the *ownership* data attached to allocations, bookings and maintenance requests is scoped.
 - Sign-up creates an EMPLOYEE without e-mail verification; in production this endpoint should be closed or paired with a verification step.
 - The JWT is stored in `localStorage` by the SPA, so it is readable by any script on the page. The token itself carries no privilege (every request re-reads the user), but an httpOnly cookie would be stronger.
+
+
+## Job operations (ADMIN only)
+
+`GET /api/jobs` returns whether queue mode is enabled, durable outbox counts
+by state and up to 50 recent failed events. No queue payloads or Redis URLs are
+returned. `POST /api/jobs/:id/retry` returns 200 for FAILED events only (404 if
+missing, 409 for another state), resets the durable attempt budget, increments
+the delivery epoch and records `job.retried` in the activity log atomically.
+Both require JWT authentication and the ADMIN role. Retry remains possible
+while Redis is offline because publication is deferred to the worker.

@@ -358,6 +358,7 @@ model TransferRequest {
 // ---------------------------------------------------------------------------
 
 model Booking {
+  reminderVersion Int @default(0)
   id     String        @id @default(cuid())
   status BookingStatus @default(UPCOMING)
 
@@ -483,6 +484,7 @@ model AuditItem {
 // ---------------------------------------------------------------------------
 
 model Notification {
+  dedupeKey String? @unique
   id      String           @id @default(cuid())
   type    NotificationType
   message String
@@ -518,4 +520,22 @@ model ActivityLog {
   @@index([entityType, entityId])
   // The feed is read newest-first (ORDER BY createdAt DESC LIMIT 50).
   @@index([createdAt(sort: Desc)])
+}
+
+// Durable delivery source of truth; Redis jobs can be rebuilt from these rows.
+model JobOutbox {
+  retryEpoch Int @default(0)
+  id String @id @default(cuid())
+  topic String
+  bookingId String
+  version Int
+  availableAt DateTime
+  status String @default("PENDING")
+  leaseUntil DateTime?
+  attempts Int @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  @@unique([bookingId, version])
+  @@index([status, availableAt, leaseUntil])
 }

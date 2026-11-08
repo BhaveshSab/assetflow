@@ -21,6 +21,7 @@ const OUT_OF_SERVICE: AssetStatus[] = [
   AssetStatus.UNDER_MAINTENANCE,
 ];
 
+import { scheduleBookingReminder } from '../jobs/booking-reminder';
 import { ActivityService } from '../activity/activity.service';
 import type { AuthUser } from '../auth/jwt.strategy';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -100,7 +101,7 @@ export class BookingsService {
 
         await this.assertNoOverlap(tx, dto.assetId, startTime, endTime);
 
-        return tx.booking.create({
+        const created = await tx.booking.create({
           data: {
             assetId: dto.assetId,
             bookedById: user.id,
@@ -111,6 +112,8 @@ export class BookingsService {
           },
           include: bookingInclude,
         });
+        await scheduleBookingReminder(tx, created);
+        return created;
       }),
     );
 
@@ -188,27 +191,27 @@ export class BookingsService {
 
   /** Cancel a future/ongoing booking. Booker, ADMIN or ASSET_MANAGER only. */
   async cancel(user: AuthUser, id: string) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id },
-      include: bookingInclude,
-    });
-    if (!booking) {
-      throw new NotFoundException('Booking not found');
-    }
-    this.assertBookerOrManager(user, booking.bookedById);
-
-    const effective = this.effectiveStatus(booking, new Date());
-    if (effective === BookingStatus.CANCELLED) {
-      throw new ConflictException('Booking is already cancelled');
-    }
-    if (effective === BookingStatus.COMPLETED) {
-      throw new ConflictException('Completed bookings cannot be cancelled');
-    }
-
-    const updated = await this.prisma.booking.update({
-      where: { id },
-      data: { status: BookingStatus.CANCELLED },
-      include: bookingInclude,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
+      const booking = await tx.booking.findUnique({
+        where: { id },
+        include: bookingInclude,
+      });
+      if (!booking) throw new NotFoundException('Booking not found');
+      this.assertBookerOrManager(user, booking.bookedById);
+      const effective = this.effectiveStatus(booking, new Date());
+      if (effective === BookingStatus.CANCELLED)
+        throw new ConflictException('Booking is already cancelled');
+      if (effective === BookingStatus.COMPLETED)
+        throw new ConflictException('Completed bookings cannot be cancelled');
+      return tx.booking.update({
+        where: { id },
+        data: {
+          status: BookingStatus.CANCELLED,
+          reminderVersion: { increment: 1 },
+        },
+        include: bookingInclude,
+      });
     });
 
     await this.activity.log({
@@ -247,6 +250,7 @@ export class BookingsService {
 
     const updated = await this.runGuarded(() =>
       this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
         const booking = await tx.booking.findUnique({ where: { id } });
         if (!booking) {
           throw new NotFoundException('Booking not found');
@@ -267,11 +271,13 @@ export class BookingsService {
 
         await this.assertNoOverlap(tx, booking.assetId, startTime, endTime, id);
 
-        return tx.booking.update({
+        const changed = await tx.booking.update({
           where: { id },
-          data: { startTime, endTime },
+          data: { startTime, endTime, reminderVersion: { increment: 1 } },
           include: bookingInclude,
         });
+        await scheduleBookingReminder(tx, changed);
+        return changed;
       }),
     );
 
