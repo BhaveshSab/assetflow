@@ -202,6 +202,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
       - prometheus-data:/prometheus
     networks: [edge, backend]
     ports:
@@ -271,6 +272,47 @@ services:
       - ./textfile:/textfile:ro
     networks: [edge, backend]
     pid: host
+    logging: *default-logging
+
+  # Host-level container telemetry. These mounts are read-only, but cAdvisor
+  # still sees host/container metadata: never publish its port to the internet.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    command:
+      - --docker_only=true
+      - --store_container_labels=true
+      - --housekeeping_interval=30s
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    logging: *default-logging
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    # Needs outbound access to probe the public HTTPS endpoint.
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
     logging: *default-logging
 
   postgres-exporter:
