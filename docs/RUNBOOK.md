@@ -581,3 +581,51 @@ journalctl --since "1 hour ago" --no-pager | tail -50
 # the timers (the backups)
 systemctl list-timers --all | grep assetflow
 ```
+
+## Container OOM or restarts
+
+`ContainerOomKilled` means cAdvisor observed an OOM event in the last ten minutes.
+`ContainerRestartLoop` means a Compose service's start time changed more than
+twice (including recreations) within fifteen minutes and stayed above
+that threshold for two minutes. Three changes are enough. These alerts require cAdvisor to be healthy.
+
+From the server checkout (EC2 Console → instance → Connect → Session Manager or
+EC2 Instance Connect, if configured):
+
+```sh
+docker compose -f infra/docker-compose.yml ps
+docker compose -f infra/docker-compose.yml logs --tail=100 api
+docker inspect --format '{{.State.OOMKilled}} {{.RestartCount}} {{.State.ExitCode}}' \
+  "$(docker compose -f infra/docker-compose.yml ps -q api)"
+```
+
+Replace `api` with the service named in the notification. Check whether memory
+usage is growing before raising a memory limit. Repeated startup errors usually
+need a configuration fix, not a larger machine. Do not deliberately OOM the
+production database to test an alert; CI uses synthetic metric samples instead.
+cAdvisor has privileged, read-only host mounts and no published port. Its
+metadata access is sensitive even though filesystem mounts are read-only.
+
+## HTTPS probe or certificate
+
+`HttpsCertificateExpiring` fires below fourteen days remaining for five minutes.
+`HttpsProbeFailed` fires after two minutes of failed public HTTPS readiness
+checks. Certificate verification stays enabled: a self-signed/expired certificate
+is a real failure, not something to silence with `insecure_skip_verify`.
+
+1. Open the URL in `infra/prometheus/targets/https.yml` in your browser. If the
+   server's address/domain changed, update this file; Prometheus discovers file
+   changes automatically.
+2. Check DNS, public port 443, Nginx logs, and `/api/health/ready`.
+3. Check the renewal timer and certificate paths using the certificate section
+   of this runbook. Renew using the existing `issue-cert.sh` procedure; never
+   paste a private key into chat or a GitHub issue.
+4. In Prometheus (through an SSH tunnel), check `up{job="blackbox-https"}`,
+   `probe_success`, and `probe_ssl_earliest_cert_expiry - time()`.
+
+Prometheus sends alerts to `alertmanager:9093`. This is distinct from Telegram
+being configured: verify Alertmanager starts successfully and has the correct
+server-side Telegram credentials, then verify a notification arrives. A green
+rule unit test does **not** prove Telegram delivery. Missing exporter scrapes
+must be investigated in Prometheus Targets; these symptom alerts cannot infer
+healthy containers or certificates from missing data.

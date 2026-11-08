@@ -14,6 +14,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Nightly checks use only disposable runner services, never production.
+  schedule:
+    - cron: "30 3 * * *"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -231,6 +234,41 @@ jobs:
           done
           exit $status
 
+      - name: Validate Prometheus config and test every alert rule
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v2.54.1 test rules /etc/prometheus/tests/alerts.test.yml
+
+      - name: Smoke test exporter startup and container metric labels
+        run: |
+          trap 'docker compose -f infra/docker-compose.yml logs --tail=30 cadvisor blackbox prometheus; docker compose -f infra/docker-compose.yml down -v' EXIT
+          docker compose -f infra/docker-compose.yml up -d --no-deps cadvisor blackbox prometheus
+          python3 - <<'PYTEST'
+          import json, time, urllib.request
+          for attempt in range(40):
+              try:
+                  with urllib.request.urlopen('http://localhost:9090/api/v1/targets', timeout=5) as r:
+                      targets = json.load(r)['data']['activeTargets']
+                  jobs = {t['labels']['job']: t for t in targets}
+                  if all(jobs.get(j, {}).get('health') == 'up' for j in ['cadvisor', 'blackbox-https']):
+                      break
+              except (OSError, ValueError, KeyError):
+                  pass
+              time.sleep(3)
+          else:
+              raise SystemExit('cAdvisor/blackbox scrape did not become healthy')
+          print('cAdvisor and blackbox scrapes UP (public probe success is checked separately)')
+          PYTEST
+          docker compose -f infra/docker-compose.yml exec -T prometheus \
+            wget -qO- http://cadvisor:8080/metrics > /tmp/cadvisor.metrics
+          # An UP endpoint without Compose-labelled metrics would silence the rules.
+          grep -E '^container_start_time_seconds\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
+          grep -E '^container_oom_events_total\{.*container_label_com_docker_compose_service="cadvisor"' /tmp/cadvisor.metrics
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -254,3 +292,81 @@ jobs:
           tags: assetflow-web:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  performance:
+    name: API load regression (k6, isolated database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: assetflow
+          POSTGRES_PASSWORD: ci-only-disposable-password
+          POSTGRES_DB: assetflow_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U assetflow -d assetflow_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      # Only this runner's throwaway DB; no production secrets or accounts.
+      DATABASE_URL: postgresql://assetflow:ci-only-disposable-password@localhost:5432/assetflow_ci
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-disposable-jwt-secret-at-least-32-characters
+      NODE_ENV: production
+      PORT: '4000'
+      METRICS_ENABLED: 'true'
+      LOADTEST_USERS: '5'
+      LOADTEST_PASSWORD: ci-only-fixture-password
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install, migrate, seed 500 assets and build the real API
+        working-directory: backend
+        run: |
+          npm ci --include=dev
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run seed:loadtest -- --users 5 --assets 500
+          npm run build
+      - name: Exercise sign-in and asset listing (5 users, 45 seconds)
+        run: |
+          mkdir -p test-results
+          node backend/dist/main.js > test-results/api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/api/health/ready > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then cat test-results/api.log; exit 1; fi
+          docker run --rm --network host --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work" -w /work \
+            -e BASE_URL=http://localhost:4000 -e VUS=5 -e DURATION=45s \
+            -e SLEEP=1 -e P95_THRESHOLD_MS=1000 -e ERROR_RATE_THRESHOLD=0.01 \
+            -e LOADTEST_USERS -e LOADTEST_PASSWORD -e TAG=ci \
+            -e SUMMARY_FILE=test-results/k6-summary.txt \
+            grafana/k6:0.54.0 run infra/scripts/k6-load.js
+      - name: Keep load-test evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-regression-${{ github.sha }}
+          path: test-results/
+          retention-days: 14

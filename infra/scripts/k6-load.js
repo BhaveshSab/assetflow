@@ -99,6 +99,8 @@ export const options = {
   thresholds: {
     http_req_failed: [`rate<${ERROR_RATE_THRESHOLD}`],
     http_req_duration: [`p(95)<${P95_THRESHOLD_MS}`],
+    checks: ['rate>0.99'],
+    iterations: ['count>20'],
   },
 };
 
@@ -134,6 +136,14 @@ export default function () {
 
   check(res, {
     'the asset list answers 200': (r) => r.status === 200,
+    'the response contains an asset page': (r) => {
+      try {
+        const page = r.json();
+        return Array.isArray(page.items) && Number.isInteger(page.total);
+      } catch {
+        return false;
+      }
+    },
     'the response is JSON': (r) =>
       Boolean(r.headers['Content-Type']) &&
       r.headers['Content-Type'].includes('application/json'),
@@ -178,8 +188,8 @@ export function handleSummary(data) {
 
   const stdout = [
     '',
-    `  ${TAG}: ${lines[3]} · p95 ${lines[7]} ms · errors ${(Number(lines[10]) * 100).toFixed(2)} %` +
-      ` · 429s ${lines[13]}`,
+    `  ${TAG}: ${(requests.rate || 0).toFixed(2)} req/s · p95 ${(values['p(95)'] || 0).toFixed(1)} ms · errors ${((failed.rate || 0) * 100).toFixed(2)} %` +
+      ` · 429s ${throttledCount.count || 0}`,
     '',
   ].join('\n');
 

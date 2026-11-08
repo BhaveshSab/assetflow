@@ -1,0 +1,5 @@
+# Change this URL when the public domain/address changes. Prometheus reloads
+# file discovery automatically (no restart); do not replace it with localhost.
+- targets: ['https://3.107.83.86.sslip.io/api/health/ready']
+  labels:
+    service: assetflow-https

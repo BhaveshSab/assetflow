@@ -1,0 +1,406 @@
+# Real production rules: firing/pending, healthy/boundary and recovery.
+# State + label assertions are independent of notification wording.
+rule_files:
+- ../rules/assetflow.yml
+evaluation_interval: 30s
+tests:
+- name: AssetflowApiDown fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: up{job="assetflow-api",instance="api:4000"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowApiDown",alertstate="firing"}
+    eval_time: 90s
+    exp_samples: []
+  - expr: ALERTS{alertname="AssetflowApiDown",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="AssetflowApiDown",alertstate="firing",instance="api:4000",job="assetflow-api",severity="critical"}'
+      value: 1
+- name: AssetflowApiDown stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: up{job="assetflow-api",instance="api:4000"}
+    values: 1+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowApiDown",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: AssetflowHighErrorRate fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: assetflow_http_requests_total{status="500"}
+    values: 0+10x40
+  - series: assetflow_http_requests_total{status="200"}
+    values: 0+90x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowHighErrorRate",alertstate="firing"}
+    eval_time: 570s
+    exp_samples: []
+  - expr: ALERTS{alertname="AssetflowHighErrorRate",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="AssetflowHighErrorRate",alertstate="firing",severity="critical"}'
+      value: 1
+- name: AssetflowHighErrorRate stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: assetflow_http_requests_total{status="500"}
+    values: 0+5x40
+  - series: assetflow_http_requests_total{status="200"}
+    values: 0+95x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowHighErrorRate",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: AssetflowHighLatency fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: assetflow_http_request_duration_seconds_bucket{le="1"}
+    values: 0+0x40
+  - series: assetflow_http_request_duration_seconds_bucket{le="2"}
+    values: 0+60x40
+  - series: assetflow_http_request_duration_seconds_bucket{le="+Inf"}
+    values: 0+60x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowHighLatency",alertstate="firing"}
+    eval_time: 570s
+    exp_samples: []
+  - expr: ALERTS{alertname="AssetflowHighLatency",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="AssetflowHighLatency",alertstate="firing",severity="warning"}'
+      value: 1
+- name: AssetflowHighLatency stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: assetflow_http_request_duration_seconds_bucket{le="1"}
+    values: 0+60x40
+  - series: assetflow_http_request_duration_seconds_bucket{le="2"}
+    values: 0+60x40
+  - series: assetflow_http_request_duration_seconds_bucket{le="+Inf"}
+    values: 0+60x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="AssetflowHighLatency",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HostDiskAlmostFull fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{mountpoint="/",fstype="ext4"}
+    values: 10+0x40
+  - series: node_filesystem_size_bytes{mountpoint="/",fstype="ext4"}
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}
+    eval_time: 270s
+    exp_samples: []
+  - expr: ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HostDiskAlmostFull",alertstate="firing",fstype="ext4",mountpoint="/",severity="warning"}'
+      value: 1
+- name: HostDiskAlmostFull stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{mountpoint="/",fstype="ext4"}
+    values: 15+0x40
+  - series: node_filesystem_size_bytes{mountpoint="/",fstype="ext4"}
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HostDiskFull fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{mountpoint="/",fstype="ext4"}
+    values: 4+0x40
+  - series: node_filesystem_size_bytes{mountpoint="/",fstype="ext4"}
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
+    eval_time: 30s
+    exp_samples: []
+  - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HostDiskFull",alertstate="firing",fstype="ext4",mountpoint="/",severity="critical"}'
+      value: 1
+- name: HostDiskFull stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: node_filesystem_avail_bytes{mountpoint="/",fstype="ext4"}
+    values: 5+0x40
+  - series: node_filesystem_size_bytes{mountpoint="/",fstype="ext4"}
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostDiskFull",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HostMemoryPressure fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: node_memory_MemAvailable_bytes
+    values: 5+0x40
+  - series: node_memory_MemTotal_bytes
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostMemoryPressure",alertstate="firing"}
+    eval_time: 570s
+    exp_samples: []
+  - expr: ALERTS{alertname="HostMemoryPressure",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HostMemoryPressure",alertstate="firing",severity="warning"}'
+      value: 1
+- name: HostMemoryPressure stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: node_memory_MemAvailable_bytes
+    values: 10+0x40
+  - series: node_memory_MemTotal_bytes
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostMemoryPressure",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HostCpuSaturated fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: node_cpu_seconds_total{mode="idle",cpu="0"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostCpuSaturated",alertstate="firing"}
+    eval_time: 870s
+    exp_samples: []
+  - expr: ALERTS{alertname="HostCpuSaturated",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HostCpuSaturated",alertstate="firing",severity="warning"}'
+      value: 1
+- name: HostCpuSaturated stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: node_cpu_seconds_total{mode="idle",cpu="0"}
+    values: 0+60x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HostCpuSaturated",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: PostgresDown fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: pg_up
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="PostgresDown",alertstate="firing"}
+    eval_time: 90s
+    exp_samples: []
+  - expr: ALERTS{alertname="PostgresDown",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="PostgresDown",alertstate="firing",severity="critical"}'
+      value: 1
+- name: PostgresDown stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: pg_up
+    values: 1+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="PostgresDown",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: PostgresConnectionsHigh fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: pg_stat_activity_count
+    values: 81+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="PostgresConnectionsHigh",alertstate="firing"}
+    eval_time: 570s
+    exp_samples: []
+  - expr: ALERTS{alertname="PostgresConnectionsHigh",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="PostgresConnectionsHigh",alertstate="firing",severity="warning"}'
+      value: 1
+- name: PostgresConnectionsHigh stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: pg_stat_activity_count
+    values: 80+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="PostgresConnectionsHigh",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: BackupTooOld fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: assetflow_backup_last_success_timestamp_seconds
+    values: -100000+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="BackupTooOld",alertstate="firing"}
+    eval_time: 870s
+    exp_samples: []
+  - expr: ALERTS{alertname="BackupTooOld",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="BackupTooOld",alertstate="firing",severity="critical"}'
+      value: 1
+- name: BackupTooOld stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: assetflow_backup_last_success_timestamp_seconds
+    values: 1000000000+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="BackupTooOld",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: ThrottleStoreDegraded fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: assetflow_throttle_store_degraded
+    values: 1+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ThrottleStoreDegraded",alertstate="firing"}
+    eval_time: 270s
+    exp_samples: []
+  - expr: ALERTS{alertname="ThrottleStoreDegraded",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="ThrottleStoreDegraded",alertstate="firing",severity="warning"}'
+      value: 1
+- name: ThrottleStoreDegraded stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: assetflow_throttle_store_degraded
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ThrottleStoreDegraded",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: ContainerOomKilled fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: container_oom_events_total{job="cadvisor",container_label_com_docker_compose_service="api",id="abc"}
+    values: 0+1x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerOomKilled",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="ContainerOomKilled",alertstate="firing",container_label_com_docker_compose_service="api",severity="critical"}'
+      value: 1
+- name: ContainerOomKilled stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: container_oom_events_total{job="cadvisor",container_label_com_docker_compose_service="api",id="abc"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerOomKilled",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: ContainerRestartLoop fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="abc"}
+    values: 0+60x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 90s
+    exp_samples: []
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="ContainerRestartLoop",alertstate="firing",container_label_com_docker_compose_service="api",severity="warning"}'
+      value: 1
+- name: ContainerRestartLoop stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="abc"}
+    values: 100+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HttpsCertificateExpiring fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://example.test"}
+    values: 604800+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HttpsCertificateExpiring",alertstate="firing"}
+    eval_time: 270s
+    exp_samples: []
+  - expr: ALERTS{alertname="HttpsCertificateExpiring",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HttpsCertificateExpiring",alertstate="firing",instance="https://example.test",job="blackbox-https",severity="warning"}'
+      value: 1
+- name: HttpsCertificateExpiring stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="https://example.test"}
+    values: 2592000+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HttpsCertificateExpiring",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: HttpsProbeFailed fires on sustained failure
+  interval: 1m
+  input_series:
+  - series: probe_success{job="blackbox-https",instance="https://example.test"}
+    values: 0+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HttpsProbeFailed",alertstate="firing"}
+    eval_time: 90s
+    exp_samples: []
+  - expr: ALERTS{alertname="HttpsProbeFailed",alertstate="firing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="HttpsProbeFailed",alertstate="firing",instance="https://example.test",job="blackbox-https",severity="critical"}'
+      value: 1
+- name: HttpsProbeFailed stays quiet on healthy or boundary input
+  interval: 1m
+  input_series:
+  - series: probe_success{job="blackbox-https",instance="https://example.test"}
+    values: 1+0x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="HttpsProbeFailed",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: alerts resolve after recovery and old OOM leaves the window
+  interval: 1m
+  input_series:
+  - series: up{job="assetflow-api",instance="api:4000"}
+    values: 0+0x5 1+0x30
+  - series: container_oom_events_total{job="cadvisor",container_label_com_docker_compose_service="api"}
+    values: 0 1+0x35
+  promql_expr_test:
+  - expr: ALERTS{alertname=~"AssetflowApiDown|ContainerOomKilled",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []
+- name: container replacements retain service identity; a single replacement is quiet
+  interval: 1m
+  input_series:
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="a"}
+    values: 0 0 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="b"}
+    values: _ _ 120 120 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="c"}
+    values: _ _ _ _ 240 240 stale
+  - series: container_start_time_seconds{job="cadvisor",container_label_com_docker_compose_service="api",id="d"}
+    values: _ _ _ _ _ _ 360+0x24
+  promql_expr_test:
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 3m
+    exp_samples: []
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="ContainerRestartLoop",alertstate="firing",container_label_com_docker_compose_service="api",severity="warning"}'
+      value: 1
+  - expr: ALERTS{alertname="ContainerRestartLoop",alertstate="firing"}
+    eval_time: 30m
+    exp_samples: []

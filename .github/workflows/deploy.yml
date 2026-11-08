@@ -1,23 +1,27 @@
 # Deploys the API to the self-hosted server.
 #
-#   build the image  ->  push it to GHCR  ->  copy it to the server over SSH
+#   find the server  ->  build the image  ->  push it to GHCR  ->  connect over SSH
 #                    ->  run the migrations  ->  start it  ->  health check
 #                    ->  roll back when the health check fails
 #
 # The variables (GitHub → Settings → Secrets and variables → Actions →
 # Variables — they are not secret):
-#   DEPLOY_HOST        the server address
-#   DEPLOY_USER        the SSH user (key authentication only)
-#   DEPLOY_PATH        the checkout on the server (default /opt/assetflow)
+#   DEPLOY_HOST        the server address (optional: discovered when unset)
+#   DEPLOY_USER        the SSH user (key authentication only; optional)
+#   DEPLOY_PATH        the checkout on the server (optional: discovered)
 #
 # The secrets (the same page → Secrets):
 #   DEPLOY_SSH_KEY    the private key of the deploy user
-#   GHCR_TOKEN         the token to push the image (a classic PAT with
-#                      `write:packages` — or the built-in GITHUB_TOKEN)
 #
-# The deployment waits until DEPLOY_HOST is set as a variable — a hostname
-# is not a secret, and the `vars` context is the one a job condition may
-# read.
+# Why the discovery step exists
+# -----------------------------
+# The deploy used to read `vars.DEPLOY_HOST` and nothing else. When that value
+# went stale (the instance's address changed) the whole job died on a bare
+# "connection timed out" with no indication of which address or user was tried,
+# and the run log was the only place that said so. Discovery makes the job
+# self-healing across an address change and, when it still cannot connect, it
+# says exactly which combinations it tried and why each one failed — both on
+# stdout and, for a run whose log is not reachable, as a check annotation.
 name: Deploy
 
 on:
@@ -33,9 +37,6 @@ jobs:
   deploy:
     name: Build, push and deploy
     runs-on: ubuntu-latest
-    # Without a server there is nothing to deploy to — the job waits instead
-    # of failing (the variables are added in Settings → Secrets and variables).
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.DEPLOY_HOST != '' }}
     permissions:
       contents: read
       packages: write
@@ -79,50 +80,132 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
+      # ---------------------------------------------------------- the server
+      # Try the configured address first, then the addresses this project has
+      # used, and both of the user accounts an EC2 image can have. The first
+      # combination that answers `true` wins.
+      - name: Find the server
+        id: find
+        env:
+          CONFIGURED_HOST: ${{ vars.DEPLOY_HOST }}
+          CONFIGURED_USER: ${{ vars.DEPLOY_USER }}
+          CONFIGURED_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          set -uo pipefail
+          hosts=$(printf '%s\n' "${CONFIGURED_HOST:-}" 3.107.83.86 13.55.90.25 | awk 'NF && !seen[$0]++')
+          users=$(printf '%s\n' "${CONFIGURED_USER:-}" ubuntu ec2-user | awk 'NF && !seen2[$0]++')
+          attempts=/tmp/ssh-attempts.log
+          : > "$attempts"
+
+          for host in $hosts; do
+            for user in $users; do
+              echo "--- ${user}@${host}"
+              if ssh -o BatchMode=yes -o ConnectTimeout=8 \
+                     -o StrictHostKeyChecking=accept-new \
+                     "${user}@${host}" true 2>>"$attempts"; then
+                echo "reachable: ${user}@${host}"
+                {
+                  echo "host=${host}"
+                  echo "user=${user}"
+                  echo "path=${CONFIGURED_PATH:-}"
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          done
+
+          # Nothing answered. Surface why, in a place that survives a log that
+          # cannot be downloaded.
+          detail=$(grep -E "Permission denied|timed out|No route|Could not resolve|Connection refused" \
+                   "$attempts" | tail -4 | tr '\n' '; ' || true)
+          echo "::error title=No reachable server::Tried $(echo $hosts | wc -w) address(es) x $(echo $users | wc -w) user(s). ${detail:-see the job log}"
+          echo "hosts: $hosts"
+          echo "users: $users"
+          cat "$attempts"
+          exit 1
+
+      # ---------------------------------------------------------- the deploy
       - name: Deploy
         env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/assetflow' }}
+          HOST: ${{ steps.find.outputs.host }}
+          USER: ${{ steps.find.outputs.user }}
+          CONFIGURED_PATH: ${{ steps.find.outputs.path }}
           IMAGE: ${{ steps.image.outputs.name }}:${{ github.sha }}
         run: |
-          set -euo pipefail
-          ssh -o StrictHostKeyChecking=accept-new \
-              "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s <<REMOTE
-          set -euo pipefail
-          cd "${DEPLOY_PATH}"
-          # The scripts and the compose files are always the current ones.
-          git pull --ff-only origin main
-          chmod +x infra/scripts/*.sh
-          # The deployment script pulls the image, migrates, starts the new
-          # version, checks the health endpoint and rolls back on failure.
-          IMAGE="${IMAGE}" infra/scripts/deploy.sh
+          set -uo pipefail
+          out=/tmp/deploy-remote.log
 
-          # The SPA is served by the Nginx container on this host, and its
-          # image is built here from this checkout — deploy.sh only replaces
-          # the API. Without this step a frontend commit would be in main and
-          # never reach the browser. Recreate just that container.
-          docker compose --project-directory infra -f infra/docker-compose.yml build nginx
-          docker compose --project-directory infra -f infra/docker-compose.yml up -d --no-deps nginx
+          # The checkout lives in a different place on a hand-built host than on
+          # one made by provision-host.sh, so let the server pick the directory
+          # that actually contains the compose file.
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+                 -o StrictHostKeyChecking=accept-new \
+                 "${USER}@${HOST}" bash -s -- "${CONFIGURED_PATH:-}" "$IMAGE" \
+                 >"$out" 2>&1 <<'REMOTE'
+          set -uo pipefail
+          configured_path="${1:-}"
+          image="$2"
+
+          for candidate in "$configured_path" /opt/assetflow "$HOME/assetflow" /home/ubuntu/assetflow; do
+            [ -n "$candidate" ] || continue
+            if [ -f "$candidate/infra/docker-compose.yml" ]; then
+              deploy_path="$candidate"
+              break
+            fi
+          done
+          if [ -z "${deploy_path:-}" ]; then
+            echo "no checkout with infra/docker-compose.yml found (tried: $configured_path /opt/assetflow $HOME/assetflow /home/ubuntu/assetflow)"
+            exit 3
+          fi
+          echo "=== deploying from $deploy_path as $(id -un)@$(hostname) ==="
+          cd "$deploy_path"
+
+          # The scripts and the compose files are always the current ones.
+          if ! git pull --ff-only origin main; then
+            echo "git pull failed — the server checkout is not on a clean origin/main:"
+            git status --short || true
+            git log --oneline -3 || true
+            exit 4
+          fi
+
+          chmod +x infra/scripts/*.sh
+
+          # deploy.sh pulls the image, migrates, starts the new version, checks
+          # the health endpoint and rolls back on failure.
+          IMAGE="$image" infra/scripts/deploy.sh || exit 5
+
+          # The SPA is served by the Nginx container on this host, and its image
+          # is built here from this checkout — deploy.sh only replaces the API.
+          # Without this step a frontend commit would be in main and never reach
+          # the browser. Recreate just that container.
+          docker compose --project-directory infra -f infra/docker-compose.yml build nginx || exit 6
+          docker compose --project-directory infra -f infra/docker-compose.yml up -d --no-deps nginx || exit 7
           REMOTE
+          then
+            echo "::error title=Deploy failed::$(tail -6 "$out" | tr '\n' ' ' | cut -c1-900)"
+            tail -60 "$out"
+            exit 1
+          fi
+
+          tail -40 "$out"
 
       - name: Verify the deployment on the host
         env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          HOST: ${{ steps.find.outputs.host }}
+          USER: ${{ steps.find.outputs.user }}
         run: |
-          set -euo pipefail
-          # Probe from the host itself. Over the public interface Nginx
-          # answers HTTP with a 301 to HTTPS, and `curl -f` accepts a 301 —
-          # the check would pass even with the API down.
+          set -uo pipefail
+          # Probe from the host itself. Over the public interface Nginx answers
+          # HTTP with a 301 to HTTPS, and `curl -f` accepts a 301 — the check
+          # would pass even with the API down.
           for attempt in $(seq 1 10); do
-            if ssh -o StrictHostKeyChecking=accept-new \
-                 "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                 "${USER}@${HOST}" \
                  'curl -fsS --max-time 5 http://127.0.0.1/api/health/ready'; then
               echo "the API is healthy"
               exit 0
             fi
             sleep 10
           done
-          echo "the API did not become healthy" >&2
+          echo "::error title=Unhealthy after deploy::/api/health/ready did not answer on the host after 100s; deploy.sh rolls back on its own when the health check fails."
           exit 1
