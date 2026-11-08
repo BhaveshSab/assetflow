@@ -372,22 +372,36 @@ if [ -s "$CURRENT_DUMP" ]; then
         sleep 6
         kill -TERM "$inter" 2>/dev/null || true
         wait "$inter" 2>/dev/null
-        sleep 2
-        leaked=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
-        leaked_v=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+        # Cleanup retries volume removal (a container release can lag), so allow
+        # it to settle rather than sampling the instant the script returns.
+        leaked=0
+        leaked_v=0
+        for _ in $(seq 1 20); do
+            leaked=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
+            leaked_v=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+            [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ] && break
+            sleep 1
+        done
         if [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ]; then
-            record "interrupted run cleans up" PASS "SIGTERM handled"
+            record "interrupted run cleans up" PASS "SIGTERM handled, nothing left"
         else
-            record "interrupted run cleans up" FAIL "containers=${leaked} volumes=${leaked_v}"
+            record "interrupted run cleans up" FAIL "containers=${leaked} volumes=${leaked_v} after 20s"
         fi
     fi
 fi
 
 # ------------------------------------------------- owned-resource cleanup ----
 say "== owned-resource cleanup =="
-leftover_containers=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
-leftover_volumes=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
-leftover_networks=$(docker network ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+leftover_containers=0
+leftover_volumes=0
+leftover_networks=0
+for _ in $(seq 1 20); do
+    leftover_containers=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
+    leftover_volumes=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+    leftover_networks=$(docker network ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+    [ "$leftover_containers" -eq 0 ] && [ "$leftover_volumes" -eq 0 ] && [ "$leftover_networks" -eq 0 ] && break
+    sleep 1
+done
 if [ "$leftover_containers" -eq 0 ] && [ "$leftover_volumes" -eq 0 ] && [ "$leftover_networks" -eq 0 ]; then
     record "no restore resources leaked" PASS "containers=0 volumes=0 networks=0"
 else

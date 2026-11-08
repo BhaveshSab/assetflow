@@ -119,15 +119,28 @@ checkout_manifest="$(cd "${REPO_ROOT}/backend/prisma" && sha256sum schema.prisma
 [ "$image_manifest" = "$checkout_manifest" ] || die "migration image schema/history differs from this checkout"
 
 STARTED_AT=$(date +%s)
+# Removing a container returns before the kernel has necessarily released the
+# volume it had mounted, so an immediate `docker volume rm` can fail with
+# "volume is in use". That is a race, not a real leak; retry a few times, and let
+# the network removal run regardless so one failed step cannot skip the rest.
+retry() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if "$@" >/dev/null 2>&1; then return 0; fi
+        sleep "$attempt"
+    done
+    return 1
+}
 cleanup() {
     local status=$?
     [ "$CLEANUP_DONE" = false ] || return "$status"
     CLEANUP_DONE=true
-    # Only remove resources successfully created by this invocation.
-    if [ "$MIGRATOR_CREATED" = true ]; then docker rm -f "$MIGRATOR" >/dev/null || { warn "migration container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$DB_CREATED" = true ]; then docker rm -f "$CONTAINER" >/dev/null || { warn "restore container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_VOLUME" = true ]; then docker volume rm "$VOLUME" >/dev/null || { warn "restore volume cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_NETWORK" = true ]; then docker network rm "$NETWORK" >/dev/null || { warn "restore network cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
+    # Only remove resources successfully created by this invocation. Each step is
+    # independent: a failure is reported but never prevents the remaining ones.
+    if [ "$MIGRATOR_CREATED" = true ]; then retry docker rm -f "$MIGRATOR" || { warn "migration container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$DB_CREATED" = true ]; then retry docker rm -f "$CONTAINER" || { warn "restore container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$ADDED_VOLUME" = true ]; then retry docker volume rm "$VOLUME" || { warn "restore volume cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$ADDED_NETWORK" = true ]; then retry docker network rm "$NETWORK" || { warn "restore network cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
     if [ -n "$WORK_DIR" ]; then rm -rf -- "$WORK_DIR"; fi
     return "$status"
 }
