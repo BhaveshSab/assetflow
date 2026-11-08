@@ -26,6 +26,7 @@ jobs:
   backend:
     name: Backend (lint, unit, e2e, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       jobs-redis:
         image: redis:7.4-alpine

@@ -129,6 +129,8 @@ TEST_JOBS_REDIS_URL=redis://localhost:16379 npm run test:e2e -- --runInBand jobs
 ```
 
 CI supplies a disposable Redis and runs the queue integration suite automatically.
+The e2e harness now closes its database/server via Jest globalTeardown instead
+of forcing process exit, so worker lifecycle leaks are not hidden by forceExit.
 Without `TEST_JOBS_REDIS_URL`, that integration suite is explicitly skipped;
 the database/API reminder suite still runs. Every integration test uses a unique
 queue name and deletes only its own queue, not an entire Redis database.

@@ -26,7 +26,9 @@ inactive recipients, role enforcement, audit logging and durable attempt limits.
 
 Limits: not a Redis process-kill/persistence durability drill, not a multi-host
 throughput benchmark, not a production notification test. No emails are sent.
-The test's one skipped case is reported as skipped, not passed. The default e2e
-harness uses forceExit; a separate no-forceExit queue run is useful when
-investigating lifecycle leaks. This file is a local result record; PR CI results
-are linked on the pull request separately.
+The test's one skipped case is reported as skipped, not passed. A subsequent
+full run with `--runInBand --detectOpenHandles` also passed all 19 suites and
+178 tests (one skipped) and exited naturally. The existing Jest setup had
+returned a cleanup function that Jest ignored; a proper globalTeardown now
+closes the embedded database/server, and forceExit has been removed. This file
+is a local result record; PR CI results are linked on the pull request separately.
