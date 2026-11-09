@@ -603,12 +603,40 @@ jobs:
           $C up -d migrate
           $C logs --tail=40 migrate
 
+      - name: Confirm the seeding toolchain exists before using it
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          # Assert the premise of the fix instead of discovering it later: the
+          # migrate stage must still have ts-node and the seed source, and the
+          # pruned runtime image must NOT.
+          $C run --rm --no-deps migrate npx ts-node --version
+          $C run --rm --no-deps migrate test -f prisma/seed-loadtest.ts
+          if $C run --rm --no-deps api test -f node_modules/.bin/ts-node; then
+            echo "::error::the api runtime image unexpectedly has ts-node; the premise changed"
+            exit 1
+          fi
+          echo "migrate has ts-node + seed source; api runtime does not"
+
       - name: Seed 200 run-owned accounts in the image that has ts-node
         run: |
           set -euo pipefail
           C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
-          $C run --rm --no-deps migrate \
-             npm run seed:loadtest -- --run-id cap-ci-0001 --users 200
+          # --no-deps is deliberate: postgres is already up and healthy from the
+          # migrate step, and letting this re-create it would reset the schema.
+          # TS_NODE_TRANSPILE_ONLY: the seed is executed, not type-checked, and
+          # the migrate stage sets NODE_ENV=production which makes ts-node apply
+          # production type rules and fail on type-only diagnostics that the
+          # build has already validated.
+          rc=0
+          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true migrate \
+             npm run seed:loadtest -- --run-id cap-ci-0001 --users 200 2>&1 | tee /tmp/seed.log || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=seed::seeding failed with exit ${rc}"
+            tail -40 /tmp/seed.log
+            $C ps
+            exit "$rc"
+          fi
 
       - name: Prove 200 usable accounts exist by querying the database
         run: |
