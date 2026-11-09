@@ -380,6 +380,33 @@ class DeadlineDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('exit 1', self.text)
 
 
+class PreludeDiagnosticsTests(unittest.TestCase):
+    """A silent four-minute death with an empty console is the failure to avoid.
+
+    The prelude runs before the bootstrap has a log file, a say() or a die(), so
+    under `set -e` any failure in its first lines aborted with no message anywhere.
+    """
+
+    def setUp(self):
+        self.text = RENDER.read_text(encoding='utf-8')
+
+    def test_prelude_installs_an_err_trap(self):
+        self.assertIn("trap 'prelude_fail", self.text)
+        self.assertIn('ERR', self.text)
+
+    def test_trap_reports_the_line_and_exit_code(self):
+        self.assertIn('prelude failed (rc=', self.text)
+        self.assertIn('at line', self.text)
+
+    def test_trap_writes_to_the_console(self):
+        self.assertIn('/dev/console', self.text)
+
+    def test_trap_is_installed_before_any_privileged_step(self):
+        trap_at = self.text.index("trap 'prelude_fail")
+        first_mkdir = self.text.index('mkdir -p /etc/capacity-run')
+        self.assertLess(trap_at, first_mkdir)
+
+
 
 if __name__ == '__main__':
     unittest.main()

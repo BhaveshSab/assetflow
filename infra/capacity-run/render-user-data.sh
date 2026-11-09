@@ -79,6 +79,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     cat <<PROLOGUE
 #!/bin/bash
 set -e
+
+# The prelude runs before the bootstrap has a log file, a say(), or a die().
+# Without this, a failure in these first lines aborts under set -e and leaves no
+# message anywhere - which is exactly what made one run look like an unexplained
+# four-minute termination with an empty console. Report to /dev/console, which
+# does not depend on the root volume, the journal, or the bootstrap's own logging.
+prelude_fail() {
+    rc=\$?
+    msg="prelude failed (rc=\$rc) at line \$1"
+    printf 'capacity-bootstrap: %s\\n' "\$msg" > /dev/console 2>/dev/null || true
+    echo "[bootstrap][FATAL] \$msg" >&2
+    exit "\$rc"
+}
+trap 'prelude_fail \$LINENO' ERR
+
+echo "capacity-bootstrap: prelude start" > /dev/console 2>/dev/null || true
 mkdir -p /etc/capacity-run
 chmod 700 /etc/capacity-run
 
