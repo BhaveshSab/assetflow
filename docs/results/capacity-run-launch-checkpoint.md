@@ -162,14 +162,25 @@ fails closed rather than falling back to `now`.
 
 ### The guest deadline and reboot
 
-`systemd-run --on-active` creates a **transient** unit, which does not survive a
-reboot. Documented mitigation: user-data is `UserData`, not `CloudInitPowerOn`, so
-it runs **on every boot**, and section 1 re-arms the timer each time from the
-original launch time. The re-arm is recorded in `/timer-state`.
+An earlier draft of this document claimed user-data runs on every boot and re-arms
+the timer. **That was false.** EC2 user-data runs **once**, on first boot. A
+`systemd-run --on-active` timer would have been transient and lost on reboot, and
+nothing would have re-armed it.
 
-Residual limitation, stated rather than hidden: a guest that reboots and then fails
-before reaching the re-arm step has no timer. That case is covered only by the
-operator watchdog, which is why the watchdog is not optional.
+What is implemented instead: the bootstrap installs a **persistent** unit,
+`capacity-deadline.timer` (`WantedBy=timers.target`), which `systemctl enable`
+starts on every subsequent boot. The guard it runs compares the current time
+against the **absolute** `DEADLINE_EPOCH` recorded at bootstrap, so a reboot
+neither extends nor resets the window. Deadline files live under
+`/var/lib/assetflow-capacity/evidence`, which survives a reboot.
+
+**Limitation, stated rather than hidden:** this is proven by *static* tests only —
+they assert the unit is persistent, enabled, and that the guard uses an absolute
+deadline and calls shutdown. **A real reboot has not been performed and is not
+claimed to have been tested.** Proving it needs a live instance, which needs the
+launch approval below. Until then the claim is "correct by construction and
+covered by static tests", not "verified on a rebooted host". The operator watchdog
+is the independent second path for exactly that reason.
 
 ### The operator watchdog is a real artifact, not a sleep snippet
 
@@ -234,8 +245,52 @@ security groups and addresses.
 ## 6. Readiness, over HTTPS only
 
 There is no SSH and no SSM. A file inside an unreachable guest is not evidence, so
-every readiness signal is served by the evidence endpoint on 443 and read by
+every readiness signal is served by the evidence endpoint and read by
 `infra/capacity-run/readiness-check.sh`.
+
+### Trust provisioning: generated locally, no S3
+
+The capacity identity has an **explicit `Deny` on `s3:*`** (verified: `aws s3 ls`
+returns `AccessDenied`, "explicit deny"), and the guest has **no instance role**.
+Publishing trust material to S3 would therefore have required a new bucket and new
+permissions. It is generated locally instead by
+`infra/capacity-run/generate-trust.sh`:
+
+| Artifact | Where it lives | Why |
+|---|---|---|
+| `tls.crt` | operator dir **and** rendered user-data | client verifies, guest serves |
+| `tls.key` | operator dir **and** rendered user-data | guest only |
+| `evidence.token` | operator dir **and** rendered user-data | both sides must match |
+
+No bucket, no instance role, no new AWS credentials. The guest receives this
+through the **existing** rendered provisioning path (`render-user-data.sh`), which
+refuses to embed `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or
+`AWS_SESSION_TOKEN` (exit 3).
+
+### The certificate is bound to a name, not to an address
+
+The instance's public IPv4 is unknown until after launch, so a certificate bound to
+it could not be generated in advance. The certificate therefore carries a fixed
+**DNS SAN**: `capacity-run.test`. The client connects to the real address while
+verifying that certified name:
+
+```bash
+curl --cacert tls.crt --resolve capacity-run.test:8443:<instance-ip> \
+     https://capacity-run.test:8443/evidence/snapshot-latest.tar.gz
+```
+
+`--resolve` and `--cacert` together keep **both** CA verification and hostname
+verification intact. `-k` and `--insecure` are never used, and a test asserts no
+client script contains them.
+
+### EC2 user-data is not a secret store
+
+The TLS key and token are embedded in user-data. That is **not encryption** —
+base64 is an encoding. User-data is stored by AWS, readable by any principal with
+`ec2:DescribeInstanceAttribute` on the instance, and readable by any root process
+on the guest. This is acceptable only because the material is short-lived
+(2-day certificate) and run-scoped, and because no production secret and no AWS
+credential is placed there. Do not reuse this pattern for anything durable.
 
 ### Read-back corrections
 
@@ -263,7 +318,7 @@ to the existing read statement. No write permission was added; a test asserts th
 | 5 | deadline armed | `/timer-state` + `/deadline-epoch` | not `active`, or no future epoch |
 | 6 | deployed commit matches the pin | `/deployed-commit` | mismatch |
 | 7 | RSS ≤ 70% of 1024 MB | `/host-metrics.jsonl` last line | over gate |
-| 8 | Nginx limiter unchanged | app config over 443 | different parameters |
+| 8 | Nginx limiter unchanged | app config over 8443 | different parameters |
 | 9 | baseline spend | `ce:GetCostAndUsage`, read ONCE | — |
 
 Step 4 `degraded` means the secret channel was absent, so the app never started.
@@ -297,7 +352,8 @@ EGRESS_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '\r\n
 echo "generator egress: ${EGRESS_IP}"
 ```
 
-The returned address is then allowed as `<EGRESS_IP>/32` on 443.
+The returned address is then allowed as `<EGRESS_IP>/32` on 8443 (the evidence
+endpoint; the app itself is exercised through the load generator, not over ingress).
 
 **Critically: the same job must do discovery, readiness and the load test.** A
 different job gets a different runner and therefore a different egress address, so
@@ -318,12 +374,12 @@ If the same job does both, one `/32` covers both; do not assume that, check it.
 
 ### 7.3 Proposed rules
 
-Only 443, only exact discovered addresses:
+Only 8443, only exact discovered addresses:
 
 | Type | Protocol | Port | Source | Purpose |
 |------|----------|------|--------|---------|
-| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` | load generator + readiness |
-| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` | evidence download (only if different) |
+| Ingress | tcp | 8443 | `<GENERATOR_EGRESS_IP>/32` | readiness + evidence |
+| Ingress | tcp | 8443 | `<EVIDENCE_EGRESS_IP>/32` | evidence download (only if different) |
 | Ingress | tcp | 22 | — | **none**: no key pair is attached, so SSH is impossible |
 
 Two rules at most. No port ranges, no `0.0.0.0/0`, no published range lists.
@@ -493,12 +549,12 @@ the commit that contains every artifact above, so it is what the launch pins.
 `6533edf` (run `42604425610`) also passed, but it covers the application only and
 predates these artifacts — it could not have been the right pin.
 
-### 12.2 Ingress — 443 only, exact discovered `/32`
+### 12.2 Ingress — 8443 only, exact discovered `/32`
 
 | Type | Proto | Port | Source |
 |------|-------|------|--------|
-| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` from discovery inside the generator job |
-| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` only if the evidence job is a different job |
+| Ingress | tcp | 8443 | `<GENERATOR_EGRESS_IP>/32` from discovery inside the generator job |
+| Ingress | tcp | 8443 | `<EVIDENCE_EGRESS_IP>/32` only if the evidence job is a different job |
 | Ingress | tcp | 22 | **none** — no key pair is attached |
 
 No published GitHub ranges, no `0.0.0.0/0`, no port ranges. If the egress cannot be

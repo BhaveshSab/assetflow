@@ -13,6 +13,20 @@ import unittest
 from pathlib import Path
 
 CAPACITY_DIR = Path(__file__).resolve().parents[2] / 'infra/capacity-run'
+GENERATE = CAPACITY_DIR / 'generate-trust.sh'
+
+
+def trust_env(tmp):
+    """Run the real generator and return the variables the renderer needs."""
+    import subprocess as sp
+    out = Path(tmp) / 'trust'
+    sp.run(['bash', str(GENERATE), str(out)], check=True, capture_output=True)
+    env = {}
+    for line in (out / 'trust.env').read_text().splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            env[k] = v
+    return env
 USER_DATA = CAPACITY_DIR / 'user-data.sh'
 RENDER = CAPACITY_DIR / 'render-user-data.sh'
 DEADLINE_GUARD = CAPACITY_DIR / 'deadline-guard.sh'
@@ -105,6 +119,9 @@ class MetricsTests(unittest.TestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.trust_tmp = Path(tempfile.mkdtemp())
     def test_render_refuses_without_required_inputs(self):
         for missing in ('LAUNCH_EPOCH', 'EXPECTED_COMMIT', 'EVIDENCE_TOKEN', 'S3_BUCKET'):
             env = {k: v for k, v in os.environ.items()
@@ -118,7 +135,9 @@ class ProvisioningTests(unittest.TestCase):
 
     def test_render_refuses_short_tokens(self):
         env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
-                   EVIDENCE_TOKEN='short', S3_BUCKET='b', RUN_ID='r')
+                   EVIDENCE_TOKEN='short', RUN_ID='r')
+        env.update(trust_env(self.trust_tmp))
+        env['EVIDENCE_TOKEN'] = 'short'
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
@@ -126,8 +145,9 @@ class ProvisioningTests(unittest.TestCase):
 
     def test_render_refuses_aws_credentials(self):
         env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
-                   EVIDENCE_TOKEN='t' * 48, S3_BUCKET='b', RUN_ID='r',
+                   EVIDENCE_TOKEN='t' * 48, RUN_ID='r',
                    AWS_SECRET_ACCESS_KEY='secret')
+        env.update(trust_env(self.trust_tmp))
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
@@ -143,7 +163,8 @@ class ProvisioningTests(unittest.TestCase):
     def test_render_output_is_base64_userdata_containing_the_config(self):
         import base64
         env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='c' * 40,
-                   EVIDENCE_TOKEN='t' * 48, S3_BUCKET='mybucket', RUN_ID='cap-x')
+                   EVIDENCE_TOKEN='t' * 48, RUN_ID='cap-x')
+        env.update(trust_env(self.trust_tmp))
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)

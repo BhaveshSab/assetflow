@@ -1,3 +1,5 @@
+CERT_HOST = 'capacity-run.test'
+
 """Integration harness: the real evidence server, real TLS, real readiness script.
 
 Unit tests that stub curl prove nothing about the contract. This suite starts the
@@ -90,7 +92,12 @@ class ServerHarness:
 
     def get(self, path, token=TOKEN):
         ctx = ssl.create_default_context(cafile=str(self._cert))
-        conn = HTTPSConnection('127.0.0.1', self.port, context=ctx, timeout=10)
+        # Dial the real address but present the certified hostname, mirroring
+        # `curl --resolve`. Hostname verification stays on.
+        conn = HTTPSConnection(CERT_HOST, self.port, context=ctx, timeout=10,
+                               source_address=None)
+        conn._create_connection = lambda *a, **k: __import__('socket').create_connection(
+            ('127.0.0.1', self.port), 10)
         headers = {'Authorization': f'Bearer {token}'} if token else {}
         conn.request('GET', path, headers=headers)
         resp = conn.getresponse()
@@ -142,7 +149,9 @@ class EvidenceContractTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.cert, self.key = make_cert(self.tmp, 'IP:127.0.0.1')
+        # The run certificate is bound to a fixed DNS name, never to the
+        # address, because the address is unknown before launch.
+        self.cert, self.key = make_cert(self.tmp, 'DNS:' + CERT_HOST)
         self.evidence = write_evidence(self.tmp / 'evidence')
 
     def test_per_file_paths_are_not_served(self):
@@ -186,7 +195,9 @@ class ReadinessIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.cert, self.key = make_cert(self.tmp, 'IP:127.0.0.1')
+        # The run certificate is bound to a fixed DNS name, never to the
+        # address, because the address is unknown before launch.
+        self.cert, self.key = make_cert(self.tmp, 'DNS:' + CERT_HOST)
 
     def run_readiness(self, harness, **env_overrides):
         env = dict(os.environ)
@@ -194,6 +205,7 @@ class ReadinessIntegrationTests(unittest.TestCase):
             'EVIDENCE_TOKEN': TOKEN,
             'EVIDENCE_CA': str(self.cert),
             'EXPECTED_COMMIT': COMMIT,
+            'CAPACITY_HOSTNAME': CERT_HOST,
         })
         env.update(env_overrides)
         return subprocess.run(
@@ -288,7 +300,7 @@ class ReadinessIntegrationTests(unittest.TestCase):
     def test_hostname_mismatch_fails(self):
         """A certificate for the wrong identity must be rejected, not accepted
         with -k."""
-        wrong_cert, wrong_key = make_cert(self.tmp / 'wrong', 'IP:10.9.9.9')
+        wrong_cert, wrong_key = make_cert(self.tmp / 'wrong', 'DNS:wrong-name.test')
         evidence = write_evidence(self.tmp / 'ev')
         with ServerHarness(evidence, wrong_cert, wrong_key) as h:
             proc = self.run_readiness(h)

@@ -3,43 +3,40 @@
 # Render the user-data payload for the capacity run.
 #
 # This is the ONE explicit provisioning path. Every input the guest needs is
-# written into /etc/capacity-run/run-config.env here, on the operator machine, and
-# that file is embedded into user-data as base64. Nothing is read from IMDS that
-# could be wrong, and no AWS user credentials ever reach the guest.
+# assembled here, on the operator machine, and embedded into the user-data
+# payload as base64. Nothing is read from IMDS that could be wrong, and no AWS
+# user credentials ever reach the guest.
 #
-# The launch deadline is provisioned here because the operator, at render time, is
-# the only party that knows when the instance will launch. The guest cannot forge
-# or extend it: it is written into the payload before the instance exists.
+# Secrets: the TLS key and bearer token are generated locally by
+# generate-trust.sh and passed in through its trust.env. They are embedded in
+# user-data, which is NOT a secret store - AWS stores it, it is readable via
+# ec2:DescribeInstanceAttribute and by root on the guest, and base64 is an encoding
+# rather than encryption. That is acceptable only because the material is
+# short-lived and run-scoped. No AWS credentials and no production secrets go in.
 #
 # Usage
-#   LAUNCH_EPOCH=$(date +%s) \
-#   EXPECTED_COMMIT=<sha> \
-#   EVIDENCE_TOKEN=<>=32 chars> \
-#   S3_BUCKET=<bucket> \
-#   RUN_ID=cap-... \
-#   infra/capacity-run/render-user-data.sh > user-data.b64
+#   infra/capacity-run/generate-trust.sh .capacity-run-trust
+#   set -a; . .capacity-run-trust/trust.env; set +a
+#   LAUNCH_EPOCH=$(date +%s) EXPECTED_COMMIT=<sha> RUN_ID=cap-... \
+#     infra/capacity-run/render-user-data.sh > user-data.b64
 #
-# The output is base64 of a shell script, which is what `run-instances
-# --user-data file://...` expects (raw text is also accepted; base64 avoids
-# whitespace mangling by the shell).
-#
-# Refuses to run if any required input is missing, and refuses to embed anything
-# that looks like a long-lived AWS credential.
+# Keep the output file out of Git: it contains the rendered key and token.
 set -euo pipefail
 
-: "${LAUNCH_EPOCH:?LAUNCH_EPOCH must be set to the intended launch instant (unix seconds)}"
+: "${LAUNCH_EPOCH:?LAUNCH_EPOCH must be set to the intended launch instant}"
 : "${EXPECTED_COMMIT:?EXPECTED_COMMIT must be the pinned SHA}"
-: "${EVIDENCE_TOKEN:?EVIDENCE_TOKEN must be set (>= 32 chars)}"
-: "${S3_BUCKET:?S3_BUCKET must be set}"
+: "${EVIDENCE_TOKEN:?EVIDENCE_TOKEN must be set (from generate-trust.sh)}"
+: "${TLS_CRT_B64:?TLS_CRT_B64 must be set (from generate-trust.sh)}"
+: "${TLS_KEY_B64:?TLS_KEY_B64 must be set (from generate-trust.sh)}"
 : "${RUN_ID:?RUN_ID must be set}"
+: "${CAPACITY_HOSTNAME:=capacity-run.test}"
 
-# The token is served to the client, so it must be long enough to resist guessing.
 if [ "${#EVIDENCE_TOKEN}" -lt 32 ]; then
     echo "EVIDENCE_TOKEN must be at least 32 characters" >&2
     exit 2
 fi
 
-# Only the run-scoped token goes in. Long-lived AWS credentials must not.
+# Long-lived AWS credentials must never be rendered onto the guest.
 for forbidden in AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID; do
     eval "present=\${$forbidden:-}"
     if [ -n "${present:-}" ]; then
@@ -60,17 +57,23 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -e
 mkdir -p /etc/capacity-run
 chmod 700 /etc/capacity-run
+
+# Trust material supplied by the operator. Installed before the bootstrap runs so
+# the evidence endpoint can start with a certificate the client already trusts.
+echo '${TLS_CRT_B64}' | base64 -d > /etc/capacity-run/tls.crt
+echo '${TLS_KEY_B64}' | base64 -d > /etc/capacity-run/tls.key
+chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
+
 cat > /etc/capacity-run/run-config.env <<'CAPCONFIG'
 LAUNCH_EPOCH=${LAUNCH_EPOCH}
 EXPECTED_COMMIT=${EXPECTED_COMMIT}
 EVIDENCE_TOKEN=${EVIDENCE_TOKEN}
-S3_BUCKET=${S3_BUCKET}
+CAPACITY_HOSTNAME=${CAPACITY_HOSTNAME}
 RUN_ID=${RUN_ID}
 FIXTURE_USERS=${FIXTURE_USERS:-200}
 CAPCONFIG
 chmod 600 /etc/capacity-run/run-config.env
 PROLOGUE
     echo
-    # The bootstrap body follows, so the payload is self-contained.
     cat "$HERE/user-data.sh"
 } | base64

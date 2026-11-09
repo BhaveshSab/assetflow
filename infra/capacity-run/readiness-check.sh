@@ -15,10 +15,15 @@
 # missing metric is not a healthy zero.
 set -uo pipefail
 
-HOST="${1:?usage: readiness-check.sh <host> [port]}"
-PORT="${2:-443}"
+ADDR="${1:?usage: readiness-check.sh <address> [port]}"
+PORT="${2:-8443}"
 : "${EVIDENCE_TOKEN:?EVIDENCE_TOKEN must be set}"
 : "${EVIDENCE_CA:?EVIDENCE_CA must be set (no insecure fallback)}"
+# The certificate is bound to a fixed DNS name, not to the instance address, so
+# the client connects to the REAL address while verifying the CERTIFIED name.
+# `--resolve` keeps both hostname verification and CA verification intact; -k is
+# never used and is not accepted.
+: "${CAPACITY_HOSTNAME:?CAPACITY_HOSTNAME must be set (certified DNS name)}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:?EXPECTED_COMMIT must be set}"
 MAX_STALE_SECONDS="${MAX_STALE_SECONDS:-10}"
 MAX_MEM_PCT="${MAX_MEM_PCT:-70}"
@@ -31,14 +36,20 @@ bad() { printf '  FAIL  %s\n' "$*"; fail=1; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-echo "readiness for https://${HOST}:${PORT}/evidence/${ARCHIVE}"
+echo "readiness for https://${CAPACITY_HOSTNAME}:${PORT}/evidence/${ARCHIVE}"
+echo "           mapped to ${ADDR} via --resolve"
 
 # ------------------------------------------------------------ fetch archive
+# --resolve: connect to the real address, verify the CERTIFIED name. This keeps
+# both CA verification and hostname verification intact; -k is never used.
+RESOLVE_ARGS=()
+[ -n "${CAPACITY_HOSTNAME:-}" ] && RESOLVE_ARGS=(--resolve "${CAPACITY_HOSTNAME}:${PORT}:${ADDR}")
 if ! curl --fail --silent --show-error --max-time 30 \
         --cacert "$EVIDENCE_CA" \
+        "${RESOLVE_ARGS[@]}" \
         --header "Authorization: Bearer ${EVIDENCE_TOKEN}" \
         --output "$WORK/evidence.tar.gz" \
-        "https://${HOST}:${PORT}/evidence/${ARCHIVE}"; then
+        "https://${CAPACITY_HOSTNAME}:${PORT}/evidence/${ARCHIVE}"; then
     bad "could not fetch /evidence/${ARCHIVE} (TLS trust, hostname or auth failed)"
     echo; echo "READINESS FAILED"; exit 1
 fi
@@ -150,7 +161,10 @@ print(f"OK {pct} {int(age)}")
 
     case "$verdict" in
         OK\ *) set -- $verdict
-               if [ "$2" -le "$MAX_MEM_PCT" ]; then
+               # mem_used_pct is a decimal (e.g. 22.5). Shell [ ] only does integer
+               # arithmetic, so compare with awk: truncating would let 70.9% pass a
+               # 70% gate, which is the wrong direction to be wrong in.
+               if awk -v v="$2" -v max="$MAX_MEM_PCT" 'BEGIN { exit !(v <= max) }'; then
                    ok "host memory ${2}% <= ${MAX_MEM_PCT}% (sample ${3}s old)"
                else
                    bad "host memory ${2}% exceeds ${MAX_MEM_PCT}% gate"

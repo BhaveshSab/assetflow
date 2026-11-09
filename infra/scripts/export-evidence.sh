@@ -32,6 +32,10 @@
 #   EVIDENCE_CA      path to the certificate to trust (required)
 #   EXPORT_ATTEMPTS  total attempts (default 5)
 #   EXPORT_TIMEOUT   per-attempt timeout in seconds (default 120)
+#   EXPORT_RESOLVE   optional "host:port:address" mapping passed to curl
+#                    --resolve. The run certificate carries a fixed DNS SAN, so
+#                    the client connects to the real address while still verifying
+#                    the certified name. Empty means plain DNS.
 
 set -uo pipefail
 
@@ -82,9 +86,14 @@ while [ "$attempt" -lt "$ATTEMPTS" ]; do
     rm -f "$TMP"
     # --fail: an HTTP error is an error, not a saved error page.
     # --cacert: verify against the pinned certificate. No -k, ever.
+    # --resolve: map the certified hostname to the real address so hostname
+    #            verification still passes. Empty means normal DNS.
     # --max-time: one attempt cannot hang the run.
+    RESOLVE_ARGS=()
+    [ -n "${EXPORT_RESOLVE:-}" ] && RESOLVE_ARGS=(--resolve "$EXPORT_RESOLVE")
     if curl --fail --silent --show-error \
             --cacert "$EVIDENCE_CA" \
+            "${RESOLVE_ARGS[@]}" \
             --max-time "$TIMEOUT" \
             --header "Authorization: Bearer ${EVIDENCE_TOKEN}" \
             --output "$TMP" \
