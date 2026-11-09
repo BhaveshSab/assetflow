@@ -374,18 +374,28 @@ if [ -s "$CURRENT_DUMP" ]; then
         wait "$inter" 2>/dev/null
         # Cleanup retries volume removal (a container release can lag), so allow
         # it to settle rather than sampling the instant the script returns.
+        # Cleanup retries removals with backoff, so a successful cleanup can
+        # take longer than a short window. Poll generously AND poll every
+        # resource type the run creates: the previous version did not watch
+        # networks at all and gave up after 20s, so a slow-but-successful
+        # cleanup was reported as a leak.
         leaked=0
         leaked_v=0
-        for _ in $(seq 1 20); do
+        leaked_n=0
+        for _ in $(seq 1 60); do
             leaked=$(docker ps -a --filter "name=assetflow-restore-verify-" --format '{{.Names}}' | wc -l)
             leaked_v=$(docker volume ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
-            [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ] && break
+            leaked_n=$(docker network ls --filter "name=assetflow-restore-verify-" --format '{{.Name}}' | wc -l)
+            [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ] && [ "$leaked_n" -eq 0 ] && break
             sleep 1
         done
-        if [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ]; then
+        if [ "$leaked" -eq 0 ] && [ "$leaked_v" -eq 0 ] && [ "$leaked_n" -eq 0 ]; then
             record "interrupted run cleans up" PASS "SIGTERM handled, nothing left"
         else
-            record "interrupted run cleans up" FAIL "containers=${leaked} volumes=${leaked_v} after 20s"
+            # Surface why cleanup failed, not merely that something remains.
+            why=$(grep -i "cleanup failed" "${WORK}/interrupt.log" 2>/dev/null | tail -1 || true)
+            record "interrupted run cleans up" FAIL \
+                "containers=${leaked} volumes=${leaked_v} networks=${leaked_n} after 60s${why:+ - ${why}}"
         fi
     fi
 fi

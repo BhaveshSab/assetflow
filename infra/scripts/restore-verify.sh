@@ -71,6 +71,7 @@ MIGRATOR_CREATED=false
 ADDED_VOLUME=false
 ADDED_NETWORK=false
 CLEANUP_DONE=false
+RETRY_ERROR=''
 POSTGRES_IMAGE="${RESTORE_POSTGRES_IMAGE:-postgres:16.4-alpine}"
 RESTORE_DB="restore_check"
 RESTORE_USER="assetflow"
@@ -123,12 +124,17 @@ STARTED_AT=$(date +%s)
 # volume it had mounted, so an immediate `docker volume rm` can fail with
 # "volume is in use". That is a race, not a real leak; retry a few times, and let
 # the network removal run regardless so one failed step cannot skip the rest.
+#
+# The last error is kept: discarding it is what turned a diagnosable failure into
+# a bare "cleanup failed" line. `retry` still fails silently on the happy path.
 retry() {
     local attempt
+    local last_error=''
     for attempt in 1 2 3 4 5; do
-        if "$@" >/dev/null 2>&1; then return 0; fi
+        if last_error=$("$@" 2>&1); then return 0; fi
         sleep "$attempt"
     done
+    RETRY_ERROR="${last_error}"
     return 1
 }
 cleanup() {
@@ -137,10 +143,10 @@ cleanup() {
     CLEANUP_DONE=true
     # Only remove resources successfully created by this invocation. Each step is
     # independent: a failure is reported but never prevents the remaining ones.
-    if [ "$MIGRATOR_CREATED" = true ]; then retry docker rm -f "$MIGRATOR" || { warn "migration container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$DB_CREATED" = true ]; then retry docker rm -f "$CONTAINER" || { warn "restore container cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_VOLUME" = true ]; then retry docker volume rm "$VOLUME" || { warn "restore volume cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_NETWORK" = true ]; then retry docker network rm "$NETWORK" || { warn "restore network cleanup failed"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$MIGRATOR_CREATED" = true ]; then retry docker rm -f "$MIGRATOR" || { warn "migration container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$DB_CREATED" = true ]; then retry docker rm -f "$CONTAINER" || { warn "restore container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$ADDED_VOLUME" = true ]; then retry docker volume rm "$VOLUME" || { warn "restore volume cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
+    if [ "$ADDED_NETWORK" = true ]; then retry docker network rm "$NETWORK" || { warn "restore network cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
     if [ -n "$WORK_DIR" ]; then rm -rf -- "$WORK_DIR"; fi
     return "$status"
 }
