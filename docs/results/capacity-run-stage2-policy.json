@@ -175,6 +175,19 @@
       }
     },
     {
+      "Sid": "11bCreateSecurityGroupResourceTagControlled",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
       "Sid": "12TagSecurityGroupAtCreation",
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
@@ -274,7 +287,6 @@
       "Sid": "19RunScopedBudget",
       "Effect": "Allow",
       "Action": [
-        "budgets:CreateBudget",
         "budgets:ViewBudget",
         "budgets:ModifyBudget"
       ],
@@ -284,7 +296,6 @@
       "Sid": "20ReadBudgets",
       "Effect": "Allow",
       "Action": [
-        "budgets:DescribeBudgets",
         "budgets:DescribeBudgetActionsForAccount"
       ],
       "Resource": "*"

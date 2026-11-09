@@ -79,6 +79,93 @@ class Stage2PolicyTests(unittest.TestCase):
             condition = statement.get('Condition', {}).get('StringEquals', {})
             self.assertIn('ec2:CreateAction', condition, statement['Sid'])
 
+    # ------------------------------------------------- CreateSecurityGroup
+    def test_create_security_group_is_authorized_on_the_vpc(self):
+        """Regression: creation was denied because this statement was absent.
+
+        CreateSecurityGroup is authorized against the VPC, not the group - the
+        live error named the VPC ARN, so a group-ARN statement would not work.
+        """
+        allows = [s for s in self.statements
+                  if s['Effect'] == 'Allow'
+                  and 'ec2:CreateSecurityGroup' in actions(s)
+                  and any(':vpc/' in r for r in resources(s))]
+        self.assertTrue(allows, 'no CreateSecurityGroup allow on the VPC')
+        self.assertEqual(resources(allows[0]),
+                         [f'arn:aws:ec2:{REGION}:{ACCOUNT}:vpc/vpc-0bcfe8d7f2e811bb3'])
+        condition = allows[0]['Condition']['StringEquals']
+        self.assertEqual(condition.get('aws:RequestedRegion'), REGION)
+
+    def test_create_security_group_is_authorized_on_new_groups(self):
+        """Regression: the attached policy needed a second, group-scoped allow.
+
+        Creation also authorizes against the security-group resource itself, so
+        both statements are required. The group-scoped one must not be a bare
+        wildcard: it carries the region and both run tags.
+        """
+        allows = [s for s in self.statements
+                  if s['Effect'] == 'Allow'
+                  and 'ec2:CreateSecurityGroup' in actions(s)
+                  and any(':security-group/' in r for r in resources(s))]
+        self.assertTrue(allows, 'no CreateSecurityGroup allow on security-group/*')
+        for statement in allows:
+            condition = statement['Condition']['StringEquals']
+            self.assertEqual(condition.get('aws:RequestedRegion'), REGION)
+            self.assertEqual(condition.get('aws:RequestTag/Project'), PROJECT)
+            self.assertEqual(condition.get('aws:RequestTag/RunId'), RUN_ID)
+
+    def test_both_create_security_group_statements_are_present(self):
+        # One covers the VPC, one covers the new group. Losing either breaks
+        # creation, and the failure only appears at run time.
+        allows = [s for s in self.statements
+                  if s['Effect'] == 'Allow' and 'ec2:CreateSecurityGroup' in actions(s)]
+        targets = set()
+        for statement in allows:
+            for resource in resources(statement):
+                if ':vpc/' in resource:
+                    targets.add('vpc')
+                elif ':security-group/' in resource:
+                    targets.add('security-group')
+        self.assertEqual(targets, {'vpc', 'security-group'},
+                         f'expected both resource authorizations, got {targets}')
+
+    def test_creation_time_tagging_covers_the_security_group(self):
+        # Tagging at creation must be permitted for the group, or the single
+        # tagged request fails even though creation itself is allowed.
+        allows = [s for s in self.statements
+                  if s['Effect'] == 'Allow' and 'ec2:CreateTags' in actions(s)
+                  and any(':security-group/' in r for r in resources(s))]
+        self.assertTrue(allows, 'security-group/* missing from CreateTags')
+        condition = allows[0]['Condition']['StringEquals']
+        self.assertEqual(condition.get('ec2:CreateAction'), 'CreateSecurityGroup')
+        self.assertEqual(condition.get('aws:RequestTag/RunId'), RUN_ID)
+
+    def test_no_invalid_budget_action_names_are_present(self):
+        # Regression: CreateBudget and DescribeBudgets do not exist. Creation and
+        # update authorize against ModifyBudget; reads use ViewBudget.
+        allowed = set()
+        for statement in self.statements:
+            if statement['Effect'] == 'Allow':
+                allowed.update(actions(statement))
+        for invalid in ('budgets:CreateBudget', 'budgets:DescribeBudgets'):
+            self.assertNotIn(invalid, allowed, f'{invalid} is not a real IAM action')
+        for valid in ('budgets:ViewBudget', 'budgets:ModifyBudget'):
+            self.assertIn(valid, allowed)
+
+    def test_no_duplicate_statements(self):
+        # Each statement must be distinct: a duplicate would waste the managed
+        # policy size limit without adding any authority.
+        seen = set()
+        for statement in self.statements:
+            key = (
+                statement['Effect'],
+                tuple(sorted(actions(statement))),
+                tuple(sorted(resources(statement))),
+                json.dumps(statement.get('Condition', {}), sort_keys=True),
+            )
+            self.assertNotIn(key, seen, f"duplicate statement: {statement.get('Sid')}")
+            seen.add(key)
+
     # ------------------------------------------------- ARN shape constraints
     def test_security_group_arns_never_use_group_names(self):
         for statement in self.statements:

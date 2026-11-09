@@ -261,6 +261,109 @@ run-tag conditions are all unchanged.
 3. P2 — `run-instances --dry-run`
 4. **stop** for approval before the real launch
 
+---
+
+## Run-owned security group created, and P2 now passes
+
+The corrected policy was attached and made the default. The previously blocked
+step then succeeded on the first attempt.
+
+### Pre-creation duplicate check
+
+| Query | Result |
+|-------|--------|
+| security groups tagged `RunId=cap-20261109t0800z-a7f3` | none |
+| security group named `cap-20261109t0800z-a7f3-sg` | 0 |
+
+Nothing existed, so exactly one group was created.
+
+### The security group
+
+| Property | Value |
+|----------|-------|
+| Group ID | **`sg-012a0191f4e4a9a8c`** |
+| Name | `cap-20261109t0800z-a7f3-sg` |
+| VPC | `vpc-0bcfe8d7f2e811bb3` (the approved VPC) |
+| **Inbound rules** | **none** — empty, as approved. No port 22, no HTTPS ingress |
+| Tags | `Project=assetflow-capacity`, `RunId=cap-20261109t0800z-a7f3`, `Name=assetflow-capacity-sg` |
+
+Tags were supplied **in the creation request** (`--tag-specifications`), not added
+afterwards. The default egress rule (`-1` / `0.0.0.0/0`) is AWS's automatic
+allow-all-outbound and was not modified. No existing security group was touched.
+
+### P2 — `DryRunOperation`
+
+The complete launch request was run with `--dry-run`, naming this group and
+tagging all three resource types:
+
+```
+aws ec2 run-instances \
+  --image-id ami-01e91e94accc42eec --instance-type t3.micro \
+  --subnet-id subnet-01f25dc99e013aa6a \
+  --security-group-ids sg-012a0191f4e4a9a8c \
+  --associate-public-ip-address --credit-specification CpuCredits=standard \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}' \
+  --tag-specifications \
+    'ResourceType=instance,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=cap-20261109t0800z-a7f3},{Key=Name,Value=assetflow-capacity-host}]' \
+    'ResourceType=volume,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=cap-20261109t0800z-a7f3}]' \
+    'ResourceType=network-interface,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=cap-20261109t0800z-a7f3}]' \
+  --dry-run
+```
+
+Exact result:
+
+```
+An error occurred (DryRunOperation) when calling the RunInstances operation:
+Request would have succeeded, but DryRun flag is set.
+```
+
+`DryRunOperation` is the success signal: the request is authorised and would
+have succeeded. **No instance was launched.** This is the same classification as
+`UnauthorizedOperation` in that neither performs the action — but only
+`DryRunOperation` means the request is permitted.
+
+### State after creation and P2
+
+| Item | Value |
+|------|-------|
+| Run-owned security groups | **1** (`sg-012a0191f4e4a9a8c`) |
+| Run-owned instances | **0** |
+| Run-owned volumes | **0** |
+| Run budget | absent |
+| Production `i-0ff4690ec52d0dc01` | `running`, untouched |
+
+### Policy file synced to the attached version
+
+`docs/results/capacity-run-stage2-policy.json` now carries **21 statements**,
+matching the attached policy, with two additions/corrections:
+
+* `11bCreateSecurityGroupResourceTagControlled` — `CreateSecurityGroup` on
+  `security-group/*`, constrained by region and both run request tags. Its
+  absence is what blocked the first attempt.
+* The invalid action names are gone: `budgets:CreateBudget` and
+  `budgets:DescribeBudgets` do not exist. Creation and update authorize against
+  `budgets:ModifyBudget`; reads use `budgets:ViewBudget`.
+
+The file keeps its `Sid` labels, which the attached policy omitted to fit the
+managed-policy size limit. Labels are metadata and add no authority, so the two
+differ in presentation only. Substance is live-verified: the group was created
+and P2 returned `DryRunOperation` under the attached policy.
+
+### Regression coverage
+
+`infra/tests/test_stage2_policy.py` — **19 tests**, six of them new for this
+change:
+
+* `CreateSecurityGroup` is authorised on the exact approved VPC, with the region
+  condition (the resource type the live error named);
+* `CreateSecurityGroup` is authorised on `security-group/*` with region and both
+  run tags, and is not a bare wildcard;
+* **both** resource authorisations are present — losing either breaks creation,
+  and the failure only appears at run time;
+* creation-time `CreateTags` still covers `security-group/*`;
+* the invalid budget action names are absent and the supported ones present;
+* no duplicate statements, so nothing wastes the managed-policy size limit.
+
 ## State after these checks
 
 | Item | Value |
@@ -277,9 +380,9 @@ run-tag conditions are all unchanged.
 | Item | Status |
 |------|--------|
 | P1 production denial (instance, volume, SG, EIP) | **PASS** |
-| P2 launch authorization | **BLOCKED** — needs the run-owned SG to exist (budget permissions need no change) |
-| P3 run-owned positive control | not run (requires the approved instance) |
-| Run-owned SG creation | **BLOCKED** — `ec2:CreateSecurityGroup` absent from the attached policy |
+| P2 launch authorization | **PASS** — `DryRunOperation` |
+| P3 run-owned positive control | not run — requires the approved instance to exist |
+| Run-owned SG creation | **PASS** — `sg-012a0191f4e4a9a8c`, empty inbound, tagged at creation |
 | Items 4–22 | not started |
 
 ## Two further corrections
