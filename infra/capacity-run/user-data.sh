@@ -150,7 +150,6 @@ fi
 MIN_FREE_MB=${MIN_FREE_MB:-12000}
 free_mb() { df -Pm /var/lib/docker 2>/dev/null || df -Pm /; }
 AVAIL_MB=$(free_mb | awk 'NR==2{print $4}')
-ROOT_MB=$(free_mb | awk 'NR==2{print $2}')
 TOTAL_MB=$(df -Pm / | awk 'NR==2{print $2}')
 say "disk: root=${TOTAL_MB}MB available=${AVAIL_MB}MB required=${MIN_FREE_MB}MB"
 printf 'root_mb=%s avail_mb=%s required_mb=%s\n' "$TOTAL_MB" "$AVAIL_MB" "$MIN_FREE_MB" \

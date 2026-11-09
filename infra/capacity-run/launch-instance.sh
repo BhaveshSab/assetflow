@@ -20,7 +20,6 @@ PROFILE="${PROFILE:-capacity}"
 REGION="ap-southeast-2"
 AZ="ap-southeast-2b"
 INSTANCE_TYPE="t3.micro"
-EPHEMERAL_NVME_INSTANCE_TYPE_UNUSED="" # placeholder guarded below
 AMI="ami-01e91e94accc42eec"
 SUBNET="subnet-01f25dc99e013aa6a"
 SG="sg-012a0191f4e4a9a8c"
