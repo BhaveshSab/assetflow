@@ -129,6 +129,12 @@ class RenderedBootstrapTests(unittest.TestCase):
             if '=' in line:
                 k, v = line.split('=', 1)
                 env[k] = v
+        app = self.dir / 'app.env'
+        run(['bash', str(GEN.parent / 'generate-app-config.sh'), str(app), 'cap-test'])
+        for line in app.read_text().splitlines():
+            if '=' in line and not line.startswith('#'):
+                k, v = line.split('=', 1)
+                env[k] = v
         env.update({'LAUNCH_EPOCH': '1700000000',
                     'EXPECTED_COMMIT': 'd' * 40, 'RUN_ID': 'cap-test'})
         env.update(overrides)

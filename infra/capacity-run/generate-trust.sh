@@ -53,7 +53,11 @@ if [ -e "$OUT/tls.key" ] || [ -e "$OUT/evidence.token" ]; then
 fi
 
 # 1. Certificate: fixed DNS SAN, no IP. Client maps the name to the address.
-openssl req -x509 -newkey rsa:2048 -nodes -days "$DAYS" \
+# EC P-256 rather than RSA-2048: same strength class for TLS 1.2/1.3, but the
+# key is ~240 bytes instead of ~1700. This material is embedded in user-data,
+# which EC2 caps at 16 KiB.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+    -nodes -days "$DAYS" \
     -keyout "$OUT/tls.key" -out "$OUT/tls.crt" \
     -subj "/CN=${HOSTNAME}" \
     -addext "subjectAltName=DNS:${HOSTNAME}" \

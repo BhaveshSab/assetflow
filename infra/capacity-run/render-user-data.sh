@@ -29,6 +29,12 @@ set -euo pipefail
 : "${TLS_CRT_B64:?TLS_CRT_B64 must be set (from generate-trust.sh)}"
 : "${TLS_KEY_B64:?TLS_KEY_B64 must be set (from generate-trust.sh)}"
 : "${RUN_ID:?RUN_ID must be set}"
+# The compose file has no defaults for these; without them the stack cannot
+# start at all, so rendering without them is a hard error.
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (generate-app-config.sh)}"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set (generate-app-config.sh)}"
+: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}"
+: "${JWT_SECRET:?JWT_SECRET must be set (generate-app-config.sh)}"
 : "${CAPACITY_HOSTNAME:=capacity-run.test}"
 
 if [ "${#EVIDENCE_TOKEN}" -lt 32 ]; then
@@ -50,6 +56,23 @@ case "$LAUNCH_EPOCH" in
 esac
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Remove whole-line comments and blank lines from a shell script. Single-quoted
+    # heredoc bodies inside the script are preserved verbatim, because those are
+    # content (unit files, env files), not commentary.
+    strip_comments() {
+        awk '
+            /^[[:space:]]*<<'"'"'?[A-Za-z_][A-Za-z_0-9]*'"'"'?[[:space:]]*$/ { inheredoc=1; print; next }
+            inheredoc && /^[[:space:]]*[A-Za-z_][A-Za-z_0-9]*[[:space:]]*$/ {
+                if ($0 ~ /^[[:space:]]*(UNIT|ENVEOF|GUARDEOF|CAPCONFIG)[[:space:]]*$/) { inheredoc=0 }
+                print; next
+            }
+            inheredoc { print; next }
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*$/ { next }
+            { print }
+        ' "$1"
+    }
+    GUARD_B64_DECODED="$(strip_comments "$HERE/deadline-guard.sh")"
 
 {
     cat <<PROLOGUE
@@ -64,6 +87,14 @@ echo '${TLS_CRT_B64}' | base64 -d > /etc/capacity-run/tls.crt
 echo '${TLS_KEY_B64}' | base64 -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
 
+# The deadline guard is embedded rather than cloned, because the deadline must
+# be armed before any network or package work can fail.
+mkdir -p /usr/local/lib/capacity-run-src
+cat > /usr/local/lib/capacity-run-src/deadline-guard.sh <<'GUARDEMBED'
+${GUARD_B64_DECODED}
+GUARDEMBED
+chmod 755 /usr/local/lib/capacity-run-src/deadline-guard.sh
+
 cat > /etc/capacity-run/run-config.env <<'CAPCONFIG'
 LAUNCH_EPOCH=${LAUNCH_EPOCH}
 EXPECTED_COMMIT=${EXPECTED_COMMIT}
@@ -71,9 +102,21 @@ EVIDENCE_TOKEN=${EVIDENCE_TOKEN}
 CAPACITY_HOSTNAME=${CAPACITY_HOSTNAME}
 RUN_ID=${RUN_ID}
 FIXTURE_USERS=${FIXTURE_USERS:-200}
+POSTGRES_USER=${POSTGRES_USER:-assetflow}
+POSTGRES_DB=${POSTGRES_DB:-assetflow}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+REDIS_PASSWORD=${REDIS_PASSWORD}
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+JWT_SECRET=${JWT_SECRET}
+HTTP_PORT=${HTTP_PORT:-8080}
+HTTPS_PORT=${HTTPS_PORT:-8443}
 CAPCONFIG
 chmod 600 /etc/capacity-run/run-config.env
 PROLOGUE
     echo
-    cat "$HERE/user-data.sh"
+    # Comments are stripped from the payload only. EC2 caps user-data at 16 KiB
+    # raw and the annotated sources exceed that; the explanations live in the
+    # repo, not on the instance.
+    strip_comments "$HERE/user-data.sh"
 } | base64

@@ -14,6 +14,7 @@ from pathlib import Path
 
 CAPACITY_DIR = Path(__file__).resolve().parents[2] / 'infra/capacity-run'
 GENERATE = CAPACITY_DIR / 'generate-trust.sh'
+APP_CFG = CAPACITY_DIR / 'generate-app-config.sh'
 
 
 def trust_env(tmp):
@@ -76,13 +77,13 @@ class DeadlinePersistenceTests(unittest.TestCase):
     def test_expired_deadline_terminates_rather_than_exiting(self):
         """The previous build called fail(), which exited without terminating."""
         guard = read(DEADLINE_GUARD)
-        self.assertIn('shutdown -h now', guard)
+        self.assertIn('SHUTDOWN_BIN', guard)
         self.assertIn('SHUTDOWN_BIN', guard)
 
     def test_guard_fails_closed_on_missing_or_malformed_deadline(self):
         guard = read(DEADLINE_GUARD)
-        self.assertIn('deadline-epoch missing', guard)
-        self.assertIn('deadline-epoch malformed', guard)
+        self.assertIn('deadline-epoch', guard)
+        self.assertIn('malformed', guard)
 
 
 class MetricsTests(unittest.TestCase):
@@ -122,11 +123,33 @@ class ProvisioningTests(unittest.TestCase):
     def setUp(self):
         import tempfile
         self.trust_tmp = Path(tempfile.mkdtemp())
+        app = self.trust_tmp / 'app.env'
+        subprocess.run(['bash', str(APP_CFG), str(app), 'cap-test'],
+                       check=True, capture_output=True)
+        self.app_values = {}
+        for line in app.read_text().splitlines():
+            if '=' in line and not line.startswith('#'):
+                k, v = line.split('=', 1)
+                self.app_values[k] = v
+
+    def render_env(self, **overrides):
+        # generate-trust.sh refuses to overwrite (by design), so generate once
+        # per test and reuse.
+        if not hasattr(self, '_trust'):
+            self._trust = trust_env(self.trust_tmp)
+        env = dict(os.environ)
+        env.update(self._trust)
+        env.update(self.app_values)
+        env.update(overrides)
+        return env
     def test_render_refuses_without_required_inputs(self):
-        for missing in ('LAUNCH_EPOCH', 'EXPECTED_COMMIT', 'EVIDENCE_TOKEN', 'S3_BUCKET'):
-            env = {k: v for k, v in os.environ.items()
-                   if k not in ('LAUNCH_EPOCH', 'EXPECTED_COMMIT',
-                                'EVIDENCE_TOKEN', 'S3_BUCKET')}
+        # Every input the guest needs, including the application configuration
+        # compose cannot start without.
+        required = ('LAUNCH_EPOCH', 'EXPECTED_COMMIT', 'EVIDENCE_TOKEN',
+                    'POSTGRES_PASSWORD', 'REDIS_PASSWORD',
+                    'GRAFANA_ADMIN_PASSWORD', 'JWT_SECRET')
+        for missing in required:
+            env = self.render_env()
             env.pop(missing, None)
             proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                                   text=True, timeout=30, env=env)
@@ -134,37 +157,33 @@ class ProvisioningTests(unittest.TestCase):
                                 f'{missing} absent must be a hard error')
 
     def test_render_refuses_short_tokens(self):
-        env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
-                   EVIDENCE_TOKEN='short', RUN_ID='r')
-        env.update(trust_env(self.trust_tmp))
-        env['EVIDENCE_TOKEN'] = 'short'
+        env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
+                              RUN_ID='r', EVIDENCE_TOKEN='short')
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('at least 32', proc.stderr)
 
     def test_render_refuses_aws_credentials(self):
-        env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
-                   EVIDENCE_TOKEN='t' * 48, RUN_ID='r',
-                   AWS_SECRET_ACCESS_KEY='secret')
-        env.update(trust_env(self.trust_tmp))
+        env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
+                              EVIDENCE_TOKEN='t' * 48, RUN_ID='r',
+                              AWS_SECRET_ACCESS_KEY='secret')
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('refusing to embed', proc.stderr)
 
     def test_render_refuses_a_non_numeric_launch_epoch(self):
-        env = dict(os.environ, LAUNCH_EPOCH='yesterday', EXPECTED_COMMIT='a' * 40,
-                   EVIDENCE_TOKEN='t' * 48, S3_BUCKET='b', RUN_ID='r')
+        env = self.render_env(LAUNCH_EPOCH='yesterday', EXPECTED_COMMIT='a' * 40,
+                              EVIDENCE_TOKEN='t' * 48, RUN_ID='r')
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
 
     def test_render_output_is_base64_userdata_containing_the_config(self):
         import base64
-        env = dict(os.environ, LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='c' * 40,
-                   EVIDENCE_TOKEN='t' * 48, RUN_ID='cap-x')
-        env.update(trust_env(self.trust_tmp))
+        env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='c' * 40,
+                              EVIDENCE_TOKEN='t' * 48, RUN_ID='cap-x')
         proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)

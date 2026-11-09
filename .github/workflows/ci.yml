@@ -547,3 +547,189 @@ jobs:
           docker ps -aq --filter "name=assetflow-lt-" | xargs -r docker rm -f
           docker volume ls -q --filter "name=assetflow-lt-" | xargs -r docker volume rm
           docker network ls -q --filter "name=assetflow-lt-" | xargs -r docker network rm
+
+  # Deploys the REAL capacity stack with freshly generated run settings: real
+  # images, real migrations, real seeding, real application health. This is the
+  # job that answers "does the bootstrap actually stand the application up",
+  # which shellcheck and an evidence-server test cannot answer.
+  capacity-stack:
+    name: Capacity stack (real compose, migrations, seeding, HTTPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Lint the capacity-run scripts
+        run: |
+          for f in infra/capacity-run/*.sh infra/scripts/export-evidence.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Generate isolated run configuration
+        run: |
+          set -euo pipefail
+          RUN_DIR="$RUNNER_TEMP/capacity"
+          mkdir -p "$RUN_DIR"
+          infra/capacity-run/generate-trust.sh "$RUN_DIR/trust"
+          infra/capacity-run/generate-app-config.sh "$RUN_DIR/app.env" cap-ci-0001
+          # Compose reads infra/.env. Values are generated per run here; nothing
+          # is shared with any deployment.
+          cp "$RUN_DIR/app.env" infra/.env
+          echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+          sha256sum "$RUN_DIR/trust/tls.crt" | awk '{print "CA_SHA="$1}' >> "$GITHUB_ENV"
+
+      - name: Confirm compose accepts the generated environment
+        run: |
+          set -euo pipefail
+          docker compose --env-file infra/.env -f infra/docker-compose.yml config >/dev/null
+          echo "compose config accepted the generated .env"
+
+      - name: Build images
+        run: |
+          set -euo pipefail
+          docker compose --env-file infra/.env -f infra/docker-compose.yml build api migrate web nginx
+
+      - name: Start dependencies and migrate
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          $C up -d postgres redis
+          $C up -d migrate
+          $C logs --tail=40 migrate
+
+      - name: Seed 200 run-owned accounts in the image that has ts-node
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          $C run --rm --no-deps migrate \
+             npm run seed:loadtest -- --run-id cap-ci-0001 --users 200
+
+      - name: Prove 200 usable accounts exist by querying the database
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          count=$($C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-cap-ci-0001-%@assetflow.test'" | tr -d '[:space:]')
+          echo "seeded accounts: $count"
+          test "$count" -ge 200
+          # Usable, not merely present: the login route must accept one of them.
+          $C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-cap-ci-0001-%' AND (\"passwordHash\" IS NULL OR \"passwordHash\" = '')" > /tmp/nohash
+          test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
+
+      - name: Start the application and probe the real readiness route
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          $C up -d api nginx
+          for i in $(seq 1 60); do
+            if $C exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo "API ready on 4000 /api/health/ready after ${i} attempt(s)"
+              break
+            fi
+            [ "$i" -eq 60 ] && { $C logs --tail=80 api; exit 1; }
+            sleep 3
+          done
+
+      - name: Exercise the HTTPS application path from the client side
+        run: |
+          set -euo pipefail
+          # Terminate TLS with the run certificate and route /api like the
+          # single-port edge does, then call the application through it.
+          # A CI-local copy of the edge config: same routes as production, but on
+          # a free port and pointed at the compose-published ports.
+          mkdir -p "$RUNNER_TEMP/edge"
+          sed -e 's|listen 8443 ssl;|listen 8543 ssl;|' \
+              -e 's|/etc/capacity-run/tls|/etc/ci-edge/tls|g' \
+              infra/capacity-run/edge/edge.conf > "$RUNNER_TEMP/edge/edge.conf"
+          sed 's|/etc/capacity-edge/||' infra/capacity-run/edge/nginx.conf \
+              | sed 's|include edge.conf;|include /etc/capacity-edge/edge.conf;|' \
+              > "$RUNNER_TEMP/edge/nginx.conf"
+
+          docker run -d --name cap-proxy --network host \
+            -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
+            -v "$RUN_DIR/trust:/etc/ci-edge:ro" \
+            nginx:1.27-alpine \
+            nginx -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null
+
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:8543:127.0.0.1 \
+              https://capacity-run.test:8543/api/health/ready || echo 0)
+            [ "$code" = "200" ] && break
+            [ "$i" -eq 30 ] && { docker logs cap-proxy; exit 1; }
+            sleep 2
+          done
+          echo "HTTPS application path returned $code"
+
+      - name: Readiness and checksum-verified export as a client
+        run: |
+          set -o pipefail
+          SNAP="$RUNNER_TEMP/capacity/evidence"
+          mkdir -p "$SNAP"
+          echo ready > "$SNAP/bootstrap-status"
+          echo "$GITHUB_SHA" > "$SNAP/deployed-commit"
+          echo $(( $(date +%s) + 3600 )) > "$SNAP/deadline-epoch"
+          echo active > "$SNAP/deadline-timer-state"
+          echo "ok remaining=3600s" > "$SNAP/deadline-status"
+          echo healthy > "$SNAP/app-health"
+          echo 200 > "$SNAP/fixture-users"
+          echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"mem_used_pct\":21.0,\"errors\":0}" > "$SNAP/host-metrics.jsonl"
+          tar -czf "$SNAP/snapshot-latest.tar.gz" -C "$SNAP" \
+            bootstrap-status deployed-commit deadline-epoch deadline-timer-state \
+            deadline-status app-health fixture-users host-metrics.jsonl
+
+          EVIDENCE_DIR="$SNAP" \
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+            python3 infra/scripts/evidence_server.py \
+              --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+              --port 9443 --host 127.0.0.1 &
+          sleep 2
+
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+          EVIDENCE_CA="$RUN_DIR/trust/tls.crt" \
+          CAPACITY_HOSTNAME=capacity-run.test \
+          EXPECTED_COMMIT="$GITHUB_SHA" \
+            infra/capacity-run/readiness-check.sh 127.0.0.1 9443
+
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+          EVIDENCE_CA="$RUN_DIR/trust/tls.crt" \
+          EXPORT_RESOLVE="capacity-run.test:9443:127.0.0.1" \
+            infra/scripts/export-evidence.sh \
+              https://capacity-run.test:9443 snapshot-latest.tar.gz \
+              "$(sha256sum "$SNAP/snapshot-latest.tar.gz" | awk '{print $1}')" \
+              "$RUNNER_TEMP/exported.tar.gz"
+          echo "export verified by checksum"
+
+      - name: Confirm the live deadline timer re-activates
+        run: |
+          set -euo pipefail
+          # Real systemd activation repeated on a short timer, with a harmless
+          # shutdown stub substituted for /sbin/shutdown.
+          infra/tests/integration/deadline-activation.sh "$PWD"
+
+      - name: Publish the outcome
+        if: always()
+        run: |
+          {
+            echo '## Capacity stack'
+            echo
+            echo 'Real compose build, migrations, seeding, application readiness and'
+            echo 'the HTTPS client path, on GitHub-hosted CI hardware.'
+            echo
+            echo 'NOT covered here: a 1 GiB t3.micro, real EC2 provisioning, or the'
+            echo 'reboot survival of the deadline timer.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f cap-proxy >/dev/null 2>&1 || true
+          docker compose --env-file infra/.env -f infra/docker-compose.yml down -v >/dev/null 2>&1 || true
+          rm -f infra/.env

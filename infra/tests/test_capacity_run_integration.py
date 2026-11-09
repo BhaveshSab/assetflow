@@ -1,5 +1,3 @@
-CERT_HOST = 'capacity-run.test'
-
 """Integration harness: the real evidence server, real TLS, real readiness script.
 
 Unit tests that stub curl prove nothing about the contract. This suite starts the
@@ -28,6 +26,25 @@ from http.client import HTTPSConnection
 from pathlib import Path
 
 CAPACITY_DIR = Path(__file__).resolve().parents[2] / 'infra/capacity-run'
+
+CERT_HOST = 'capacity-run.test'
+
+# The renderer now requires the per-run application configuration, because the
+# compose file has no defaults for these. Generate them once for the suite.
+def _app_env():
+    import tempfile
+    out = Path(tempfile.mkdtemp()) / 'app.env'
+    subprocess.run(['bash', str(CAPACITY_DIR / 'generate-app-config.sh'),
+                    str(out), 'cap-test'], check=True, capture_output=True)
+    values = {}
+    for line in out.read_text().splitlines():
+        if '=' in line and not line.startswith('#'):
+            k, v = line.split('=', 1)
+            values[k] = v
+    return values
+
+
+APP_ENV = _app_env()
 SERVER = Path(__file__).resolve().parents[2] / 'infra/scripts/evidence_server.py'
 READINESS = CAPACITY_DIR / 'readiness-check.sh'
 SNAPSHOT = CAPACITY_DIR / 'snapshot-evidence.sh'
@@ -207,6 +224,7 @@ class ReadinessIntegrationTests(unittest.TestCase):
             'EXPECTED_COMMIT': COMMIT,
             'CAPACITY_HOSTNAME': CERT_HOST,
         })
+        env.update(APP_ENV)
         env.update(env_overrides)
         return subprocess.run(
             ['bash', str(READINESS), '127.0.0.1', str(harness.port)],
@@ -375,7 +393,7 @@ class DeadlineGuardTests(unittest.TestCase):
         proc, marker, _ = self.run_guard(tmp, str(int(time.time()) - 10))
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(marker.exists(), 'expired deadline must call shutdown, not just exit')
-        self.assertIn('terminating', (tmp / 'run/evidence/deadline-status').read_text())
+        self.assertIn('deadline reached', (tmp / 'run/evidence/deadline-status').read_text())
 
     def test_missing_deadline_fails_closed(self):
         tmp = Path(tempfile.mkdtemp())
