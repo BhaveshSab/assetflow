@@ -9,6 +9,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 
 import { AppModule } from '../../src/app.module';
+import { reserveAssetTags } from '../../src/assets/asset-tags';
 import { AuthThrottleService } from '../../src/auth/auth-throttle.service';
 import { configureApp } from '../../src/configure-app';
 import { hashPassword } from '../../src/common/security/password';
@@ -201,18 +202,23 @@ export async function createAsset(
   },
 ) {
   const prisma = app.get(PrismaService);
-  return prisma.asset.create({
-    data: {
-      assetTag:
-        options.assetTag ??
-        `AF-${Math.floor(Math.random() * 100000)
-          .toString()
-          .padStart(5, '0')}`,
-      name: options.name,
-      categoryId: options.categoryId,
-      isBookable: options.isBookable ?? false,
-      location: options.location ?? 'HQ-1F',
-      status: options.status ?? 'AVAILABLE',
-    },
+  return prisma.$transaction(async (tx) => {
+    // Only invent a tag when the caller asks for one. The previous default was
+    // a random `AF-#####`, which meant a test that asserted on counter
+    // arithmetic was actually reasoning about an asset the counter never
+    // issued: the tag had a different width and could collide with another
+    // random tag or fall inside the counter's own range. When no tag is given,
+    // allocate the next real one from the same counter the API uses.
+    const assetTag = options.assetTag ?? (await reserveAssetTags(tx, 1))[0];
+    return tx.asset.create({
+      data: {
+        assetTag,
+        name: options.name,
+        categoryId: options.categoryId,
+        isBookable: options.isBookable ?? false,
+        location: options.location ?? 'HQ-1F',
+        status: options.status ?? 'AVAILABLE',
+      },
+    });
   });
 }
