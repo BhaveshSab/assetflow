@@ -154,6 +154,113 @@ performed a mutation. The report keeps these separate deliberately: an
 `AccessDenied` from a real call and a `DryRunOperation` from a dry-run are not
 the same evidence.
 
+---
+
+## Run-owned security group creation — BLOCKED (missing Allow)
+
+The approved step was to create exactly one run-owned security group, tagged
+`Project=assetflow-capacity` / `RunId=cap-20261109t0800z-a7f3`, in
+`vpc-0bcfe8d7f2e811bb3`, with **no inbound rules**. It did not succeed.
+
+### Exact error
+
+```
+An error occurred (UnauthorizedOperation) when calling the CreateSecurityGroup
+operation: User: arn:aws:iam::459252806274:user/assetflow-capacity-run is not
+authorized to perform: ec2:CreateSecurityGroup
+on resource: arn:aws:ec2:ap-southeast-2:459252806274:vpc/vpc-0bcfe8d7f2e811bb3
+because no identity-based policy allows the ec2:CreateSecurityGroup action.
+```
+
+Read it precisely: **"no identity-based policy allows"**. This is a *missing
+allow*, not an explicit deny. That distinguishes it from every P1 result, which
+reported "with an explicit deny in an identity-based policy".
+
+### Narrowing the cause
+
+| Test | Result | Conclusion |
+|------|--------|------------|
+| `create-security-group` with the run tags | `no identity-based policy allows` | — |
+| `create-security-group` with **no tags at all** | `no identity-based policy allows` | the failure is **not** a tag-condition mismatch: removing the condition does not help |
+| `describe-security-groups` | succeeds | read access is intact; only creation is absent |
+
+`CreateSecurityGroup` is therefore **absent from the attached policy**. The PR
+policy file does contain it as `11CreateSecurityGroupInApprovedVpc`, so the
+attached policy and the PR file differ by at least that statement — consistent
+with the reviewer's note that statement labels were removed to fit the
+managed-policy limit, which may have dropped this statement along with the
+metadata.
+
+### What was NOT done
+
+No permission was widened to make the call pass. The tag conditions, the VPC
+scoping and the run-tag requirements were not relaxed, and no substitute
+resource was created. The call was retried once, without tags, purely as a
+**diagnostic** to separate "statement missing" from "condition wrong"; a
+successful untagged call would have been reported and discarded, and it did not
+succeed.
+
+### State after the attempt
+
+| Item | Value |
+|------|-------|
+| Run-owned security groups | **0** |
+| Run-owned instances | **0** |
+| Run-owned volumes | **0** |
+| Run budget | absent |
+| Production `i-0ff4690ec52d0dc01` | `running`, untouched |
+| Residue of the failed call | **none** |
+
+### Smallest necessary correction
+
+Add one statement to the attached policy. This is the PR policy's own statement,
+unchanged:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "ec2:CreateSecurityGroup",
+  "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:vpc/vpc-0bcfe8d7f2e811bb3",
+  "Condition": {
+    "StringEquals": {
+      "aws:RequestedRegion": "ap-southeast-2",
+      "aws:RequestTag/Project": "assetflow-capacity",
+      "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+    }
+  }
+}
+```
+
+Also required for the tagged creation to succeed in one call — and also
+possibly dropped with the labels:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "ec2:CreateTags",
+  "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+  "Condition": {
+    "StringEquals": {
+      "aws:RequestedRegion": "ap-southeast-2",
+      "ec2:CreateAction": "CreateSecurityGroup",
+      "aws:RequestTag/Project": "assetflow-capacity",
+      "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+    }
+  }
+}
+```
+
+These are the same two statements the PR already carries. Nothing new is being
+requested, and the production denies, the instance-type restriction and the
+run-tag conditions are all unchanged.
+
+### Steps still outstanding
+
+1. attach the correction above
+2. create the run-owned security group (approved, one group, empty inbound)
+3. P2 — `run-instances --dry-run`
+4. **stop** for approval before the real launch
+
 ## State after these checks
 
 | Item | Value |
@@ -172,7 +279,8 @@ the same evidence.
 | P1 production denial (instance, volume, SG, EIP) | **PASS** |
 | P2 launch authorization | **BLOCKED** — needs the run-owned SG to exist (budget permissions need no change) |
 | P3 run-owned positive control | not run (requires the approved instance) |
-| Items 3–22 | not started |
+| Run-owned SG creation | **BLOCKED** — `ec2:CreateSecurityGroup` absent from the attached policy |
+| Items 4–22 | not started |
 
 ## Two further corrections
 
