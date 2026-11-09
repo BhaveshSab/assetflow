@@ -265,6 +265,33 @@ run-tag conditions are all unchanged.
 
 ## Run-owned security group created, and P2 now passes
 
+### Correction: the sweep query was broken, not the state
+
+Earlier sweeps in this report used `--query 'length(@[])'` against
+`describe-security-groups`. That expression is invalid for this call — security
+groups are returned under a wrapper object, not a bare list — so it errored. The
+error was swallowed by `2>/dev/null || 0`, which printed **0**.
+
+So "0 run-owned security groups" in the earlier tables was a measurement failure,
+not a real result. The group was never missing. Repeating the same sweep with the
+correct array names:
+
+| Resource | Correct query | Result |
+|----------|---------------|--------|
+| instances | `length(Reservations)` | **0** |
+| volumes | `length(Volumes)` | **0** |
+| security groups | `length(SecurityGroups)` | **1** |
+
+The instance and volume counts are unaffected — `length(@[])` is valid for those
+calls — but the security-group count in every earlier sweep was produced by a
+failing command. That is why it is recorded here rather than silently amended.
+
+Cross-checked directly: `sg-012a0191f4e4a9a8c` answers
+`describe-security-groups --group-ids`, carries all three tags, and lists in the
+approved VPC alongside `default` and `launch-wizard-1`.
+
+
+
 The corrected policy was attached and made the default. The previously blocked
 step then succeeded on the first attempt.
 
