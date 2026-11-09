@@ -256,6 +256,15 @@ class LaunchCommandDriftTests(unittest.TestCase):
         self.assertTrue(self.path.exists())
         self.assertTrue(os.access(self.path, os.X_OK))
 
+    def test_launcher_is_executable_in_the_git_index(self):
+        """A working-copy chmod is not enough: CI checks out from the index."""
+        try:
+            out = subprocess.check_output(
+                ['git', 'ls-files', '-s', str(self.path)], cwd=CAPACITY.parents[1], text=True)
+        except Exception as exc:  # pragma: no cover - no git in some sandboxes
+            self.skipTest('git metadata unavailable: %s' % exc)
+        self.assertTrue(out.startswith('100755'), out.strip())
+
     def test_tags_the_network_interface(self):
         # Omitting this is exactly what the first dry-run was denied for.
         self.assertIn('ResourceType=network-interface', self.text)
