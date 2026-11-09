@@ -30,10 +30,26 @@ SHUTDOWN_BIN="${SHUTDOWN_BIN:-/sbin/shutdown}"
 
 emit() { printf '%s\n' "$1" > "$STATUS_FILE" 2>/dev/null || true; }
 
+# Diagnostics go to the console as well as stdout. On the run that exposed this
+# the journal died of "No space left on device", so journald was not a place a
+# post-mortem could read from. /dev/console is independent of the root volume
+# having free space and lands in the EC2 system log.
+console_log() {
+    printf '[deadline] %s\n' "$1"
+    if [ -w /dev/console ]; then
+        printf 'capacity-deadline: %s\n' "$1" > /dev/console 2>/dev/null || true
+    fi
+}
+
+# Record the environment once per invocation so a failing unit explains itself
+# without needing the journal: which deadline file, which value, what time is
+# now, and what it is about to do.
+console_log "run dir=$RUN_DIR deadline_file=$DEADLINE_FILE now=$(date +%s)"
+
 shut_down() {
     # Write the reason before shutting down so the evidence archive explains it.
     emit "$1"
-    printf '[deadline] %s - shutting down\n' "$1"
+    console_log "SHUTDOWN: $1"
     "$SHUTDOWN_BIN" -h now || true
     exit 0
 }
@@ -67,4 +83,4 @@ fi
 
 REMAINING=$(( DEADLINE - NOW ))
 emit "ok remaining=${REMAINING}s"
-printf '[deadline] %ss remaining (deadline %s)\n' "$REMAINING" "$DEADLINE"
+console_log "${REMAINING}s remaining (deadline $DEADLINE)"

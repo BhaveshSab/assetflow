@@ -239,5 +239,113 @@ class PayloadSizeTests(unittest.TestCase):
         self.assertIn('| base64', text)
 
 
+class LaunchCommandDriftTests(unittest.TestCase):
+    """The first real launch drifted from the approved configuration twice.
+
+    The network interface was untagged, which the stage 2 policy denies, and no
+    block device mapping was supplied, so the AMI's 8 GB root was used instead of
+    the approved 30 GB. Both were operator errors in a hand-reconstructed command
+    line. One launcher makes them unexpressible.
+    """
+
+    def setUp(self):
+        self.path = CAPACITY / 'launch-instance.sh'
+        self.text = self.path.read_text(encoding='utf-8')
+
+    def test_launcher_exists_and_is_executable(self):
+        self.assertTrue(self.path.exists())
+        self.assertTrue(os.access(self.path, os.X_OK))
+
+    def test_tags_the_network_interface(self):
+        # Omitting this is exactly what the first dry-run was denied for.
+        self.assertIn('ResourceType=network-interface', self.text)
+
+    def test_tags_instance_volume_and_network_interface(self):
+        for rt in ('ResourceType=instance', 'ResourceType=volume',
+                   'ResourceType=network-interface'):
+            self.assertIn(rt, self.text)
+
+    def test_root_mapping_is_explicit_and_sized(self):
+        self.assertIn('--block-device-mappings', self.text)
+        self.assertIn('VolumeSize=$ROOT_GB', self.text)
+        self.assertIn('ROOT_GB=30', self.text)
+
+    def test_root_mapping_uses_the_ami_root_device_name(self):
+        # Hardcoding /dev/sda1 would be a guess; the AMI is asked.
+        self.assertIn('RootDeviceName', self.text)
+        self.assertIn('DeviceName=$AMI_ROOT_DEV', self.text)
+
+    def test_root_volume_is_deleted_on_termination(self):
+        self.assertIn('DeleteOnTermination=true', self.text)
+
+    def test_shutdown_terminates(self):
+        self.assertIn('--instance-initiated-shutdown-behavior terminate', self.text)
+
+    def test_standard_cpu_credits(self):
+        self.assertIn('CpuCredits=standard', self.text)
+
+    def test_client_token_is_required(self):
+        self.assertIn('CLIENT_TOKEN:?', self.text)
+
+    def test_uncertain_response_is_reconciled_not_retried(self):
+        self.assertIn('reconcile', self.text.lower())
+        self.assertIn('Idempotent', self.text)
+
+    def test_refuses_to_duplicate_an_existing_instance(self):
+        self.assertIn('refusing to duplicate', self.text)
+
+    def test_payload_size_and_commit_are_checked(self):
+        self.assertIn('16384', self.text)
+        self.assertIn('EXPECTED_COMMIT', self.text)
+
+    def test_pins_the_approved_ami_subnet_and_sg(self):
+        for v in ('ami-01e91e94accc42eec', 'subnet-01f25dc99e013aa6a',
+                  'sg-012a0191f4e4a9a8c'):
+            self.assertIn(v, self.text)
+
+
+class DiskPreflightTests(unittest.TestCase):
+    """The production run died of disk exhaustion, not of application code."""
+
+    def setUp(self):
+        self.text = USER_DATA.read_text(encoding='utf-8')
+
+    def test_preflight_runs_before_any_build_work(self):
+        pf = self.text.index('disk preflight')
+        for later in ('== code ==', 'compose build', 'npm ci'):
+            if later in self.text:
+                self.assertLess(pf, self.text.index(later),
+                                'disk preflight must precede %s' % later)
+
+    def test_preflight_refuses_below_a_floor(self):
+        self.assertIn('MIN_FREE_MB', self.text)
+        self.assertIn('insufficient disk', self.text)
+
+    def test_preflight_records_its_observation(self):
+        self.assertIn('disk-preflight', self.text)
+
+    def test_preflight_fails_closed_on_unreadable_df(self):
+        # An empty reading must not be treated as infinite space.
+        self.assertIn('-z "$AVAIL_MB"', self.text)
+
+
+class DeadlineDiagnosticsTests(unittest.TestCase):
+    """journald died of ENOSPC on the failed run, so it could not be the record."""
+
+    def setUp(self):
+        self.text = GUARD.read_text(encoding='utf-8')
+
+    def test_logs_to_the_console_not_only_stdout(self):
+        self.assertIn('/dev/console', self.text)
+
+    def test_recorded_environment_is_explainable(self):
+        self.assertIn('deadline_file=$DEADLINE_FILE', self.text)
+
+    def test_every_exit_path_is_success(self):
+        # A "failed" unit must not be produced by this script's own exit code.
+        self.assertNotIn('exit 1', self.text)
+
+
+
 if __name__ == '__main__':
     unittest.main()

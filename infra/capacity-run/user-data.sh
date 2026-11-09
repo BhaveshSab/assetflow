@@ -141,6 +141,24 @@ if [ ! -f /swapfile ]; then
     chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
 fi
 
+# ------------------------------------------------- 2b. disk preflight
+# The first real run died here, not in any application code: the image export hit
+# "failed to write compressed diff / no space left on device", journald hit the
+# same thing, and the bootstrap reported only the generic "migration failed".
+# Free space is checked before any build work so an under-sized root volume is
+# reported as an under-sized root volume, while there is still room to say so.
+MIN_FREE_MB=${MIN_FREE_MB:-12000}
+free_mb() { df -Pm /var/lib/docker 2>/dev/null || df -Pm /; }
+AVAIL_MB=$(free_mb | awk 'NR==2{print $4}')
+ROOT_MB=$(free_mb | awk 'NR==2{print $2}')
+TOTAL_MB=$(df -Pm / | awk 'NR==2{print $2}')
+say "disk: root=${TOTAL_MB}MB available=${AVAIL_MB}MB required=${MIN_FREE_MB}MB"
+printf 'root_mb=%s avail_mb=%s required_mb=%s\n' "$TOTAL_MB" "$AVAIL_MB" "$MIN_FREE_MB" \
+    > "$EVIDENCE_DIR/disk-preflight"
+if [ -z "$AVAIL_MB" ] || [ "$AVAIL_MB" -lt "$MIN_FREE_MB" ]; then
+    die "insufficient disk: ${AVAIL_MB:-unknown}MB free, ${MIN_FREE_MB}MB required (root=${TOTAL_MB:-unknown}MB)"
+fi
+
 # ---------------------------------------------------------------- 3. code
 say "== code =="
 rm -rf "$APP_DIR"
