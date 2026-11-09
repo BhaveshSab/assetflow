@@ -685,6 +685,16 @@ jobs:
           # which is where both files are mounted in the container.
           cp infra/capacity-run/edge/nginx.conf "$RUNNER_TEMP/edge/nginx.conf"
 
+          # Validate first. `nginx -t` in the same image reports the exact config
+          # error on stdout, which "container exited" does not.
+          echo "--- nginx config test ---"
+          docker run --rm --entrypoint nginx \
+            -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
+            -v "$RUN_DIR/trust:/etc/capacity-run:ro" \
+            nginx:1.27-alpine \
+            -t -c /etc/capacity-edge/nginx.conf 2>&1 | tee /tmp/nginx-t.log || {
+              echo "::error title=nginx config::the edge config is invalid"; exit 1; }
+
           # --entrypoint bypasses the image's default entrypoint, which rewrites
           # configuration and starts its own nginx on :80; that ignores -c, fails
           # to bind and the container exits.
@@ -708,7 +718,8 @@ jobs:
               --resolve capacity-run.test:8543:127.0.0.1 \
               https://capacity-run.test:8543/api/health/ready || echo 0)
             [ "$code" = "200" ] && break
-            [ "$i" -eq 30 ] && { docker logs cap-proxy; exit 1; }
+            [ "$i" -eq 30 ] && { echo '::error title=edge::the proxy never returned 200';
+              docker logs cap-proxy; ss -ltnp || true; exit 1; }
             sleep 2
           done
           echo "HTTPS application path returned $code"
