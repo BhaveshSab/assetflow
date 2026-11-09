@@ -628,8 +628,14 @@ jobs:
           # the migrate stage sets NODE_ENV=production which makes ts-node apply
           # production type rules and fail on type-only diagnostics that the
           # build has already validated.
+          # LOADTEST_PASSWORD is mandatory above one account: the seed refuses
+          # otherwise. Taken from the generated run configuration, exactly as
+          # the bootstrap does.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          test -n "$LT_PW" || { echo "::error::LOADTEST_PASSWORD missing from .env"; exit 1; }
           rc=0
-          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true migrate \
+          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
+             -e LOADTEST_PASSWORD="$LT_PW" migrate \
              npm run seed:loadtest -- --run-id cap-ci-0001 --users 200 2>&1 | tee /tmp/seed.log || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::error title=seed::seeding failed with exit ${rc}"

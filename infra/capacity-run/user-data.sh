@@ -155,7 +155,7 @@ printf '%s' "$DEPLOYED" > "$EVIDENCE_DIR/deployed-commit"
 # compose has no defaults for POSTGRES_PASSWORD/REDIS_PASSWORD, so it cannot
 # start without these. Generated per run; nothing shared with production.
 say "== application configuration =="
-for required in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD JWT_SECRET; do
+for required in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD JWT_SECRET LOADTEST_PASSWORD; do
     eval "value=\${$required:-}"
     [ -n "${value:-}" ] || die "$required is empty: compose cannot start"
 done
@@ -194,9 +194,13 @@ $COMPOSE up -d migrate        || die "migration failed"
 # has ts-node + prisma/.
 say "== fixtures =="
 USERS="${FIXTURE_USERS:-200}"
-$COMPOSE run --rm --no-deps migrate \
+# LOADTEST_PASSWORD is mandatory for more than one account: the seed refuses to
+# create 200 accounts without it. ts-node runs transpile-only because the seed is
+# executed here, not type-checked, and the migrate stage sets NODE_ENV=production.
+$COMPOSE run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
+    -e LOADTEST_PASSWORD="$LOADTEST_PASSWORD" migrate \
     npm run seed:loadtest -- --run-id "${RUN_ID}" --users "$USERS" \
-    > "$EVIDENCE_DIR/seed.log" 2>&1 || die "fixture seeding failed"
+    > "$EVIDENCE_DIR/seed.log" 2>&1 || die "fixture seeding failed (see seed.log)"
 
 # Proof is a COUNT IN THE DATABASE, not the seed exit code nor a written file.
 SEEDED=$($COMPOSE exec -T postgres psql -U "${POSTGRES_USER:-assetflow}" \

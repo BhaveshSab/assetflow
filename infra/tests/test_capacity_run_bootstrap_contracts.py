@@ -126,6 +126,23 @@ class SeedingTests(unittest.TestCase):
         self.assertIn('SELECT count(*)', self.src)
         self.assertIn('fixture-users', self.src)
 
+    def test_loadtest_password_is_supplied(self):
+        """The seed refuses to create more than one account without this, so a
+        200-account fixture cannot be seeded unless the bootstrap provides it."""
+        self.assertIn('LOADTEST_PASSWORD', self.src)
+        self.assertIn('-e LOADTEST_PASSWORD=', self.src)
+
+    def test_generated_loadtest_password_has_the_expected_shape(self):
+        import tempfile
+        out = Path(tempfile.mkdtemp()) / 'app.env'
+        subprocess.run(['bash', str(APP_CFG), str(out), 'cap-test'],
+                       check=True, capture_output=True)
+        value = [l.split('=', 1)[1] for l in out.read_text().splitlines()
+                 if l.startswith('LOADTEST_PASSWORD=')][0]
+        self.assertEqual(len(value), 40, 'load-test.sh generates 40 characters')
+        for ch in '/+=':
+            self.assertNotIn(ch, value, 'must survive argv and env-file quoting')
+
     def test_run_scoped_isolation_is_used(self):
         self.assertIn('--run-id', self.src)
         self.assertIn('cap-2026', self.src) if 'cap-2026' in self.src else None

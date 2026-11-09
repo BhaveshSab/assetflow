@@ -35,6 +35,7 @@ set -euo pipefail
 : "${REDIS_PASSWORD:?REDIS_PASSWORD must be set (generate-app-config.sh)}"
 : "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}"
 : "${JWT_SECRET:?JWT_SECRET must be set (generate-app-config.sh)}"
+: "${LOADTEST_PASSWORD:?LOADTEST_PASSWORD must be set: the seed refuses >1 account without it}"
 : "${CAPACITY_HOSTNAME:=capacity-run.test}"
 
 if [ "${#EVIDENCE_TOKEN}" -lt 32 ]; then
@@ -109,6 +110,7 @@ REDIS_PASSWORD=${REDIS_PASSWORD}
 GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
 GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
 JWT_SECRET=${JWT_SECRET}
+LOADTEST_PASSWORD=${LOADTEST_PASSWORD}
 HTTP_PORT=${HTTP_PORT:-8080}
 HTTPS_PORT=${HTTPS_PORT:-8443}
 CAPCONFIG
