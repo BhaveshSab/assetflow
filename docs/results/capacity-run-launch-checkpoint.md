@@ -451,7 +451,7 @@ happen.
 
 | Item | Pinned to |
 |------|-----------|
-| **CI-tested commit** | the SHA whose run is green in PR #31; the launch pins exactly that commit, not the branch tip |
+| **CI-tested commit** | **`6533edf`** — run `42604425610`, all six jobs success. The launch pins this commit, not the branch tip |
 | AMI | `ami-01e91e94accc42eec` (by ID, never "latest") |
 | Runtime | Node/dependencies as locked in that commit; no floating tags |
 | Load script | `infra/scripts/k6-load.js` at that commit |
