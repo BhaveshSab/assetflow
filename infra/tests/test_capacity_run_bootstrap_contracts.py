@@ -300,6 +300,20 @@ class LaunchCommandDriftTests(unittest.TestCase):
         self.assertIn('reconcile', self.text.lower())
         self.assertIn('Idempotent', self.text)
 
+    def test_tag_specs_are_separate_arguments(self):
+        """The CLI rejects more than one ResourceType per --tag-specifications value.
+
+        Joining them with a comma or a space fails at param validation, which was
+        only discovered by actually dry-running the launcher against AWS.
+        """
+        self.assertIn('TAGSPECS=(', self.text)
+        self.assertIn('"${TAGSPECS[0]}"', self.text)
+        self.assertNotIn('TAGSPEC="$TAGSPEC', self.text)
+
+    def test_user_data_path_is_native_for_the_cli(self):
+        """A native binary cannot open /c/... inside a file:// URL."""
+        self.assertIn('cygpath -w', self.text)
+
     def test_refuses_to_duplicate_an_existing_instance(self):
         self.assertIn('refusing to duplicate', self.text)
 

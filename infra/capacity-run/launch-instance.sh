@@ -42,6 +42,16 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The AWS CLI is a native binary: it cannot open an MSYS-style /c/... path inside a
+# file:// URL even though bash can. Convert to a native path so --user-data works
+# the same way from Git Bash and from Linux.
+case "$USER_DATA" in
+    /?/*)
+        if command -v cygpath >/dev/null 2>&1; then
+            USER_DATA="$(cygpath -w "$USER_DATA")"
+        fi ;;
+esac
+
 die() { printf '[launch][FATAL] %s\n' "$*" >&2; exit 1; }
 say() { printf '[launch] %s\n' "$*"; }
 
@@ -100,9 +110,13 @@ grep -q "$EXPECTED_COMMIT" "$USER_DATA" || die "user-data does not contain the p
 # ------------------------------------------------------------ B. the launch
 # Every resource type that the policy tags is tagged explicitly. Omitting the
 # network interface here is what caused the first dry-run to be denied.
-TAGSPEC="ResourceType=instance,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID},{Key=Name,Value=$RUN_ID-instance}]"
-TAGSPEC="$TAGSPEC ResourceType=volume,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID}]"
-TAGSPEC="$TAGSPEC ResourceType=network-interface,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID}]"
+# One --tag-specifications flag per resource type. The CLI rejects more than one
+# ResourceType in a single value, so these are passed as separate arguments.
+TAGSPECS=(
+  "ResourceType=instance,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID},{Key=Name,Value=$RUN_ID-instance}]"
+  "ResourceType=volume,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID}]"
+  "ResourceType=network-interface,Tags=[{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$RUN_ID}]"
+)
 
 # The root mapping is explicit and uses the AMI's real root device name. Without
 # this the AMI default applies and the volume silently comes out too small.
@@ -117,7 +131,7 @@ ARGS=(--profile "$PROFILE" --region "$REGION"
       --instance-initiated-shutdown-behavior terminate
       --client-token "$CLIENT_TOKEN"
       --user-data "file://$USER_DATA"
-      --tag-specifications "$TAGSPEC"
+      --tag-specifications "${TAGSPECS[0]}" "${TAGSPECS[1]}" "${TAGSPECS[2]}"
       --block-device-mappings "$BDM")
 
 say "== launch configuration =="
