@@ -184,6 +184,13 @@ newer one was still running. The accurate sequence, all confirmed from Actions:
 | `46519f6` | — | passed |
 | `ed6afda` | [`42591789902`](https://github.com/BhaveshSab/assetflow/actions/runs/42591789902) | **failed** — Restore integration: two leak assertions |
 | `509f194` | [`42594986863`](https://github.com/BhaveshSab/assetflow/actions/runs/42594986863) | **success** — all six jobs |
+| `a414f6c` | none | no run exists: this commit changes only `docs/results/`, and CI is triggered per `pull_request` synchronisation |
+
+The last commit with a workflow run is therefore `509f194`, and the final
+`a414f6c` is documentation-only. It is accurate to say "CI passed at `509f194`,
+and the only change after it is this report" — it would **not** be accurate to
+say "CI passed at `a414f6c`", because no run exists for that SHA. Anyone
+auditing should check `509f194`, not the head.
 
 `ed6afda` did not pass. It failed on `interrupted run cleans up`
 (`containers=0 volumes=1`) and `no restore resources leaked`
