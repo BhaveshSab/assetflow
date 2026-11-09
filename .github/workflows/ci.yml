@@ -311,6 +311,9 @@ jobs:
       METRICS_ENABLED: 'true'
       LOADTEST_USERS: '5'
       LOADTEST_PASSWORD: ci-only-fixture-password
+      # The seeder and the driver must name the same run, or k6 signs in as an
+      # account that was never created. One value, defined once.
+      LOADTEST_RUN_ID: ci-load-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -324,7 +327,7 @@ jobs:
           npm ci --include=dev
           npx prisma generate
           npx prisma migrate deploy
-          npm run seed:loadtest -- --run-id ci-load-${{ github.run_id }}-${{ github.run_attempt }} --users 5 --assets 500
+          npm run seed:loadtest -- --run-id "$LOADTEST_RUN_ID" --users 5 --assets 500
           npm run build
       - name: Test k6 summary reporting
         run: node --test infra/tests/k6-summary.test.mjs
@@ -347,7 +350,7 @@ jobs:
             -v "$PWD:/work" -w /work \
             -e BASE_URL=http://localhost:4000 -e VUS=5 -e DURATION=45s \
             -e SLEEP=1 -e P95_THRESHOLD_MS=1000 -e ERROR_RATE_THRESHOLD=0.01 \
-            -e LOADTEST_USERS -e LOADTEST_PASSWORD -e TAG=ci \
+            -e LOADTEST_USERS -e LOADTEST_PASSWORD -e LOADTEST_RUN_ID -e TAG=ci \
             -e SUMMARY_FILE=test-results/k6-summary.txt \
             grafana/k6:0.54.0 run infra/scripts/k6-load.js
           node --input-type=module - <<'VERIFY'

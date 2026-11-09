@@ -28,7 +28,9 @@ set -uo pipefail
 REPO="${1:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$REPO" || { echo "cannot enter ${REPO}" >&2; exit 1; }
 
-RUN_ID="$(date -u '+%Y%m%dt%H%M%sz')-$$"
+# Lower-case: the seed script accepts only [a-z0-9-] in a run id, and a
+# upper-case form would be rejected there while looking fine here.
+RUN_ID="$(date -u '+%Y%m%dt%H%M%S')-$$"
 PREFIX="assetflow-lt-${RUN_ID}"
 PG_IMAGE="${POSTGRES_IMAGE:-postgres:16.4-alpine}"
 SHA="$(git rev-parse HEAD)"
@@ -334,6 +336,11 @@ fi
 seed "$RUN_B" --delete >/dev/null 2>&1 || true
 
 echo "== owned-resource cleanup =="
+# Tear down what this run created BEFORE checking, otherwise the check simply
+# observes the harness's own live database and reports a leak that is not one.
+if [ "$CONTAINER_CREATED" = true ]; then retry docker rm -f "$CONTAINER" || true; fi
+if [ "$VOLUME_CREATED" = true ]; then retry docker volume rm "$VOLUME" || true; fi
+if [ "$NETWORK_CREATED" = true ]; then retry docker network rm "$NETWORK" || true; fi
 leaked=0
 leaked_v=0
 leaked_n=0
