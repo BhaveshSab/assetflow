@@ -72,3 +72,79 @@ Validated at `d0cb910`: 50 contract tests, full clean-clone suite, CI run
 Zero active run-owned instances, zero volumes, zero elastic IPs. One inbound rule
 `tcp/8443` from `157.48.109.250/32` remains on the run SG, left in place because its
 removal was not approved for this attempt. Production running. No load test was run.
+
+## Correction: the console was never empty
+
+I previously recorded the console as empty (2 bytes) and treated the cause as unknown.
+That was wrong. Retrieval was delayed, not absent.
+
+| Retrieval | When | Result |
+|---|---|---|
+| during the attempt | ~15:31Z | `len=0` |
+| after termination | 15:43Z | `len=65229`, `Timestamp=2026-11-09T15:34:45Z` |
+
+An empty `GetConsoleOutput` proves only that nothing was available **at that moment**.
+It is not evidence that the prelude did not run, and it must never be described as one.
+The underlying fault was always knowable from the guest; I simply asked too early.
+
+## Proven root cause 1: a short SHA could never match
+
+The payload carried `EXPECTED_COMMIT=e4fe01b`, but the bootstrap compares against
+`git rev-parse HEAD`, which is always 40 characters:
+
+```
+[bootstrap] disk: root=28691MB available=23876MB required=12000MB
+[bootstrap] == code ==
+[bootstrap][FATAL] deployed e4fe01babc0e1eeade2808a59d9fdeed5260b289 != expected e4fe01b
+```
+
+The guard was right to refuse. Shutdown followed, and `InstanceInitiatedShutdownBehavior`
+deleted the volume. Note the disk line: a real 30 GB root with 23 876 MB free, so the
+earlier 8 GB exhaustion was genuinely fixed and is not a factor here.
+
+The launcher now resolves a short SHA through `git rev-parse --verify` and refuses to
+render if it cannot, so this cannot be expressed again.
+
+## Proven root cause 2: the deadline guard was deployed without an interpreter
+
+`capacity-deadline.service` failed from its very first tick in both attempts, at ~28s:
+
+```
+Started capacity-deadline.timer - deadline timer (absolute, launch-based).
+Starting capacity-deadline.service...
+FAILED Failed to start capacity-deadline.service - capacity run deadline enforcement.
+```
+
+No `capacity-deadline:` line ever appeared, so the guard body never ran. The cause is in
+the renderer: `strip_comments` deleted every line beginning with `#`, including the
+guard's `#!/bin/bash`. The deployed file had no shebang, so `ExecStart` failed instantly.
+The strip now preserves a shebang, and the embedded guard is verified to execute through
+it and to fail closed on a malformed deadline.
+
+This closes the deadline-service diagnosis that stayed unresolved across both attempts,
+and it means the earlier FAILED was not a logic fault, not a disk effect, and not a
+journald effect.
+
+## What was NOT wrong
+
+* `set -e` did not power the instance off. The shutdown came from `die()` and from
+  `InstanceInitiatedShutdownBehavior=terminate`, both intentional.
+* npm deprecation warnings played no part.
+* No SQL migration failed; the `migration failed` label is a generic `die` message.
+* The disk was correctly sized.
+
+## Observability, proven on the full payload
+
+Diagnostics were previously absent exactly where they were needed. Executing the
+**complete rendered payload** (not a snippet) in a sandbox against the real control flow
+now produces, for the very failure that killed this attempt:
+
+```
+capacity-bootstrap: FATAL: deployed deadbeef... != expected e4fe01babc... (stage=code line=217)
+```
+
+and, for an unguarded failure, `unexpected failure rc=7 at line=16 (stage=deploy)`.
+Both reach `/dev/console` and the local log; neither prints commands, environments or
+secret values. Stage entry and completion markers bracket every stage, network and
+package steps are bounded by `timeout`, and the start marker is emitted before the config
+is sourced without assuming variables exist under `set -u`.
