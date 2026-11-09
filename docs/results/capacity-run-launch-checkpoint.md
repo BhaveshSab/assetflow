@@ -544,9 +544,15 @@ watchdog against a fake `aws`. The RunId-guard test was confirmed to fail when t
 guard is removed, so the tests are not vacuous. These artifacts are **in the
 repository**, not local-only.
 
-**CI-tested commit: `943a39e`** — run `42611176739`, all six jobs success. This is
-the commit that contains every artifact above, including local trust generation, so
-it is what the launch pins.
+**CI-tested commit: `32e9bd2`** — run `42624039643`, all seven jobs success,
+including a new capacity-stack job that deploys the real compose stack. This is the
+commit the launch pins.
+
+That job is the evidence for the bootstrap defects found in review. It builds the
+real images, runs real migrations, seeds 200 accounts, proves the count by querying
+Postgres, starts the API and confirms 4000/api/health/ready, calls the application
+over HTTPS through the single-port edge, runs readiness and a checksum-verified
+export as a client, and drives real systemd timer activations.
 
 Earlier pins and why they are superseded: `66c5589` (run `42608467206`) covered the
 bootstrap/readiness fixes but still published trust to S3, which the identity
