@@ -200,8 +200,37 @@ class Stage2PolicyTests(unittest.TestCase):
                                   for s in self.statements]}
         compact = json.dumps(document, separators=(',', ':'))
         self.assertLessEqual(len(compact), 6144, 'managed policy size limit exceeded')
-        self.assertEqual(len(compact), 6105, 'expected the verified attachment size')
+        self.assertEqual(len(compact), 6137,
+                         'expected the attachment size after the read permission')
         self.assertEqual(len(self.statements), 21)
+
+    def test_instance_shutdown_behaviour_is_readable(self):
+        """Regression: describe-instances does NOT return
+        InstanceInitiatedShutdownBehavior, and DescribeInstanceAttribute was not
+        granted, so the lifecycle setting could not be verified at all.
+
+        Read-back is the only proof that `terminate` took effect; without this
+        permission the run would depend on trusting the request.
+        """
+        allowed = set()
+        for statement in self.statements:
+            if statement['Effect'] == 'Allow':
+                allowed.update(actions(statement))
+        self.assertIn('ec2:DescribeInstanceAttribute', allowed)
+
+    def test_describe_instance_attribute_is_the_only_addition(self):
+        """The fix is a read permission, not a broadening. No write action may
+        have been added alongside it."""
+        allowed = set()
+        for statement in self.statements:
+            if statement['Effect'] == 'Allow':
+                allowed.update(actions(statement))
+        for write in ('ec2:ModifyInstanceAttribute', 'ec2:StopInstances',
+                      'ec2:StartInstances', 'ec2:CreateTags'):
+            # CreateTags is granted, but only under CreateAction conditions.
+            if write == 'ec2:CreateTags':
+                continue
+            self.assertNotIn(write, allowed, f'{write} must not be an Allow')
 
     # ------------------------------------------------- ARN shape constraints
     def test_security_group_arns_never_use_group_names(self):

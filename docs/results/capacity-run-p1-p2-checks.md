@@ -517,6 +517,13 @@ in every report. Only AWS holds it, as the subscriber address.
   action attached and the policy grants no ability to add one.
 * **The run is not guaranteed to stay under $1.** The budget is a notification; if
   spend exceeded $1 the outcome would be a late email, not a prevented charge.
+* **The notification can fire during the run for reasons unrelated to it.** With no
+  cost filter the budget watches the whole account, so existing production spend
+  counts toward the $0.80 threshold. A budget email is therefore **not** evidence
+  that this run overspent, and must not be read as one. Keeping the unfiltered
+  scope is deliberate — a tag filter would miss untagged charges such as data
+  transfer — but it means the alert is an account-level signal, not a run-level
+  one.
 
 ### Configured is not delivered
 

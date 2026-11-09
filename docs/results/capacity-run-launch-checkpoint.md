@@ -66,9 +66,11 @@ Verified unit prices (`pricing:GetProducts`, Sydney, queried 2026-11-09):
 | Item | Price | 4 h |
 |------|-------|-----|
 | t3.micro | $0.0132/h | $0.0528 |
-| gp3 30 GB | $0.096/GB-month | $0.0132 |
+| gp3 30 GB | $0.096/GB-month × 30 GB × (4 h ÷ 730 h) | **$0.0158** |
 | Public IPv4 | $0.005/h | $0.0200 |
 | **Sum of the above** | | **$0.0886** |
+
+The gp3 figure was previously shown as $0.0132 — the cost of ~13.7 GB, not 30.
 
 ### These are partial estimates, not worst-case charges
 
@@ -79,8 +81,11 @@ included**, because they are not priced here and some are not knowable in advanc
   zero, and the largest omission. A few hundred MB at Sydney egress rates would
   exceed the compute line.
 * **Data transfer in** — normally free, assumed free here.
-* **EBS I/O** — gp3 includes 3,000 IOPS and 125 MB/s; above that is billed
-  separately and is not counted.
+* **EBS I/O — gp3 does not bill per operation.** It includes 3,000 IOPS and
+  125 MB/s baseline. Charges arise only from *provisioning* IOPS or throughput
+  **above** that baseline, which is billed per provisioned IOPS-month, not per
+  operation. This run provisions none, so the extra charge is $0 — but that is
+  a statement about provisioning, not about usage being free of consequence.
 * **EBS snapshots** — none are created by this run; excluded on that basis, not
   measured.
 * **Requests to other AWS services** — S3, CloudWatch, and any API calls the app
@@ -128,127 +133,149 @@ to actually be crossed, which this run will not do. So the report will state
 
 ## 4. Lifetime enforcement, and why it must terminate rather than stop
 
-The load test must not be the only thing that ends the run: if it hangs, crashes
-or never starts, nothing would stop the clock.
-
 ### A guest shutdown alone would leak billable storage
 
 `InstanceInitiatedShutdownBehavior` accepts only `stop` or `terminate`, and the
-**default is `stop`**. A plain `shutdown -h now` inside the guest therefore stops
-the instance — compute billing pauses, but the **EBS volume keeps billing**.
+**default is `stop`**. A plain `shutdown -h now` therefore stops the instance:
+compute billing pauses, the **EBS volume keeps billing**. This is the trap in
+"schedule a shutdown timer" — stopping is not cleaning up.
 
-This is the trap in "schedule a shutdown timer": stopping is not cleaning up.
+The launch therefore sets **both** `--instance-initiated-shutdown-behavior terminate`
+and `DeleteOnTermination=true`, and both are read back afterwards (section 6) rather
+than assumed from the request.
 
-### Launch configuration must set both of these
+### The deadline is measured from launch time, not from bootstrap
 
-Two settings must hold. The full command is in section 2; these are the two
-lines that matter for lifecycle:
+This is the correction that matters most. Arming a timer with `--on-active=4h`
+*whenever bootstrap happens to finish* means a bootstrap that takes 40 minutes buys
+the run 4h40m. `infra/capacity-run/user-data.sh` instead reads the instance's own
+launch time from IMDS and computes:
 
-```bash
-  --instance-initiated-shutdown-behavior terminate \
-  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}' \
+```
+remaining = launch_epoch + 14400 - now
 ```
 
+and arms the timer for `remaining`. A slow bootstrap shortens what is left; it
+never extends the window. If the remaining time is already ≤ 0 the bootstrap
+**terminates rather than lingering**, and if the launch time cannot be read it
+fails closed rather than falling back to `now`.
 
-Two settings must both hold, and each is verified separately after launch:
+### The guest deadline and reboot
 
-| Setting | Value | What it prevents |
-|---------|-------|------------------|
-| `InstanceInitiatedShutdownBehavior` | **`terminate`** | a guest shutdown stopping rather than terminating |
-| root volume `DeleteOnTermination` | **`true`** | the volume surviving termination |
+`systemd-run --on-active` creates a **transient** unit, which does not survive a
+reboot. Documented mitigation: user-data is `UserData`, not `CloudInitPowerOn`, so
+it runs **on every boot**, and section 1 re-arms the timer each time from the
+original launch time. The re-arm is recorded in `/timer-state`.
 
-`DeleteOnTermination` is confirmed from `describe-instances` →
-`BlockDeviceMappings[].Ebs.DeleteOnTermination`, not assumed from the request.
-With both true, a guest shutdown destroys the instance **and** its volume.
+Residual limitation, stated rather than hidden: a guest that reboots and then fails
+before reaching the re-arm step has no timer. That case is covered only by the
+operator watchdog, which is why the watchdog is not optional.
 
-### Executable watchdog behaviour
+### The operator watchdog is a real artifact, not a sleep snippet
 
-**Primary — in-guest timer (user-data):**
+`infra/capacity-run/operator-watchdog.sh`. It is not `sleep 4h && terminate`:
 
-```bash
-#!/bin/bash
-set -euo pipefail
-# Marker the readiness check reads back. Absence proves the timer is NOT armed.
-exec > >(tee -a /var/log/capacity-timer.log) 2>&1
-systemd-run --on-active=4h --unit=capacity-deadline   --description="capacity run deadline" /sbin/shutdown -h now
-sleep 1
-systemctl is-active capacity-deadline.timer > /var/lib/capacity-timer-armed
+| Property | Why |
+|----------|-----|
+| `setsid nohup` detached | survives the operator closing the terminal or the editor session |
+| heartbeat file + pid file | liveness is **observable**, not assumed |
+| re-derives deadline from `LaunchTime` each cycle | a missed cycle or clock skew cannot extend the run |
+| refuses to act if `RunId` tag does not match | the ID could be reused or retagged |
+| treats `terminated`/`shutting-down` as success | no error, no double-terminate |
+| does **not** terminate on an unreadable state | an API error is not consent to act |
+
+Verified behaviourally, not by inspection — 8 tests drive the real script against a
+fake `aws`, and the RunId-guard test was confirmed to **fail** when the guard is
+removed:
+
+| Scenario | Expected | Result |
+|----------|----------|--------|
+| launched 5 h ago, lifetime 4 h | terminate | terminates |
+| already `terminated` | exit quietly | exits, no second call |
+| `RunId` does not match | refuse | refuses every cycle, no call |
+| launched now | leave alone | no call |
+| state unreadable | retry, do not act | no call |
+| — | heartbeat + pid written | both present |
+
+**P3 proves termination is authorized. It does not prove a scheduler runs.** Those
+are different claims and only the tests above speak to the second.
+
+## 5. Leftover billable storage and the inventory sweep
+
+`infra/capacity-run/inventory-sweep.sh` is the authoritative sweep. Two defects in
+the earlier documented loop are fixed there:
+
+| Defect | Consequence | Fix |
+|--------|-------------|-----|
+| `length(Reservations)` used for **volumes** | `describe-volumes` has no `Reservations` member, so the volume count was an error printed as a number | each call names its own array: `Reservations` / `Volumes` / `SecurityGroups` / `Addresses` |
+| errors hidden by `2>/dev/null \|\| echo 0` | a denied or failed call was indistinguishable from "no resources" — this is exactly how a security group was earlier reported absent while it existed | any AWS error aborts with a non-zero exit and prints the error |
+
+Terminated instances are **excluded from the active count**. They keep their tags
+for a while after termination, so filtering by tag alone would overcount.
+
+Live output at this checkpoint:
+
+```
+run-owned resources for cap-20261109t0800z-a7f3
+  instances active     : 0
+  instances terminated : 0   (tagged, not billed for compute)
+  volumes              : 0
+  security groups      : 1
+  elastic/public IPv4  : 0
 ```
 
-The timer calls `shutdown`, which under `shutdown-behavior=terminate` terminates
-the instance and deletes the volume. It lives outside the load-test process tree,
-so a hung generator does not stop the clock.
+Verified that a failing call no longer reports zero — with a bad profile the sweep
+prints `FATAL: cannot authenticate; refusing to report counts` and exits non-zero,
+rather than printing `0`.
 
-**Secondary — operator-side watchdog, independent of the instance:**
+After teardown the expectation is a hard zero for active instances, volumes,
+security groups and addresses.
 
-```bash
-# Runs locally at T+4h. Does not require the instance to be reachable.
-sleep 14400
-aws ec2 terminate-instances   --instance-ids "$PINNED_INSTANCE_ID"   --profile capacity --region ap-southeast-2
-```
+## 6. Readiness, over HTTPS only
 
-It targets one pinned ID — no filter-based mass termination.
+There is no SSH and no SSM. A file inside an unreachable guest is not evidence, so
+every readiness signal is served by the evidence endpoint on 443 and read by
+`infra/capacity-run/readiness-check.sh`.
 
-### What happens when each path fails
+### Read-back corrections
 
-| Failure | Consequence | Mitigation |
-|---------|-------------|------------|
-| **cloud-init fails before the timer is installed** | the guest will never self-terminate | the operator-side watchdog is independent of the guest; the readiness check refuses to accept the instance without `/var/lib/capacity-timer-armed`, so the run aborts instead of proceeding |
-| **operator watchdog loses connectivity** | the in-guest timer may still terminate | both must fail for the run to overrun; if connectivity is lost, teardown is re-attempted on reconnect and the overrun is reported |
-| **both fail** | the instance runs past 4 h at $0.0132/h (≈$0.32/day) | abnormal; manual teardown, reported as such. Bounded by the cost tripwire, which is monitored, not enforced |
-
-**The timer is not claimed to be active before readiness evidence confirms it.**
-Section 6 reads back the marker file and the timer unit state; until that passes,
-the run is not considered protected and does not start load.
-
-## 5. Leftover billable storage
-
-Even with `DeleteOnTermination=true`, a detached or orphaned volume can survive.
-After termination the sweep covers three resource types, each with the correct
-query — `length(@[])` is invalid for security groups and silently reported 0
-earlier in this work:
+`InstanceInitiatedShutdownBehavior` **is not returned by `describe-instances`**.
+Verified against the live API: the query returns `None`. The correct read is:
 
 ```bash
-for r in instances volumes; do aws ec2 describe-${r}   --filters 'Name=tag:RunId,Values=cap-20261109t0800z-a7f3'   --query 'length(Reservations)' ; done
-aws ec2 describe-security-groups   --filters 'Name=tag:RunId,Values=cap-20261109t0800z-a7f3'   --query 'length(SecurityGroups)'
+aws ec2 describe-instance-attribute \
+  --instance-id <id> --attribute instanceInitiatedShutdownBehavior
 ```
 
-| Resource | Expected after teardown | If not |
-|----------|------------------------|--------|
-| instances | 0 | delete run-owned volumes, then re-terminate |
-| volumes | 0 | delete by volume ID, then re-check |
-| security groups | 0 (deleted last) | delete only if no run-owned ENI remains |
-| public IPv4 | released | confirm the instance's address is gone |
+That call requires `ec2:DescribeInstanceAttribute`, which the policy did **not**
+grant — verified: the call fails with `no identity-based policy allows the
+ec2:DescribeInstanceAttribute action`. The fix is that one read permission, added
+to the existing read statement. No write permission was added; a test asserts this.
 
-## 6. Readiness checks before any load
+### Checks, in order
 
-1. instance state `running`, status checks `2/2 passed`
-2. memory gate: `sum(RSS) <= 70%` of 1024 MB measured **before** the ramp
-3. Nginx rate limiter present and unchanged: `rate=100r/s`, `burst=200`,
-   `limit_req_status 429`. Not raised for this run
-4. API throttle 300/60000ms per user
-5. app answers over HTTPS from the generator
-6. CPU credit mode read back as `standard`
-7. baseline cost read from `ce:GetCostAndUsage`
+| # | Check | Source | Fails when |
+|---|-------|--------|------------|
+| 1 | instance `running`, status `2/2` | `describe-instances`, `describe-instance-status` | not running |
+| 2 | shutdown behaviour = `terminate` | `describe-instance-attribute` | reads `stop` |
+| 3 | `DeleteOnTermination = true` | `describe-instances` block device mappings | false |
+| 4 | bootstrap status = `ready` | evidence endpoint `/bootstrap-status` | `degraded`, `running`, unreachable |
+| 5 | deadline armed | `/timer-state` + `/deadline-epoch` | not `active`, or no future epoch |
+| 6 | deployed commit matches the pin | `/deployed-commit` | mismatch |
+| 7 | RSS ≤ 70% of 1024 MB | `/host-metrics.jsonl` last line | over gate |
+| 8 | Nginx limiter unchanged | app config over 443 | different parameters |
+| 9 | baseline spend | `ce:GetCostAndUsage`, read ONCE | — |
 
-### Lifecycle read-backs — required before load starts
+Step 4 `degraded` means the secret channel was absent, so the app never started.
+That is a failure, not a pass with a warning.
 
-These confirm the settings from section 2 actually took effect. None is assumed
-from the request.
+### What readiness cannot claim
 
-| Check | How | Pass condition |
-|-------|-----|----------------|
-| shutdown behaviour | `describe-instances` → `InstanceInitiatedShutdownBehavior` | `terminate`, **not** `stop` |
-| volume deletion | `describe-instances` → `BlockDeviceMappings[].Ebs.DeleteOnTermination` | `true` for every mapping |
-| timer armed | read `/var/lib/capacity-timer-armed` (written by user-data after the unit starts) | file exists and contains `active` |
-| timer scheduled | `systemctl show capacity-deadline.timer -p NextElapseUSecMonotonic` | a future elapse time |
-| watchdog tested | dry-run the operator command against the new ID (that is P3) | `DryRunOperation` |
-
-**If the timer marker is absent, the instance is unprotected.** cloud-init may have
-failed, and the guest will never self-terminate. That is an abort: terminate the
-instance, keep the evidence, and do not run load.
-
-A failed check aborts to teardown; it does not proceed.
+`readiness-check.sh` prints this itself: **it proves the timer unit is active now,
+not that it will fire.** An active unit can still be masked later, crash, or be
+cleared by a reboot. That is why the operator watchdog exists as an independent
+second line, and why the guard against overrun is the watchdog plus the
+launch-based deadline, not the timer alone.
 
 ## 7. Access — exact /32 sources, discovered not assumed
 
@@ -444,78 +471,81 @@ T+4h**. That is intended behaviour, not a failure.
 
 ## 12. Consolidated approval request
 
-One request covering the three coupled changes. Until it is approved, none of them
-happen.
+One request covering three coupled changes. Until it is approved, none happen.
 
-### 12.1 Pinned versions
+### 12.1 Artifacts and the pinned commit
 
-| Item | Pinned to |
-|------|-----------|
-| **CI-tested commit** | **`6533edf`** — run `42604425610`, all six jobs success. The launch pins this commit, not the branch tip |
-| AMI | `ami-01e91e94accc42eec` (by ID, never "latest") |
-| Runtime | Node/dependencies as locked in that commit; no floating tags |
-| Load script | `infra/scripts/k6-load.js` at that commit |
-| Evidence endpoint | `infra/scripts/evidence_server.py` at that commit |
+| Artifact | Path | Shellcheck | Tests |
+|----------|------|-----------|-------|
+| Bootstrap (user-data) | `infra/capacity-run/user-data.sh` | clean | 6 contract tests |
+| Metrics collector | `infra/capacity-run/collect-metrics.sh` | clean | — |
+| Operator watchdog | `infra/capacity-run/operator-watchdog.sh` | clean | 8 behavioural tests |
+| Readiness check | `infra/capacity-run/readiness-check.sh` | clean | 3 contract tests |
+| Inventory sweep | `infra/capacity-run/inventory-sweep.sh` | clean | exercised live |
 
-A branch-tip launch would be untested code; the launched code is the commit the CI
-run actually exercised.
+`infra/tests/test_capacity_run_bootstrap.py`: **16 tests**, which execute the real
+watchdog against a fake `aws`. The RunId-guard test was confirmed to fail when the
+guard is removed, so the tests are not vacuous. These artifacts are **in the
+repository**, not local-only.
 
-### 12.2 Ingress change — 443 only, exact discovered `/32`
+**CI-tested commit: `6533edf`** (run `42604425610`, all six jobs success) — the
+commit code is pinned to. The artifacts above land on top of it and carry their own
+tests; the SHA whose CI covers *them* is named in the confirmation below once the
+run completes.
+
+### 12.2 Ingress — 443 only, exact discovered `/32`
 
 | Type | Proto | Port | Source |
 |------|-------|------|--------|
-| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` from discovery in the generator job |
-| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` only if the evidence job differs |
-| Ingress | tcp | 22 | **none** — no key pair |
+| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` from discovery inside the generator job |
+| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` only if the evidence job is a different job |
+| Ingress | tcp | 22 | **none** — no key pair is attached |
 
-No published GitHub ranges, no `0.0.0.0/0`, no port ranges. If discovery cannot
-pin the address, the run reports the limitation and does not widen the rule.
+No published GitHub ranges, no `0.0.0.0/0`, no port ranges. If the egress cannot be
+pinned the run reports that and stops.
 
 ### 12.3 One disposable instance
 
-`t3.micro` in `ap-southeast-2b`, Standard credits, AMI and configuration per
-section 2, tagged `Project=assetflow-capacity` / `RunId=cap-20261109t0800z-a7f3`,
-using the existing `sg-012a0191f4e4a9a8c`. Identified by tag pair and exact
-configuration, since AWS assigns the ID at launch.
+`t3.micro` in `ap-southeast-2b`, Standard credits, AMI `ami-01e91e94accc42eec`,
+`--instance-initiated-shutdown-behavior terminate`, root gp3 30 GB with
+`DeleteOnTermination=true`, tagged `Project=assetflow-capacity` /
+`RunId=cap-20261109t0800z-a7f3`, using the existing `sg-012a0191f4e4a9a8c`.
 
-### 12.4 Lifecycle enforcement included in this approval
+### 12.4 What approving this launch also approves
 
-Approving the launch approves the instance **terminating itself at T+4h** via the
-in-guest timer, with an operator-side watchdog as the independent backup. The
-4-hour maximum lifetime is the binding control; the $1 budget is a delayed email
-and the $5 target is a manual tripwire.
+* **Automatic deadline termination.** The instance terminates itself at
+  **launch + 4 h** via the in-guest timer, deleting its volume. That is intended
+  behaviour.
+* **Readiness-failure cleanup.** If any readiness check fails, including a missing
+  timer marker, the instance is terminated **without** a further approval request,
+  because leaving a host up to pollute the run is worse than tearing it down.
+* **Operator watchdog** termination of the same instance ID at the same deadline.
 
-### 12.5 Cost, restated honestly
+Routine early teardown still follows the exact-instance approval procedure
+(section 10): a human names the instance and approves.
+
+### 12.5 The deadline does not rest on the timer alone
+
+Stated plainly, because it was a review finding: a timer marker does not guarantee
+termination. Three independent paths exist — in-guest timer, operator watchdog, and
+manual teardown — and the run reports which one acted.
+
+### 12.6 Cost
 
 | Item | 4 h |
 |------|-----|
-| t3.micro + gp3 30 GB + public IPv4 | **$0.0886** |
-| Not included | data transfer out (largest), EBS I/O over 3,000 IOPS, other AWS API calls |
+| t3.micro | $0.0528 |
+| gp3 30 GB | **$0.0158** |
+| public IPv4 | $0.0200 |
+| **Sum** | **$0.0886** |
 
-Total spend will be higher than $0.0886; the size depends mainly on egress, which
-this document does not estimate. Nothing technical enforces $5 or $1.
+Excludes data transfer out (the largest omission), provisioned IOPS above the gp3
+baseline, and other AWS API calls. `ce:GetCostAndUsage` is read **once** before and
+**once** after the run, not polled: each call is billed, so repeated polling would
+add cost to a run intended to measure cost.
 
-### 12.6 Readiness before any load, in order
+### 12.7 What this request does NOT cover
 
-1. instance `running`, status checks `2/2`
-2. `InstanceInitiatedShutdownBehavior` reads back `terminate`
-3. `DeleteOnTermination` reads back `true` for every mapping
-4. `/var/lib/capacity-timer-armed` exists → the guest **will** self-terminate;
-   absent means abort and terminate immediately
-5. `systemctl show capacity-deadline.timer` reports a future elapse
-6. memory gate: `sum(RSS) <= 70%` of 1024 MB before the ramp
-7. Nginx limiter present and unchanged (`100r/s`, `burst=200`, 429); API throttle
-   300/60000 ms
-8. HTTPS answers from the generator's discovered address
-9. baseline spend read from `ce:GetCostAndUsage`
-
-Then, and only then, P3 (`terminate-instances --dry-run` on the new ID) and the
-load test.
-
-### 12.7 What is NOT approved by this request
-
-* load testing — a later, separate step after readiness passes
-* termination of a specific instance — requested separately **after** the returned
-  ID is verified
-* any change to production
-* any SNS resource or budget action
+* load testing — separate, after readiness passes
+* terminating a specific instance early — requested separately by exact ID
+* any production change, SNS resource, or budget action
