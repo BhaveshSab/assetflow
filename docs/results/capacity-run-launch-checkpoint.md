@@ -766,3 +766,111 @@ All queries used the `capacity` profile; errors are reported, never zeroed.
   the notification threshold, `$5` is the monitoring tripwire; **neither is a hard
   spending cap** — nothing enforces cost, so the 4-hour lifetime and the operator
   are the real limits.
+
+
+---
+
+## 14. Stage 3 execution — FAILED at readiness
+
+Executed under approval, pinned to
+`32e9bd2a8d3365f701764d1ba21a73725803ca64`. **Outcome: FAIL.** The instance launched
+correctly, P3 passed, and the shutdown guards worked — but the application never
+became reachable and the guest terminated itself under the fail-closed path.
+
+### 14.1 Result summary
+
+| Item | Result |
+|---|---|
+| Instance launched | **yes** — `i-02611b7898dca0bc7`, running at verification time |
+| P3 termination dry-run | **PASS** — `DryRunOperation` on the returned ID |
+| Account / tags / type / AZ / AMI / subnet / SG | **PASS** |
+| Root volume size | **FAIL — 8 GB, not the approved 30 GB** (see 14.3) |
+| Shutdown-behaviour readback | **BLOCKED** — `ec2:DescribeInstanceAttribute` denied |
+| CPU credit readback | **BLOCKED** — `ec2:DescribeInstanceCreditSpecifications` denied |
+| TCP/8443 reachable | **never** — 60+ probes over ~52 min, all connection failures |
+| TLS authentication | **not reached** |
+| Application readiness | **not reached** |
+| 200 fixture accounts | **not reached** |
+| Evidence export | **not reached** |
+| Host metrics / deadline status | **not reached** |
+| Volume deleted on terminate | **PASS** — `vol-04fc9bf830960fb41` no longer exists |
+| Production unaffected | **PASS** — still running |
+
+### 14.2 Timeline (UTC)
+
+| Time | Event |
+|---|---|
+| 13:20:20 | first launch dry-run denied: `ec2:RunInstances` on `network-interface/*` |
+| 13:26:13 | dry-run passes after tagging the network interface |
+| **13:34:49** | instance launched, `ap-southeast-2b` |
+| 13:34:49 | P3 termination `--dry-run` returns `DryRunOperation` |
+| 13:37:22 | first TCP/8443 probe: connection failure |
+| 13:37-14:26 | 60+ readiness probes, every one failed |
+| 14:26:39 | last probe, still no listener; `openssl s_client` got no handshake |
+| ~14:26-14:33 | instance terminated itself, `Client.InstanceInitiatedShutdown` |
+
+### 14.3 Defects found in the launch procedure (not in the code)
+
+1. **The first dry-run was denied because the network interface was untagged.** Policy
+   statement `08LaunchNetworkInterfaceTagControlled` allows
+   `network-interface/*` only with `aws:RequestTag/RunId`, and my launch tagged only
+   the instance and volume. **Fixed during the run** by adding a
+   `ResourceType=network-interface` tag specification. This is an operator error in
+   the launch command, and the audit trail above keeps it.
+2. **The root volume came out at 8 GB instead of the approved 30 GB.** The AMI's
+   root mapping is 8 GB and I passed no block-device mapping, so the AMI default was
+   used. The approved configuration says 30 GB gp3. This instance therefore did **not**
+   match the approved configuration, which alone is enough to fail the run. The
+   correct fix is a `--block-device-mappings` entry with
+   `DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}`.
+   *Note the direction of the deviation: it was smaller and cheaper than approved.*
+
+### 14.4 What caused the stop
+
+The deadline guard was **correctly configured** and did **not** fire early: the
+payload carried `LAUNCH_EPOCH=1794231251`, giving a deadline of **17:34:11Z**, and
+the instance died between 14:26:39Z and 14:33Z — roughly three hours before it.
+`StateTransitionReason` was `Client.InstanceInitiatedShutdown`, the signature of the
+bootstrap's own fail-closed shutdown combined with
+`InstanceInitiatedShutdownBehavior=terminate`.
+
+So the safety mechanism worked exactly as designed: when the bootstrap could not
+reach a working state, it terminated rather than leaving a broken, billing instance
+running. That is the intended behaviour and it is a point in favour of the design.
+
+**What is not proven is *which stage* failed.** No SSH, no SSM, and no
+`ec2:GetConsoleOutput` permission, so neither the journal nor the serial console was
+readable after termination. The absence of any listener on 8443 plus the fail-closed
+signature points to a failure at or before the image build/start stage on a 1 GiB
+t3.micro, most plausibly memory pressure during the compose build and start, but
+**this is inference, not evidence**, and is labelled as such.
+
+### 14.5 Verified clean-up and current state
+
+| Resource | State |
+|---|---|
+| Run-owned instances | **0** |
+| Run-owned volumes | **0** (root volume deleted on terminate — verified by absence) |
+| Run-owned elastic IPs | **0** |
+| Run-owned security group | **1**, `sg-012a0191f4e4a9a8c`, inbound 1 rule `tcp/8443` from `157.48.109.250/32` |
+| Production | `i-0ff4690ec52d0dc01` running |
+| Budget | unchanged, notification-only, no actions |
+
+The ingress rule is deliberately left in place because removing it was not approved;
+it is inert with no instance in the group, and its removal needs its own approval.
+
+### 14.6 Required before Stage 4
+
+1. **Diagnose the bootstrap failure with evidence**, not inference. Either grant
+   `ec2:GetConsoleOutput` and `ec2:DescribeInstanceAttribute` for the run, or have the
+   bootstrap write its stage log somewhere durable and readable, or accept that the
+   first order of business on the next launch is capturing the guest log.
+2. **Decide whether t3.micro is the right size for this stack.** A 1 GiB instance
+   building and running 14 containers is the dominant risk; the CI evidence was
+   collected on far larger hardware and cannot vouch for it.
+3. **Fix the launch command**: add the network-interface tag specification and the
+   explicit 30 GB gp3 block-device mapping.
+4. **Grant readback permissions** for shutdown behaviour and credit specification so
+   the approved configuration checks can actually be performed.
+
+None of these are load-testing questions; Stage 4 needs a stack that starts at all.
