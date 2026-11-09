@@ -349,6 +349,23 @@ managed-policy size limit. Labels are metadata and add no authority, so the two
 differ in presentation only. Substance is live-verified: the group was created
 and P2 returned `DryRunOperation` under the attached policy.
 
+### CI for this change
+
+| Commit | Content | CI |
+|--------|---------|-----|
+| `0bf042c` | policy sync + regression tests | **no run was created** — GitHub did not fire `pull_request` for this push |
+| `45992c1` | empty commit, same tree | [`42600811364`](https://github.com/BhaveshSab/assetflow/actions/runs/42600811364) — **all six jobs success** |
+
+The workflow has no path filter, so the missing run was a dropped trigger, not a
+skipped one. Rather than report the change as tested when it was not, the tree was
+re-pushed as an empty commit to force `pull_request` synchronisation.
+
+Confirmed at `45992c1`: Backend, Frontend, Infrastructure, Restore integration,
+Load-test fixture isolation and API load regression — **all success**.
+
+Locally before pushing: **151 infra unit tests pass** (1 skipped), including the
+19 policy tests.
+
 ### Regression coverage
 
 `infra/tests/test_stage2_policy.py` — **19 tests**, six of them new for this
