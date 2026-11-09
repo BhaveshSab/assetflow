@@ -407,6 +407,56 @@ class PreludeDiagnosticsTests(unittest.TestCase):
         self.assertLess(trap_at, first_mkdir)
 
 
+class RealDefectRegressions(unittest.TestCase):
+    """Each of these failed on a real run and each cost an instance."""
+
+    def test_comment_strip_keeps_the_shebang(self):
+        """Dropping it left the guard with no interpreter; systemd failed instantly."""
+        r = RENDER.read_text(encoding='utf-8')
+        self.assertIn('NR == 1', r)
+        self.assertIn('/^#!/', r)
+
+    def test_launcher_resolves_short_sha_to_full(self):
+        """The bootstrap compares against `git rev-parse HEAD`, which is always 40 chars.
+
+        Rendering a short SHA made the guest abort with
+        `deployed e4fe01babc... != expected e4fe01b`.
+        """
+        text = (CAPACITY / 'launch-instance.sh').read_text(encoding='utf-8')
+        self.assertIn('rev-parse --verify', text)
+        self.assertIn('-ne 40', text)
+
+    def test_bootstrap_start_marker_survives_unset_vars(self):
+        """It is printed before the config is sourced, under `set -u`."""
+        text = USER_DATA.read_text(encoding='utf-8')
+        marker = [l for l in text.splitlines() if 'bootstrap-start run=' in l]
+        self.assertTrue(marker, 'bootstrap-start marker missing')
+        self.assertIn(':-unset', marker[0])
+
+    def test_stage_markers_exist_for_entry_and_completion(self):
+        text = USER_DATA.read_text(encoding='utf-8')
+        self.assertIn('stage_begin()', text)
+        self.assertIn('stage_done()', text)
+
+    def test_stage_appears_in_failure_reports(self):
+        text = USER_DATA.read_text(encoding='utf-8')
+        self.assertIn('stage=$STAGE', text)
+        self.assertIn('line=', text)
+
+    def test_unexpected_failures_are_trapped_with_code_and_line(self):
+        text = USER_DATA.read_text(encoding='utf-8')
+        self.assertIn('trap', text)
+        self.assertIn('unexpected failure rc=', text)
+        self.assertIn('BASH_LINENO', text) or self.assertIn('LINENO', text)
+
+    def test_network_and_package_steps_are_bounded(self):
+        text = USER_DATA.read_text(encoding='utf-8')
+        self.assertIn('bounded()', text)
+        self.assertIn('timeout "$limit"', text)
+
+    def test_diagnostics_go_to_the_console(self):
+        self.assertIn('/dev/console', USER_DATA.read_text(encoding='utf-8'))
+
 
 if __name__ == '__main__':
     unittest.main()

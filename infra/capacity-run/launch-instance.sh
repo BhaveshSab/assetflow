@@ -30,6 +30,19 @@ RUN_ID="cap-20261109t0800z-a7f3"
 ACCOUNT="459252806274"
 VPC="vpc-0bcfe8d7f2e811bb3"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:?EXPECTED_COMMIT must be set to the tested SHA}"
+
+# The bootstrap compares `git rev-parse HEAD` to this value with `=` and refuses to
+# continue on any difference. rev-parse always yields a full 40-character SHA, so a
+# short SHA here is guaranteed to abort the guest. That is exactly what killed one
+# run: the payload carried e4fe01b, the guest compared it against e4fe01babc0e1...,
+# and the bootstrap correctly failed closed. Resolve to the full SHA before rendering.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "${#EXPECTED_COMMIT}" -ne 40 ]; then
+    RESOLVED="$(git -C "$REPO_ROOT" rev-parse --verify "${EXPECTED_COMMIT}^{commit}" 2>/dev/null || true)"
+    [ -n "$RESOLVED" ] || die "cannot resolve EXPECTED_COMMIT=$EXPECTED_COMMIT to a full commit SHA in $REPO_ROOT"
+    say "resolved short SHA $EXPECTED_COMMIT to $RESOLVED"
+    EXPECTED_COMMIT="$RESOLVED"
+fi
 CLIENT_TOKEN="${CLIENT_TOKEN:?CLIENT_TOKEN must be set for launch idempotency}"
 
 USER_DATA=""

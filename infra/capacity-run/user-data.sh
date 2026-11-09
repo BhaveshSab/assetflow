@@ -39,12 +39,28 @@ mkdir -p "$RUN_DIR" "$EVIDENCE_DIR" "$RUN_DIR_SRC"
 chmod 700 "$RUN_DIR"
 exec > >(tee -a "$LOG") 2>&1
 
+# Diagnostics must reach a place a post-mortem can read even when the journal is
+# unwritable and the root volume is full. /dev/console is the EC2 system log.
+console_log() {
+    printf 'capacity-bootstrap: %s\n' "$1"
+    if [ -w /dev/console ]; then
+        printf 'capacity-bootstrap: %s\n' "$1" > /dev/console 2>/dev/null || true
+    fi
+}
+
+STAGE="pre-bootstrap"
 say()  { printf '[bootstrap] %s\n' "$*"; }
 status() { printf '%s' "$1" > "$EVIDENCE_DIR/bootstrap-status"; }
 
+# A stage marker at entry and completion, so a silent death still names the last
+# stage entered and whether it finished.
+stage_begin() { STAGE="$1"; console_log "stage-begin: $1"; say "== $1 =="; }
+stage_done()  { console_log "stage-done: $1"; say "== $1 done =="; }
+
 # Refuse to leave a half-configured host running.
 die() {
-    printf '[bootstrap][FATAL] %s\n' "$*"
+    printf '[bootstrap][FATAL] %s\n' "$*" >&2
+    console_log "FATAL: $* (stage=$STAGE line=${BASH_LINENO[0]:-?})"
     status "failed: $*"
     # The instance was launched with InstanceInitiatedShutdownBehavior=terminate,
     # so this TERMINATES it and deletes the root volume.
@@ -52,10 +68,17 @@ die() {
     exit 1
 }
 
+# `set -e` alone does not describe an unguarded failure, and a failure inside a
+# function or subshell would otherwise report nothing at all.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "[bootstrap][FATAL] unexpected failure rc=%s at line %s (stage=%s)\n" "$rc" "$LINENO" "$STAGE" >&2; console_log "FATAL unexpected rc=$rc line=$LINENO stage=$STAGE"; status "failed: rc=$rc line=$LINENO stage=$STAGE"; /sbin/shutdown -h now || true; fi' ERR
+
+# Marked before the config is sourced, so the variables are not yet set and `set -u`
+# would abort here. This has to survive being the first thing that runs.
+console_log "bootstrap-start run=${RUN_ID:-unset} commit=${EXPECTED_COMMIT:-unset}"
 status running
 
 # ------------------------------------------------------------------ 1. inputs
-say "== inputs =="
+stage_begin "inputs"
 [ -r "$CONFIG" ] || die "missing $CONFIG: no provisioning path, refusing to continue"
 # shellcheck disable=SC1090,SC1091
 set -a
@@ -87,7 +110,7 @@ say "deadline $DEADLINE_EPOCH ($(( DEADLINE_EPOCH - NOW ))s remaining)"
 # ------------------------------------ 2. deadline mechanism before anything
 # Installed BEFORE packages/build: a wedged apt run must not leave the guest
 # alive with no enforcement.
-say "== deadline (pre-packages) =="
+stage_begin "deadline (pre-packages)"
 # Embedded by the renderer: not cloned yet, and must not depend on the network.
 install -d -m 0755 /usr/local/lib/capacity-run
 [ -s "$RUN_DIR_SRC/deadline-guard.sh" ] || die "deadline guard was not embedded in the payload"
@@ -120,10 +143,16 @@ systemctl enable --now capacity-deadline.timer || die "deadline timer failed"
 systemctl is-active capacity-deadline.timer > "$EVIDENCE_DIR/deadline-timer-state" 2>&1 || true
 
 # ------------------------------------------------------------- 2. packages
-say "== packages =="
+stage_begin "packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg git openssl jq python3 tar >/dev/null
+# Network and package steps are bounded: a wedged apt or a hung download must not
+# consume the whole lifetime silently, and a timeout must name itself.
+bounded() {
+    local limit="$1"; shift
+    timeout "$limit" "$@" || die "step timed out after ${limit}s: $*"
+}
+bounded 600 apt-get update -qq
+bounded 900 apt-get install -y -qq ca-certificates curl gnupg git openssl jq python3 tar >/dev/null
 if ! command -v docker >/dev/null 2>&1; then
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -132,9 +161,10 @@ if ! command -v docker >/dev/null 2>&1; then
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
         > /etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
+    bounded 600 apt-get update -qq
+    bounded 900 apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
 fi
+stage_done "packages"
 # 1 GB of RAM cannot build the image; swap is required, not optional.
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -159,7 +189,7 @@ if [ -z "$AVAIL_MB" ] || [ "$AVAIL_MB" -lt "$MIN_FREE_MB" ]; then
 fi
 
 # ---------------------------------------------------------------- 3. code
-say "== code =="
+stage_begin "code"
 rm -rf "$APP_DIR"
 git clone -q https://github.com/BhaveshSab/assetflow "$APP_DIR"
 git -C "$APP_DIR" checkout -q "$EXPECTED_COMMIT" \
@@ -167,11 +197,12 @@ git -C "$APP_DIR" checkout -q "$EXPECTED_COMMIT" \
 DEPLOYED=$(git -C "$APP_DIR" rev-parse HEAD)
 printf '%s' "$DEPLOYED" > "$EVIDENCE_DIR/deployed-commit"
 [ "$DEPLOYED" = "$EXPECTED_COMMIT" ] || die "deployed $DEPLOYED != expected $EXPECTED_COMMIT"
+stage_done "code"
 
 # ---------------------------------------------------------------- 4. app config
 # compose has no defaults for POSTGRES_PASSWORD/REDIS_PASSWORD, so it cannot
 # start without these. Generated per run; nothing shared with production.
-say "== application configuration =="
+stage_begin "application configuration"
 for required in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD JWT_SECRET LOADTEST_PASSWORD; do
     eval "value=\${$required:-}"
     [ -n "${value:-}" ] || die "$required is empty: compose cannot start"
@@ -198,7 +229,7 @@ ENVEOF
 chmod 600 "$APP_DIR/infra/.env"
 
 # ---------------------------------------------------------------- 5. deploy
-say "== deploy =="
+stage_begin "deploy"
 cd "$APP_DIR"
 COMPOSE="docker compose --env-file infra/.env -f infra/docker-compose.yml"
 $COMPOSE config >/dev/null || die "compose config rejected the generated environment"
@@ -209,7 +240,7 @@ $COMPOSE up -d migrate        || die "migration failed"
 # `npm prune --omit=dev` strips ts-node from the api runtime image, so seeding
 # cannot run there. The migrate image is built from the builder stage and still
 # has ts-node + prisma/.
-say "== fixtures =="
+stage_begin "fixtures"
 USERS="${FIXTURE_USERS:-200}"
 # LOADTEST_PASSWORD is mandatory for more than one account: the seed refuses to
 # create 200 accounts without it. ts-node runs transpile-only because the seed is
@@ -236,7 +267,7 @@ $COMPOSE up -d api nginx || die "application services failed"
 # ---------------------------------------------------------------- 7. health
 # API listens on 4000; readiness route /api/health/ready. Probed with `node`
 # because curl is not in the image.
-say "== application health =="
+stage_begin "application health"
 for i in $(seq 1 90); do
     if $COMPOSE exec -T api node -e \
         "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
@@ -268,7 +299,7 @@ printf '%s' "${EDGE_CODE:-0}" > "$EVIDENCE_DIR/edge-health"
 #
 # TLS is terminated here with the operator-supplied certificate, so the client
 # verifies capacity-run.test on 8443 for both the application and the evidence.
-say "== single-port edge =="
+stage_begin "single-port edge"
 
 # Bind the application edge to loopback only: it must not be reachable directly.
 # The compose file publishes "${HTTP_PORT:-80}:80"; setting HTTP_PORT to a
@@ -327,7 +358,7 @@ say "edge: app /api -> 8080, evidence /evidence -> 9443 (both 200)"
 
 # ------------------------------------------------- 6. persistent units
 # These are real installed units, not transient ones, so a reboot keeps them.
-say "== lifecycle + metrics units =="
+stage_begin "lifecycle + metrics units"
 printf '[Unit]\nDescription=cap metrics\nAfter=network-online.target\n[Service]\nEnvironment=RUN_DIR=%s\nEnvironment=METRICS_INTERVAL=1\nExecStart=/bin/bash %s/infra/capacity-run/collect-metrics.sh\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' "$RUN_DIR" "$APP_DIR" > /etc/systemd/system/capacity-metrics.service
 
 printf '[Unit]\nDescription=cap snapshot\n[Service]\nType=oneshot\nExecStart=/bin/bash %s/infra/capacity-run/snapshot-evidence.sh\n' "$APP_DIR" > /etc/systemd/system/capacity-snapshot.service

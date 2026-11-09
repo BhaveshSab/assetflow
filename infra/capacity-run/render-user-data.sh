@@ -62,6 +62,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     # content (unit files, env files), not commentary.
     strip_comments() {
         awk '
+            # A shebang is not a comment: dropping it leaves a file with no
+            # interpreter, and systemd ExecStart then fails instantly with no
+            # message. That is exactly how capacity-deadline.service failed.
+            NR == 1 && /^#!/ { print; next }
             /^[[:space:]]*<<'"'"'?[A-Za-z_][A-Za-z_0-9]*'"'"'?[[:space:]]*$/ { inheredoc=1; print; next }
             inheredoc && /^[[:space:]]*[A-Za-z_][A-Za-z_0-9]*[[:space:]]*$/ {
                 if ($0 ~ /^[[:space:]]*(UNIT|ENVEOF|GUARDEOF|CAPCONFIG)[[:space:]]*$/) { inheredoc=0 }
@@ -80,11 +84,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #!/bin/bash
 set -e
 
-# The prelude runs before the bootstrap has a log file, a say(), or a die().
-# Without this, a failure in these first lines aborts under set -e and leaves no
-# message anywhere - which is exactly what made one run look like an unexplained
-# four-minute termination with an empty console. Report to /dev/console, which
-# does not depend on the root volume, the journal, or the bootstrap's own logging.
+# The prelude runs before the bootstrap has a log file, say() or die(), so a
+# failure here would otherwise abort silently. Report to /dev/console.
 prelude_fail() {
     rc=\$?
     msg="prelude failed (rc=\$rc) at line \$1"
@@ -93,19 +94,14 @@ prelude_fail() {
     exit "\$rc"
 }
 trap 'prelude_fail \$LINENO' ERR
-
 echo "capacity-bootstrap: prelude start" > /dev/console 2>/dev/null || true
 mkdir -p /etc/capacity-run
 chmod 700 /etc/capacity-run
 
-# Trust material supplied by the operator. Installed before the bootstrap runs so
-# the evidence endpoint can start with a certificate the client already trusts.
 echo '${TLS_CRT_B64}' | base64 -d > /etc/capacity-run/tls.crt
 echo '${TLS_KEY_B64}' | base64 -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
 
-# The deadline guard is embedded rather than cloned, because the deadline must
-# be armed before any network or package work can fail.
 mkdir -p /usr/local/lib/capacity-run-src
 cat > /usr/local/lib/capacity-run-src/deadline-guard.sh <<'GUARDEMBED'
 ${GUARD_B64_DECODED}
