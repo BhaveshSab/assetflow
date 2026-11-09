@@ -168,9 +168,7 @@
       "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:vpc/vpc-0bcfe8d7f2e811bb3",
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "ap-southeast-2",
-          "aws:RequestTag/Project": "assetflow-capacity",
-          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+          "aws:RequestedRegion": "ap-southeast-2"
         }
       }
     },

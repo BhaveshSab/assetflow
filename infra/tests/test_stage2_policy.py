@@ -85,6 +85,12 @@ class Stage2PolicyTests(unittest.TestCase):
 
         CreateSecurityGroup is authorized against the VPC, not the group - the
         live error named the VPC ARN, so a group-ARN statement would not work.
+
+        This statement carries the region condition ONLY. aws:RequestTag/*
+        describes tags on the resource being created, so it cannot match a VPC
+        ARN; requiring request tags here made the statement unusable for the
+        VPC authorization. The tag requirements belong on the group-scoped
+        statement instead.
         """
         allows = [s for s in self.statements
                   if s['Effect'] == 'Allow'
@@ -94,7 +100,25 @@ class Stage2PolicyTests(unittest.TestCase):
         self.assertEqual(resources(allows[0]),
                          [f'arn:aws:ec2:{REGION}:{ACCOUNT}:vpc/vpc-0bcfe8d7f2e811bb3'])
         condition = allows[0]['Condition']['StringEquals']
-        self.assertEqual(condition.get('aws:RequestedRegion'), REGION)
+        self.assertEqual(condition, {'aws:RequestedRegion': REGION},
+                         'the VPC statement must carry the region condition only')
+
+    def test_vpc_creation_statement_does_not_require_request_tags(self):
+        """aws:RequestTag cannot apply to a VPC ARN, so it must not appear here.
+
+        Pinned separately from the exact-condition check above so a failure says
+        which mistake was made: a widened condition, or a request-tag condition
+        that cannot match.
+        """
+        for statement in self.statements:
+            if (statement['Effect'] == 'Allow'
+                    and 'ec2:CreateSecurityGroup' in actions(statement)
+                    and any(':vpc/' in r for r in resources(statement))):
+                condition = statement['Condition']['StringEquals']
+                for key in condition:
+                    self.assertFalse(
+                        key.startswith('aws:RequestTag/'),
+                        f'{key} cannot match a VPC ARN')
 
     def test_create_security_group_is_authorized_on_new_groups(self):
         """Regression: the attached policy needed a second, group-scoped allow.
@@ -165,6 +189,19 @@ class Stage2PolicyTests(unittest.TestCase):
             )
             self.assertNotIn(key, seen, f"duplicate statement: {statement.get('Sid')}")
             seen.add(key)
+
+    def test_policy_fits_the_managed_policy_limit_without_sid_labels(self):
+        """The attachment omits Sid labels to fit the 6144-character limit.
+
+        Measured the same way as the attachment: compact JSON, no Sid keys.
+        """
+        document = {'Version': self.policy['Version'],
+                    'Statement': [{k: v for k, v in s.items() if k != 'Sid'}
+                                  for s in self.statements]}
+        compact = json.dumps(document, separators=(',', ':'))
+        self.assertLessEqual(len(compact), 6144, 'managed policy size limit exceeded')
+        self.assertEqual(len(compact), 6105, 'expected the verified attachment size')
+        self.assertEqual(len(self.statements), 21)
 
     # ------------------------------------------------- ARN shape constraints
     def test_security_group_arns_never_use_group_names(self):
