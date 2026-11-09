@@ -314,6 +314,17 @@ class LaunchCommandDriftTests(unittest.TestCase):
         """A native binary cannot open /c/... inside a file:// URL."""
         self.assertIn('cygpath -w', self.text)
 
+    def test_asserts_enough_disk_before_any_build(self):
+        """Free space is checked in the guest before the image build starts."""
+        text = USER_DATA.read_text(encoding='utf-8')
+        self.assertIn('MIN_FREE_MB', text)
+        self.assertIn('insufficient disk', text)
+
+    def test_does_not_assume_public_addressing(self):
+        """Reachability is asserted from the subnet and read back after launch."""
+        self.assertIn('MapPublicIpOnLaunch', self.text)
+        self.assertIn('PublicIpAddress', self.text)
+
     def test_refuses_to_duplicate_an_existing_instance(self):
         self.assertIn('refusing to duplicate', self.text)
 

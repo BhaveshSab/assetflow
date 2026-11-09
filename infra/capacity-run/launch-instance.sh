@@ -83,6 +83,14 @@ SUBNET_AZ="$(aws ec2 describe-subnets --profile "$PROFILE" --region "$REGION" \
     --subnet-ids "$SUBNET" --query 'Subnets[0].AvailabilityZone' --output text)"
 [ "$SUBNET_AZ" = "$AZ" ] || die "subnet $SUBNET is in $SUBNET_AZ, expected $AZ"
 
+# The run is reached over the internet, so the instance needs a public IPv4. It
+# comes from the subnet's MapPublicIpOnLaunch, which is a property of the subnet
+# and could be changed by someone else, so it is asserted rather than assumed.
+SUBNET_MAPPUB="$(aws ec2 describe-subnets --profile "$PROFILE" --region "$REGION" \
+    --subnet-ids "$SUBNET" --query 'Subnets[0].MapPublicIpOnLaunch' --output text)"
+[ "$SUBNET_MAPPUB" = "True" ] || die "subnet $SUBNET does not auto-assign public IPv4 (MapPublicIpOnLaunch=$SUBNET_MAPPUB)"
+say "subnet auto-assigns public IPv4 (MapPublicIpOnLaunch=true)"
+
 SG_VPC="$(aws ec2 describe-security-groups --profile "$PROFILE" --region "$REGION" \
     --group-ids "$SG" --query 'SecurityGroups[0].VpcId' --output text)" || die "cannot describe SG"
 [ "$SG_VPC" = "$VPC" ] || die "SG $SG is in $SG_VPC, expected $VPC"
@@ -168,5 +176,17 @@ RESP="$(aws ec2 run-instances "${ARGS[@]}" --query 'Instances[0].[InstanceId,Sta
 
 IID="$(printf '%s' "$RESP" | awk '{print $1}')"
 say "instance: $IID"
+
+# Never assume reachability: read the address back off the instance. The approved
+# ingress rule and every readiness check depend on this address existing.
+PUBLIC_IP=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    PUBLIC_IP="$(aws ec2 describe-instances --profile "$PROFILE" --region "$REGION" \
+        --instance-ids "$IID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || true)"
+    case "$PUBLIC_IP" in None|null|"") PUBLIC_IP=""; sleep 3 ; continue ;; esac
+    break
+done
+[ -n "$PUBLIC_IP" ] || die "instance $IID has no public IPv4; it would be unreachable over the approved path"
+say "public IPv4: $PUBLIC_IP"
 printf '%s\n' "$RESP" > "${USER_DATA%/*}/launch-returned.txt" 2>/dev/null || true
 echo "$IID"
