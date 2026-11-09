@@ -960,3 +960,45 @@ identity (IAM self-inspection is explicitly denied), so the deployed content is
 read-only policy is provided as `docs/results/capacity-run-stage3-read-policy.json`,
 scoped to three actions in `ap-southeast-2`, to be attached in the console as its own
 customer-managed policy rather than appended to the nearly-full Stage 2 policy.
+
+### 15.7 Validation executed, not assumed
+
+The launcher was **dry-run against the real account**, not merely reviewed, and that
+found three defects which would each have blocked a retry:
+
+1. tag specifications were space-joined, and the CLI rejects more than one
+   `ResourceType` per `--tag-specifications` value — now passed as separate arguments;
+2. the user-data path kept its MSYS `/c/...` form, which the native CLI cannot open
+   inside a `file://` URL — now converted with `cygpath -w`;
+3. an unused variable that shellcheck rejects.
+
+A dry run now returns `DryRunOperation` with the 30 GB gp3 root on `/dev/sda1`,
+`CpuCredits=standard`, `terminate` shutdown behaviour and all three tag specs.
+
+Local and CI validation at `95be69a`:
+
+| Check | Result |
+|---|---|
+| Clean-clone unit suite | **270 tests pass**, 1 skipped |
+| CI run `42641435166` | **all seven jobs success**, capacity-stack 19/19 steps |
+| Real rehearsal (CI) | build, migrations, 200 accounts proven by count, readiness, HTTPS app path, checksum export, live timer re-activation |
+| Deadline activation harness | 5 real activations, 0 shutdowns before deadline, RemainAfterExit control = 1 |
+| Fault injection | removing the network-interface tag or the block mapping fails the suite |
+| Launcher dry-run (live AWS) | `DryRunOperation` |
+
+### 15.8 Current AWS state
+
+| Resource | Count |
+|---|---|
+| Active run-owned instances | **0** |
+| Run-owned volumes | **0** |
+| Run-owned elastic IPs | **0** |
+| Run-owned security groups | **1** (`sg-012a0191f4e4a9a8c`), inbound rules **0** |
+| Production | `i-0ff4690ec52d0dc01` running |
+
+The stale `tcp/8443` rule was revoked after inspecting it; `sgr-074804d993c09f9a1`
+was removed and the group still has zero inbound rules. The group itself was not
+deleted.
+
+One terminated instance record, `i-02611b7898dca0bc7`, remains listed by EC2. It is a
+historical record, not a billable resource, and is deliberately not erased.
