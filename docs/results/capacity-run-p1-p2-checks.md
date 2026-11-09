@@ -408,6 +408,75 @@ change:
 * the invalid budget action names are absent and the supported ones present;
 * no duplicate statements, so nothing wastes the managed-policy size limit.
 
+---
+
+## Stage 2 policy matched to the corrected attachment
+
+The earlier size mismatch (6,200 vs 6,105) is explained: the VPC-scoped
+`CreateSecurityGroup` statement still carried `aws:RequestTag/Project` and
+`aws:RequestTag/RunId`. The attachment does not.
+
+**Why the attachment is right.** `aws:RequestTag/*` describes tags on the
+resource being created. The VPC statement authorizes against a **VPC ARN**, which
+is not the resource being created, so those keys can never match. Requiring them
+there made the statement unusable for the authorization it exists to grant.
+
+| Statement | Resource | Condition | Change |
+|-----------|----------|-----------|--------|
+| `11CreateSecurityGroupInApprovedVpc` | the approved VPC | `aws:RequestedRegion` **only** | conditions removed |
+| `11bCreateSecurityGroupResourceTagControlled` | `security-group/*` | region + both request tags | unchanged |
+
+Everything else preserved.
+
+### Size, measured the way the attachment is
+
+| Measure | Value |
+|---------|-------|
+| Statements | **21** |
+| Compact JSON without `Sid` labels | **6105 characters** — matches the attachment exactly |
+| Managed-policy limit | 6144 |
+
+The file now reproduces the attachment exactly. Regression coverage pins the size
+and statement count so the file cannot drift.
+
+### Equivalence is NOT claimed from P2
+
+`DryRunOperation` exercises `RunInstances`. It says nothing about the VPC-scoped
+`CreateSecurityGroup` condition. The earlier live creation succeeded under the
+**previously attached** policy, which carried the request-tag conditions — so it
+is evidence about that version, not this one. No claim is made that the repository
+file and the live policy are equivalent.
+
+### Budget — NOT created, blocked on the notification destination
+
+The budget does not exist (`NotFoundException`), so there is nothing to duplicate.
+It was not created.
+
+**The blocker.** A notification-only budget requires a notification destination,
+and AWS Budgets delivers only through **SNS**. The Stage 2 policy grants no SNS
+action at all:
+
+| Permitted | Not permitted |
+|-----------|---------------|
+| `budgets:ViewBudget`, `budgets:ModifyBudget` (scoped to the run budget) | any `sns:*` action |
+| `budgets:DescribeBudgetActionsForAccount` | `sns:ListTopics`, `sns:CreateTopic`, `sns:Subscribe` |
+
+No SNS topic exists that this identity can see, and it cannot enumerate or create
+one. `sns` has no `--dry-run`, so probing would mean creating a real topic — not
+done.
+
+The project's Telegram alerting is **not** a usable destination: it is Prometheus
+Alertmanager on the production host, a separate mechanism. Budgets cannot deliver
+to a webhook or to Telegram.
+
+**Creating the budget without a notification would satisfy the letter of the
+request while delivering nothing** — a "notification-only budget" with no
+notification is a silent control. It was not created.
+
+The budget is therefore reported as **BLOCKED**, pending one decision:
+create a run-scoped SNS topic plus an email subscription, or supply an existing
+topic ARN.
+
 ## State after these checks
 
 | Item | Value |
