@@ -70,10 +70,11 @@ OTEL_ENABLED=false
 TELEGRAM_ENABLED=false
 MAIL_TRANSPORT=dev
 
-# The edge is nginx on HTTP_PORT/HTTPS_PORT. Nothing in this run binds :443 on
-# the host, so these are the loopback-only demo ports used by the compose file.
-HTTP_PORT=8080
-HTTPS_PORT=8443
+# Bind the application edge to loopback on a non-privileged port. The
+# single-port TLS proxy in front of it is what faces the client, so nothing needs
+# :80 or :443 on the host, and binding high ports means no root is required.
+HTTP_PORT=127.0.0.1:8080
+HTTPS_PORT=127.0.0.1:8440
 CONF
 
 chmod 600 "$OUT"

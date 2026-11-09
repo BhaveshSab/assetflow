@@ -682,15 +682,26 @@ jobs:
           sed -e 's|listen 8443 ssl;|listen 8543 ssl;|' \
               -e 's|/etc/capacity-run/tls|/etc/ci-edge/tls|g' \
               infra/capacity-run/edge/edge.conf > "$RUNNER_TEMP/edge/edge.conf"
-          sed 's|/etc/capacity-edge/||' infra/capacity-run/edge/nginx.conf \
-              | sed 's|include edge.conf;|include /etc/capacity-edge/edge.conf;|' \
-              > "$RUNNER_TEMP/edge/nginx.conf"
+          # The shipped nginx.conf already includes /etc/capacity-edge/edge.conf,
+          # which is where both files are mounted in the container.
+          cp infra/capacity-run/edge/nginx.conf "$RUNNER_TEMP/edge/nginx.conf"
 
-          docker run -d --name cap-proxy --network host \
+          # --entrypoint bypasses the image's default entrypoint, which rewrites
+          # configuration and starts its own nginx on :80; that ignores -c, fails
+          # to bind and the container exits.
+          docker run -d --name cap-proxy --network host --entrypoint nginx \
             -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
             -v "$RUN_DIR/trust:/etc/ci-edge:ro" \
             nginx:1.27-alpine \
-            nginx -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null
+            -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null
+
+          # Fail early and loudly if the proxy exited instead of waiting 60s.
+          sleep 3
+          if [ "$(docker inspect -f '{{.State.Running}}' cap-proxy)" != "true" ]; then
+            echo "::error title=proxy::the edge container exited"
+            docker logs cap-proxy
+            exit 1
+          fi
 
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
