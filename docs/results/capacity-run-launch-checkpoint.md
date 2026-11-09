@@ -488,10 +488,10 @@ watchdog against a fake `aws`. The RunId-guard test was confirmed to fail when t
 guard is removed, so the tests are not vacuous. These artifacts are **in the
 repository**, not local-only.
 
-**CI-tested commit: `6533edf`** (run `42604425610`, all six jobs success) — the
-commit code is pinned to. The artifacts above land on top of it and carry their own
-tests; the SHA whose CI covers *them* is named in the confirmation below once the
-run completes.
+**CI-tested commit: `66c5589`** — run `42608467206`, all six jobs success. This is
+the commit that contains every artifact above, so it is what the launch pins.
+`6533edf` (run `42604425610`) also passed, but it covers the application only and
+predates these artifacts — it could not have been the right pin.
 
 ### 12.2 Ingress — 443 only, exact discovered `/32`
 
