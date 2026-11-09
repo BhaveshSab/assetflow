@@ -422,8 +422,9 @@ terminates and deletes all run-owned resources, and reports the run as
 ### Test evidence
 
 - `infra/tests/test_evidence_server.py` — **16 tests**, real TLS server: auth (valid/wrong/prefix/missing/empty-configured), traversal (4 spellings), write verbs (4), untrusted cert, wrong hostname, pinned cert success, 3 startup fail-closed cases
-- `infra/tests/test_export_evidence.py` — **8 tests**: checksum success/mismatch, wrong token, plain-HTTP refusal, untrusted CA, missing CA, bounded retries, no-TLS-bypass static check
-- Full suite in a clean clone at the PR head: **127 tests, 126 passed, 1 skipped, 0 failed**
+- `infra/tests/test_export_evidence.py` — **13 tests**: checksum success/mismatch, wrong token, plain-HTTP refusal, untrusted CA, missing CA, bounded retries, no-TLS-bypass static check, plus regressions for blank and malformed digests, a failed final move, unverified mode being distinct from success, and verified success being labelled verified
+- `infra/tests/test_stage2_policy.py` — **13 tests**: CreateTags covers instance/volume/**network-interface** with the same conditions, every CreateTags allow is `CreateAction`-constrained, no name-based SG ARNs, no key-pair permissions, production denies present and uncontradicted, EIP cannot be allocated or released, dangerous services denied, launch pinned to t3.micro, terminate run-tag scoped, no wildcard resource on a mutating allow
+- Full suite in a clean clone at the PR head: **145 tests, 144 passed, 1 skipped, 0 failed**
 
 ---
 
@@ -436,15 +437,30 @@ terminates and deletes all run-owned resources, and reports the run as
 | Creation-time tagging for the new SG | `12TagSecurityGroupAtCreation` with `ec2:CreateAction = CreateSecurityGroup` |
 | Network-interface tag alignment | `08LaunchNetworkInterfaceTagControlled` now requires the same `RequestTag` pair as the launch spec |
 | CreateSecurityGroup authorized against the VPC, not the SG | `11CreateSecurityGroupInApprovedVpc` targets `vpc/vpc-0bcfe8d7f2e811bb3` — **confirmed empirically**: the dry-run error names the VPC ARN |
+| **`ec2:CreateTags` did not cover `network-interface/*`** | statement 13 now carries `instance/*`, `volume/*` **and** `network-interface/*` under the same region, `CreateAction = RunInstances` and run-tag conditions. `RunInstances` needs CreateTags on every tagged type, so the omission would have failed the launch |
+| **`DescribeKeyPairs` remained in inventory** | removed; a plan with no SSH needs no key inventory. Caught by `test_no_key_pair_permissions_exist` |
+| **Exporter returned success without a real digest** | verified export now requires 64 hex characters; `''`, a malformed digest, a mismatch, or a failed final `mv` all exit non-zero. `-` is an explicit *unverified* mode that exits **76**, never 0, and prints that the run must be marked incomplete |
 
-### Non-destructive production check
+### Non-destructive permission verification — ordered
 
 Only `--dry-run` is ever used. It returns `DryRunOperation` (allowed) or
 `UnauthorizedOperation` (denied) and **never acts**. The earlier read-only denial
-does **not** prove the new policy denies production, so the post-attach
-verification is: `terminate-instances ... --dry-run` against
-`i-0ff4690ec52d0dc01` must return `UnauthorizedOperation`, and a positive control
-(a dry-run against the run-owned instance) must return `DryRunOperation`.
+does **not** prove the new policy denies production.
+
+The checks run in a fixed order, because a positive control is impossible before
+the resource it targets exists:
+
+| # | When | Check | Required result |
+|---|---|---|---|
+| P1 | after attach, **before any creation** | `terminate-instances --instance-ids i-0ff4690ec52d0dc01 --dry-run` | `UnauthorizedOperation` — production denial proven with no run resource in existence |
+| P2 | after attach, **before any creation** | `run-instances ... --dry-run` with the full launch request from §14 | `DryRunOperation` — the launch is authorised, without launching |
+| P3 | **only after the approved instance exists** | `terminate-instances --instance-ids <run-owned-id> --dry-run` | `DryRunOperation` — positive control that P1's denial is specific to production, not a blanket deny |
+| P4 | during teardown | real `terminate-instances` on the run-owned instance | succeeds; production re-checked with `--dry-run` afterwards |
+
+P1 alone cannot distinguish "correctly scoped" from "denies everything"; P3 is
+what rules out a blanket deny, and it is deliberately deferred until the run-owned
+instance exists. If P3 fails, the run is **BLOCKED** and nothing further is
+created. The workload, budget and protections are unchanged from rev 3.
 
 ### The launch request the policy must permit
 

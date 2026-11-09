@@ -83,6 +83,53 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(out.read_bytes(), PAYLOAD)
 
+    # ---------------------------------------------- verified-export regression
+    def test_a_blank_expected_digest_is_refused(self):
+        # Regression: '' must never be treated as "nothing to check".
+        out = self.tmp / 'blank.tar.gz'
+        result = self.run_script(self.base, '', out)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_malformed_digest_is_refused(self):
+        # Regression: a truncated/short digest is not a verifier.
+        for bad in ('abc123', '0' * 63, 'z' * 64):
+            with self.subTest(digest=bad):
+                out = self.tmp / f'bad-{len(bad)}.tar.gz'
+                result = self.run_script(self.base, bad, out)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(out.exists())
+
+    def test_a_failed_move_does_not_report_success(self):
+        # Regression: checksum matching but an unwritable destination must not
+        # exit 0. Put the output under a read-only directory.
+        ro = self.tmp / 'readonly'
+        ro.mkdir(exist_ok=True)
+        out = ro / 'archive.tar.gz'
+        ro.chmod(0o500)
+        self.addCleanup(ro.chmod, 0o700)
+        result = self.run_script(self.base, sha(PAYLOAD), out)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_unverified_mode_is_distinct_from_success(self):
+        # Regression: '-' must be visibly different from a verified export and
+        # must not exit 0, so a missing digest cannot look like verification.
+        out = self.tmp / 'unverified.tar.gz'
+        result = self.run_script(self.base, '-', out)
+        self.assertEqual(result.returncode, 76, result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('UNVERIFIED', result.stderr)
+        self.assertIn('marked incomplete', result.stderr)
+        self.assertEqual(out.read_bytes(), PAYLOAD, 'the bytes are still delivered')
+
+    def test_verified_success_is_labelled_verified(self):
+        out = self.tmp / 'labelled.tar.gz'
+        result = self.run_script(self.base, sha(PAYLOAD), out)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('verified', result.stdout + result.stderr)
+        self.assertNotIn('UNVERIFIED', result.stdout + result.stderr)
+
     def test_a_wrong_checksum_fails_with_75(self):
         # 75 is the caller's signal to clean up and mark the run incomplete.
         out = self.tmp / 'bad.tar.gz'

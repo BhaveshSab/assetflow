@@ -11,7 +11,6 @@
         "ec2:DescribeInstances",
         "ec2:DescribeVolumes",
         "ec2:DescribeAddresses",
-        "ec2:DescribeKeyPairs",
         "ec2:DescribeImages",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
@@ -190,12 +189,13 @@
       }
     },
     {
-      "Sid": "13TagInstanceAndVolumeAtRunInstances",
+      "Sid": "13TagInstanceVolumeAndNetworkInterfaceAtRunInstances",
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
       "Resource": [
         "arn:aws:ec2:ap-southeast-2:459252806274:instance/*",
-        "arn:aws:ec2:ap-southeast-2:459252806274:volume/*"
+        "arn:aws:ec2:ap-southeast-2:459252806274:volume/*",
+        "arn:aws:ec2:ap-southeast-2:459252806274:network-interface/*"
       ],
       "Condition": {
         "StringEquals": {
