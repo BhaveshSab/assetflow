@@ -680,7 +680,6 @@ jobs:
           # a free port and pointed at the compose-published ports.
           mkdir -p "$RUNNER_TEMP/edge"
           sed -e 's|listen 8443 ssl;|listen 8543 ssl;|' \
-              -e 's|/etc/capacity-run/tls|/etc/ci-edge/tls|g' \
               infra/capacity-run/edge/edge.conf > "$RUNNER_TEMP/edge/edge.conf"
           # The shipped nginx.conf already includes /etc/capacity-edge/edge.conf,
           # which is where both files are mounted in the container.
@@ -691,7 +690,7 @@ jobs:
           # to bind and the container exits.
           docker run -d --name cap-proxy --network host --entrypoint nginx \
             -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
-            -v "$RUN_DIR/trust:/etc/ci-edge:ro" \
+            -v "$RUN_DIR/trust:/etc/capacity-run:ro" \
             nginx:1.27-alpine \
             -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null
 
