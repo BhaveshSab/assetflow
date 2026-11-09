@@ -250,44 +250,82 @@ instance, keep the evidence, and do not run load.
 
 A failed check aborts to teardown; it does not proceed.
 
-## 7. Access rules actually needed — recorded, NOT applied
+## 7. Access — exact /32 sources, discovered not assumed
 
-**Current state: inbound is empty.** The security group has no inbound rules and
-it stays that way until the change below is explicitly approved.
+**Current state: inbound is empty.** The group has no inbound rules and none are
+added at this checkpoint.
 
-Two distinct clients must reach the instance over HTTPS, and both come from
-GitHub-hosted runners, not from a fixed office address:
+Two clients must reach the instance over HTTPS. Neither has a predictable address,
+so the plan is to **discover each address from inside the job that uses it**, then
+propose a `/32` for exactly that address — not the published GitHub ranges, which
+would admit every GitHub runner in the world.
 
-| Client | What it does | Needs |
-|--------|--------------|-------|
-| Load generator | drives the k6/load script against the API | 443/tcp to the instance |
-| Evidence download client | fetches the run tarball from the evidence endpoint | 443/tcp to the instance |
+### 7.1 Discover the generator's egress address
 
-### Why a source CIDR is hard here
+Run this as the **first step of the same job** that will perform the load test, and
+keep that job alive for readiness and the whole test:
 
-GitHub-hosted runners do not have stable IPs. The published ranges are the
-`actions` entries in `https://api.github.com/meta`. Using them means a CIDR set,
-not a single `/32`.
+```bash
+EGRESS_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '\r\n')"
+echo "generator egress: ${EGRESS_IP}"
+```
 
-**Proposed rule, subject to approval:**
+The returned address is then allowed as `<EGRESS_IP>/32` on 443.
 
-| Type | Protocol | Port | Source |
-|------|----------|------|--------|
-| Ingress | tcp | 443 | GitHub Actions ranges (`actions` from `api.github.com/meta`), as a CIDR list |
-| Ingress | tcp | 22 | **none** — no key pair is attached, SSH is impossible |
+**Critically: the same job must do discovery, readiness and the load test.** A
+different job gets a different runner and therefore a different egress address, so
+a rule derived in one job would not admit the next one. Keeping one job alive for
+the entire sequence is what makes the `/32` rule valid.
 
-443 is the only port needed. Opening 22 would add no capability and no risk
-reduction; it is simply unnecessary.
+### 7.2 Discover the evidence client's egress address
 
-**Narrower alternative if you prefer:** run the generator and the evidence client
-from a host with a known egress IP and allow only that `/32`. This is tighter than
-the GitHub range list and is the better choice if one is available.
+The evidence download is a separate step and may run in a different job, hence a
+different address. Discover it the same way, inside that job:
 
-Both clients authenticate at the application layer (the evidence endpoint uses a
-bearer token over TLS), so the CIDR is defence in depth, not the only control.
+```bash
+EVIDENCE_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '\r\n')"
+echo "evidence egress: ${EVIDENCE_IP}"
+```
 
-**The rules are not added by this document.** Applying them is a separate approval
-and a separate change to `sg-012a0191f4e4a9a8c`.
+If the same job does both, one `/32` covers both; do not assume that, check it.
+
+### 7.3 Proposed rules
+
+Only 443, only exact discovered addresses:
+
+| Type | Protocol | Port | Source | Purpose |
+|------|----------|------|--------|---------|
+| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` | load generator + readiness |
+| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` | evidence download (only if different) |
+| Ingress | tcp | 22 | — | **none**: no key pair is attached, so SSH is impossible |
+
+Two rules at most. No port ranges, no `0.0.0.0/0`, no published range lists.
+
+### 7.4 The limitation, stated plainly
+
+**A `/32` learned from a GitHub-hosted runner cannot be known in advance.** It
+depends on which runner the job lands on. This creates two real constraints:
+
+1. **The rule must be added after discovery but before the test**, which means a
+   human or scripted step between them — not a fully hands-off sequence.
+2. **If the job is re-run, the address may change** and the existing rule will not
+   admit it. The re-run will fail to connect, which looks like a broken app but is
+   really a stale firewall rule.
+
+If the egress address cannot be pinned reliably — for example if discovery returns
+an address that the job cannot keep, or the runner is replaced mid-test — then the
+rule set is not trustworthy for a `/32` approach. **In that case the correct
+outcome is to report the limitation and stop**, not to widen to the published
+GitHub ranges or to `0.0.0.0/0`. A broader rule would admit arbitrary GitHub
+tenants to a host running a load test, which is a much larger exposure than the
+one it fixes.
+
+Narrowing further is also acceptable: if you have a host with a known static
+egress IP, run the generator and evidence client from it and allow only that
+`/32`. That is the tightest option and removes the discovery step entirely.
+
+The evidence endpoint also requires a bearer token over TLS, so the CIDR is
+defence in depth rather than the only control.
 
 ## 8. P3 termination dry-run — immediately after launch
 
@@ -362,10 +400,122 @@ this approval.
 
 ### Remaining blockers before launch
 
-1. **Budget notification email** — needed to create the notification-only budget.
-   Budgets supports `SubscriptionType=EMAIL` directly; no SNS topic is required
-   and no IAM change is needed.
-2. **Ingress approval** — the CIDR decision in section 7 (GitHub ranges, or a
-   single known egress `/32`).
-3. **Instance launch approval** — naming the pinned instance ID that teardown
-   will later target.
+1. **Ingress approval** — the discovery step in section 7 must run first, because
+   the `/32` addresses cannot be known until the jobs report them. Approving the
+   *rule shape* now is possible; the concrete addresses come from discovery.
+2. **Launch approval** — the consolidated request below.
+
+### A note on identifying the instance
+
+The instance ID **cannot be named before launch**; AWS assigns it. So the launch
+approval identifies the run by its **exact configuration and run tags** instead:
+
+| Identifier | Value |
+|------------|-------|
+| Tag `RunId` | `cap-20261109t0800z-a7f3` |
+| Tag `Project` | `assetflow-capacity` |
+| AMI | `ami-01e91e94accc42eec` |
+| Instance type | `t3.micro`, `CpuCredits=standard` |
+| Subnet | `subnet-01f25dc99e013aa6a` |
+| Security group | `sg-012a0191f4e4a9a8c` |
+| Shutdown behaviour | `terminate` |
+| Root volume | gp3 30 GB, `DeleteOnTermination=true` |
+
+That tag pair is unique to this run. **After launch the returned instance ID is
+reported, and its account, tags and configuration are verified before any teardown
+approval is requested** — teardown never proceeds on the assumption that the new ID
+is the right instance.
+
+### Scheduled automatic termination — part of this approval
+
+The approval covers a mechanism that **terminates the instance automatically**:
+
+| Mechanism | Detail |
+|-----------|--------|
+| In-guest timer | user-data schedules `systemd-run --on-active=4h … /sbin/shutdown -h now` at boot |
+| What the shutdown does | with `InstanceInitiatedShutdownBehavior=terminate`, the guest shutdown **terminates** the instance and deletes the 30 GB volume |
+| Armed-check | user-data writes `/var/lib/capacity-timer-armed`; readiness requires it, and its absence aborts the run |
+| Operator watchdog | independent local timer calls `terminate-instances` for the pinned ID at T+4h if the guest timer did not fire |
+
+Approving the launch therefore also approves **this instance terminating itself at
+T+4h**. That is intended behaviour, not a failure.
+
+---
+
+## 12. Consolidated approval request
+
+One request covering the three coupled changes. Until it is approved, none of them
+happen.
+
+### 12.1 Pinned versions
+
+| Item | Pinned to |
+|------|-----------|
+| **CI-tested commit** | the SHA whose run is green in PR #31; the launch pins exactly that commit, not the branch tip |
+| AMI | `ami-01e91e94accc42eec` (by ID, never "latest") |
+| Runtime | Node/dependencies as locked in that commit; no floating tags |
+| Load script | `infra/scripts/k6-load.js` at that commit |
+| Evidence endpoint | `infra/scripts/evidence_server.py` at that commit |
+
+A branch-tip launch would be untested code; the launched code is the commit the CI
+run actually exercised.
+
+### 12.2 Ingress change — 443 only, exact discovered `/32`
+
+| Type | Proto | Port | Source |
+|------|-------|------|--------|
+| Ingress | tcp | 443 | `<GENERATOR_EGRESS_IP>/32` from discovery in the generator job |
+| Ingress | tcp | 443 | `<EVIDENCE_EGRESS_IP>/32` only if the evidence job differs |
+| Ingress | tcp | 22 | **none** — no key pair |
+
+No published GitHub ranges, no `0.0.0.0/0`, no port ranges. If discovery cannot
+pin the address, the run reports the limitation and does not widen the rule.
+
+### 12.3 One disposable instance
+
+`t3.micro` in `ap-southeast-2b`, Standard credits, AMI and configuration per
+section 2, tagged `Project=assetflow-capacity` / `RunId=cap-20261109t0800z-a7f3`,
+using the existing `sg-012a0191f4e4a9a8c`. Identified by tag pair and exact
+configuration, since AWS assigns the ID at launch.
+
+### 12.4 Lifecycle enforcement included in this approval
+
+Approving the launch approves the instance **terminating itself at T+4h** via the
+in-guest timer, with an operator-side watchdog as the independent backup. The
+4-hour maximum lifetime is the binding control; the $1 budget is a delayed email
+and the $5 target is a manual tripwire.
+
+### 12.5 Cost, restated honestly
+
+| Item | 4 h |
+|------|-----|
+| t3.micro + gp3 30 GB + public IPv4 | **$0.0886** |
+| Not included | data transfer out (largest), EBS I/O over 3,000 IOPS, other AWS API calls |
+
+Total spend will be higher than $0.0886; the size depends mainly on egress, which
+this document does not estimate. Nothing technical enforces $5 or $1.
+
+### 12.6 Readiness before any load, in order
+
+1. instance `running`, status checks `2/2`
+2. `InstanceInitiatedShutdownBehavior` reads back `terminate`
+3. `DeleteOnTermination` reads back `true` for every mapping
+4. `/var/lib/capacity-timer-armed` exists → the guest **will** self-terminate;
+   absent means abort and terminate immediately
+5. `systemctl show capacity-deadline.timer` reports a future elapse
+6. memory gate: `sum(RSS) <= 70%` of 1024 MB before the ramp
+7. Nginx limiter present and unchanged (`100r/s`, `burst=200`, 429); API throttle
+   300/60000 ms
+8. HTTPS answers from the generator's discovered address
+9. baseline spend read from `ce:GetCostAndUsage`
+
+Then, and only then, P3 (`terminate-instances --dry-run` on the new ID) and the
+load test.
+
+### 12.7 What is NOT approved by this request
+
+* load testing — a later, separate step after readiness passes
+* termination of a specific instance — requested separately **after** the returned
+  ID is verified
+* any change to production
+* any SNS resource or budget action

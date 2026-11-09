@@ -478,6 +478,64 @@ The budget is therefore reported as **BLOCKED**, pending one decision:
 create a run-scoped SNS topic plus an email subscription, or supply an existing
 topic ARN.
 
+---
+
+## Budget created — notification only, not a spending cap
+
+Checked first: `describe-budget` returned `NotFoundException`, so there was nothing
+to duplicate. Exactly one budget was then created.
+
+| Property | Value |
+|----------|-------|
+| Name | `cap-20261109t0800z-a7f3` |
+| Type | `COST`, notification only |
+| Limit | **USD $1.00** |
+| Period | `MONTHLY` (calendar month containing the run) |
+| Cost filters | **none** — no service, tag or linked-account filter |
+| Threshold | `ACTUAL` spend `GREATER_THAN` **80%** of limit |
+| Subscriber | `SubscriptionType=EMAIL`, address **redacted** |
+| Budget actions | **none** — no automatic action is attached |
+| Health | `HEALTHY`, actual spend `$0.00` at creation |
+
+Verified by reading the budget back, not by trusting the create call: the
+`describe-*` responses above are the source for every row except the threshold,
+which is echoed by the notification read-back.
+
+### The email is not in this repository
+
+The address was supplied privately and passed inline to `create-budget`. It is
+**not** in any committed file, log, diff or evidence artefact, and it is redacted
+in every report. Only AWS holds it, as the subscriber address.
+
+### What this budget does and does not do
+
+* It sends an email when actual spend passes 80% of $1, i.e. **$0.80**.
+* Budgets evaluates periodically, so the email is **delayed** and may arrive after
+  the run has ended.
+* **It cannot stop, terminate, throttle or deny anything.** There is no budget
+  action attached and the policy grants no ability to add one.
+* **The run is not guaranteed to stay under $1.** The budget is a notification; if
+  spend exceeded $1 the outcome would be a late email, not a prevented charge.
+
+### Configured is not delivered
+
+The subscriber is configured and the budget reads back healthy. **Delivery was not
+tested and is not claimed.** A notification only fires when a threshold is actually
+crossed, which this run is not expected to do. Confirming delivery would require
+crossing $0.80, so the honest status is:
+
+| Status | Claim |
+|--------|-------|
+| Configured | **yes** — subscriber present on read-back |
+| Delivering | **not verified** |
+
+### Cost filters worth stating explicitly
+
+No cost filter means the budget watches **total account spend** for the month, not
+just this run. That is broader than the run, and it is the correct choice here:
+filtering by tag would miss charges that arrive without the tag (for example data
+transfer), which are exactly the ones worth being told about.
+
 ## State after these checks
 
 | Item | Value |
