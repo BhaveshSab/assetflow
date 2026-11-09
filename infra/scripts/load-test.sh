@@ -24,6 +24,10 @@
 # Usage:
 #   ./load-test.sh [--stages LIST] [--stage-duration TIME] [--keep-going]
 #                  [--single-user] [--users N] [--assets N] [--no-sample]
+#
+#   --users defaults to 200, the agreed account count for the capacity run.
+#   The bootstrap seeds the same number (FIXTURE_USERS), so the two must
+#   agree or the run measures a different workload than it seeded.
 #                  [--cleanup] [--dry-run] [--help]
 #
 # Environment:
@@ -54,7 +58,7 @@ ABORT_ERROR_RATE="${ABORT_ERROR_RATE:-0.5}"
 # Set when the abort ceiling stops the ramp, so the report can say where.
 ABORTED_AT=""
 SLEEP="${SLEEP:-1}"
-LOADTEST_USERS="${LOADTEST_USERS:-30}"
+LOADTEST_USERS="${LOADTEST_USERS:-200}"
 LOADTEST_ASSETS="${LOADTEST_ASSETS:-0}"
 
 KEEP_GOING=false

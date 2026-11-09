@@ -2,97 +2,92 @@
 #
 # EC2 user-data for the AssetFlow capacity run.
 #
-# This is the authoritative bootstrap. It is passed to `run-instances
-# --user-data file://infra/capacity-run/user-data.sh` and therefore runs on every
-# boot, not from a shell on the host (the instance has no key pair and no SSH).
+# Runs ONCE per instance (that is how EC2 user-data works). It therefore installs
+# *persistent* systemd units for anything that must survive a reboot, rather than
+# claiming to re-run itself every boot.
 #
-# The deadline is computed from the INSTANCE LAUNCH TIME, read from the EC2 API,
-# not from when this script finishes. A slow or failed bootstrap must not buy the
-# run extra time: with a launch-time deadline, a bootstrap that takes 40 minutes
-# leaves 3h20m, not 4h.
+# INPUTS - there is exactly one delivery path, and it is provisioned explicitly:
 #
-# Secrets are never baked in here. They arrive through the SSM-free channel
-# documented in launch-checkpoint section 12: a run-scoped secret is fetched from
-# an operator-hosted HTTPS endpoint whose URL and bearer token are supplied as
-# kernel arguments at launch (kept out of Git and out of cloud-init logs by
-# being passed as --instance-initiated... no: see README). If no secret channel is
-# available the run does not start the app and reports DEGRADED instead.
+#   Every input is written to /etc/capacity-run/run-config.env by the operator
+#   BEFORE launch, and is embedded by the provisioning wrapper
+#   infra/capacity-run/render-user-data.sh, which base64s the file into this
+#   script's USERDATA payload. No AWS user credentials, no long-lived keys, and no
+#   secrets in Git: the operator supplies them at render time from their own
+#   environment, and render-user-data.sh refuses to write plaintext credentials.
 #
-# Everything this script learns is written under /var/lib/capacity-run/ so the
-# readiness endpoint can serve it without anything reading the guest directly.
+#   The launch time is NOT read from IMDS. EC2 does not expose a launch timestamp
+#   under /latest/meta-data/instance/lifecycle (that path is the instance lifecycle
+#   *state* action, not a timestamp), and no LaunchTime tag is sent by the launch
+#   request. The original deadline is instead provisioned by the operator, who is
+#   the only party that knows the launch instant: LAUNCH_EPOCH is written into
+#   run-config.env at render time. The guest cannot forge or extend it.
+#
+# FAIL CLOSED: if any required input is missing or invalid, this script writes a
+# FAILED status and terminates the instance. It never starts the app on a partial
+# configuration, and it never falls back to "now" for the deadline.
 
 set -euo pipefail
 
-RUN_ID="${RUN_ID:-cap-20261109t0800z-a7f3}"
-RUN_DIR=/var/lib/capacity-run
+RUN_DIR=/var/lib/assetflow-capacity
+EVIDENCE_DIR="$RUN_DIR/evidence"
+CONFIG=/etc/capacity-run/run-config.env
 LOG="$RUN_DIR/bootstrap.log"
-LIFETIME_SECONDS="${LIFETIME_SECONDS:-14400}"   # 4 hours
 APP_DIR=/opt/assetflow
-COMMIT="${ASSETFLOW_COMMIT:-}"
 
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR" "$EVIDENCE_DIR"
+chmod 700 "$RUN_DIR"
 exec > >(tee -a "$LOG") 2>&1
 
-say() { printf '[bootstrap] %s\n' "$*"; }
-fail() { printf '[bootstrap][FATAL] %s\n' "$*"; echo "failed: $*" > "$RUN_DIR/bootstrap-status"; exit 1; }
+say()  { printf '[bootstrap] %s\n' "$*"; }
+status() { printf '%s' "$1" > "$EVIDENCE_DIR/bootstrap-status"; }
 
-echo running > "$RUN_DIR/bootstrap-status"
+# Refuse to leave a half-configured host running.
+die() {
+    printf '[bootstrap][FATAL] %s\n' "$*"
+    status "failed: $*"
+    # The instance was launched with InstanceInitiatedShutdownBehavior=terminate,
+    # so this TERMINATES it and deletes the root volume.
+    /sbin/shutdown -h now || true
+    exit 1
+}
 
-# ---------------------------------------------------------------- 1. deadline
-# Deadline from launch time, not from now.
-say "== deadline =="
-# IMDSv2 token, then the instance's own launch time.
-TOKEN="$(curl -fsS -X PUT 'http://169.254.169.254/latest/api/token' \
-    -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)"
-if [ -z "${TOKEN:-}" ]; then
-    fail "no IMDSv2 token: cannot read launch time, so cannot compute a launch-based deadline"
+status running
+
+# ------------------------------------------------------------------ 1. inputs
+say "== inputs =="
+[ -r "$CONFIG" ] || die "missing $CONFIG: no provisioning path, refusing to continue"
+# shellcheck disable=SC1090,SC1091
+set -a
+# shellcheck disable=SC1090
+. "$CONFIG"
+set +a
+
+for required in LAUNCH_EPOCH EXPECTED_COMMIT EVIDENCE_TOKEN S3_BUCKET; do
+    eval "value=\${$required:-}"
+    [ -n "${value:-}" ] || die "$required is empty in run-config.env"
+done
+
+# The deadline is the provisioned launch instant, never "now".
+case "$LAUNCH_EPOCH" in
+    ''|*[!0-9]*) die "LAUNCH_EPOCH is not a unix timestamp: '$LAUNCH_EPOCH'" ;;
+esac
+DEADLINE_EPOCH=$(( LAUNCH_EPOCH + 14400 ))
+NOW=$(date +%s)
+if [ "$DEADLINE_EPOCH" -le "$NOW" ]; then
+    # Already past the window: do not run, and do not linger.
+    die "deadline already passed at bootstrap (deadline=$DEADLINE_EPOCH now=$NOW)"
 fi
 
-LAUNCH_TIME="$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" \
-    'http://169.254.169.254/latest/meta-data/instance/lifecycle' 2>/dev/null || true)"
+printf '%s' "$LAUNCH_EPOCH"   > "$EVIDENCE_DIR/launch-epoch"
+printf '%s' "$DEADLINE_EPOCH" > "$EVIDENCE_DIR/deadline-epoch"
+printf '%s' "$EXPECTED_COMMIT" > "$EVIDENCE_DIR/expected-commit"
+say "deadline $DEADLINE_EPOCH ($(( DEADLINE_EPOCH - NOW ))s remaining)"
 
-# lifecycle gives the launch time; fall back to the documented tag if absent.
-if [ -z "${LAUNCH_TIME:-}" ]; then
-    LAUNCH_TIME="$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" \
-        'http://169.254.169.254/latest/meta-data/tags/instance/LaunchTime' 2>/dev/null || true)"
-fi
-if [ -z "${LAUNCH_TIME:-}" ]; then
-    fail "cannot determine launch time: a now-relative deadline would silently extend the run"
-fi
-
-NOW="$(date +%s)"
-LAUNCH_EPOCH="$(date -d "$LAUNCH_TIME" +%s 2>/dev/null || echo '')"
-if [ -z "$LAUNCH_EPOCH" ]; then
-    fail "unparseable launch time: $LAUNCH_TIME"
-fi
-
-REMAINING=$(( LAUNCH_EPOCH + LIFETIME_SECONDS - NOW ))
-if [ "$REMAINING" -le 0 ]; then
-    # Bootstrap itself consumed the whole window: terminate rather than linger.
-    fail "deadline already passed during bootstrap (remaining ${REMAINING}s)"
-fi
-say "launch=$LAUNCH_TIME remaining=${REMAINING}s"
-
-echo "$LAUNCH_EPOCH" > "$RUN_DIR/launch-epoch"
-echo "$(( LAUNCH_EPOCH + LIFETIME_SECONDS ))" > "$RUN_DIR/deadline-epoch"
-
-# The deadline is armed with `shutdown`, and the instance was launched with
-# InstanceInitiatedShutdownBehavior=terminate, so this TERMINATES the instance
-# and deletes its root volume. It is a transient timer: a *reboot* clears it, so
-# section 7 re-arms it on every boot and records that it did.
-systemd-run --on-active="${REMAINING}s" --unit=capacity-deadline \
-    --description="capacity run deadline (launch-based)" /sbin/shutdown -h now
-sleep 1
-systemctl is-active capacity-deadline.timer > "$RUN_DIR/timer-state" || true
-systemctl show capacity-deadline.timer -p NextElapseUSecMonotonic \
-    > "$RUN_DIR/timer-next-elapse" 2>/dev/null || true
-say "deadline timer: $(cat "$RUN_DIR/timer-state" 2>/dev/null || echo unknown)"
-
-# ---------------------------------------------------------------- 2. packages
+# ------------------------------------------------------------- 2. packages
 say "== packages =="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg git openssl jq python3 >/dev/null
+apt-get install -y -qq ca-certificates curl gnupg git openssl jq python3 tar >/dev/null
 if ! command -v docker >/dev/null 2>&1; then
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -104,91 +99,157 @@ https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_C
     apt-get update -qq
     apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
 fi
-
-# 1 GB of RAM is not enough for the image build; swap is required, not optional.
+# 1 GB of RAM cannot build the image; swap is required, not optional.
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
-    chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
 fi
 
 # ---------------------------------------------------------------- 3. code
 say "== code =="
-if [ -z "$COMMIT" ]; then
-    fail "ASSETFLOW_COMMIT not supplied: refusing to deploy an unpinned checkout"
-fi
 rm -rf "$APP_DIR"
 git clone -q https://github.com/BhaveshSab/assetflow "$APP_DIR"
-git -C "$APP_DIR" checkout -q "$COMMIT" || fail "cannot check out pinned commit $COMMIT"
-echo "$(git -C "$APP_DIR" rev-parse HEAD)" > "$RUN_DIR/deployed-commit"
+git -C "$APP_DIR" checkout -q "$EXPECTED_COMMIT" \
+    || die "cannot check out pinned commit $EXPECTED_COMMIT"
+DEPLOYED=$(git -C "$APP_DIR" rev-parse HEAD)
+printf '%s' "$DEPLOYED" > "$EVIDENCE_DIR/deployed-commit"
+[ "$DEPLOYED" = "$EXPECTED_COMMIT" ] || die "deployed $DEPLOYED != expected $EXPECTED_COMMIT"
 
-# ---------------------------------------------------------------- 4. secrets
-# Secrets arrive from the operator, never from this file.
-if [ -z "${SECRET_URL:-}" ] || [ -z "${SECRET_TOKEN:-}" ]; then
-    echo "degraded: no secret channel" > "$RUN_DIR/bootstrap-status"
-    say "no SECRET_URL/SECRET_TOKEN: app will not start, readiness reports degraded"
-    exit 0
-fi
-curl -fsS -H "Authorization: Bearer $SECRET_TOKEN" "$SECRET_URL" -o "$RUN_DIR/run.env" \
-    || fail "secret fetch failed"
-chmod 600 "$RUN_DIR/run.env"
-
-# ---------------------------------------------------------------- 5. deploy
+# ---------------------------------------------------------------- 4. deploy
 say "== deploy =="
 cd "$APP_DIR"
-set -a; . "$RUN_DIR/run.env"; set +a
-export RUN_ID
-docker compose -f infra/docker-compose.yml up -d --build || fail "compose up failed"
+docker compose -f infra/docker-compose.yml up -d --build || die "compose up failed"
 
-# Synthetic fixtures, scoped to this run id so nothing is shared.
+USERS="${FIXTURE_USERS:-200}"
+# Must equal LOADTEST_USERS passed to load-test.sh. Seeding 200 while driving 30
+# would leave 170 accounts unused and understate the run.
 docker compose -f infra/docker-compose.yml exec -T api \
-    npm run seed:loadtest -- --run-id "$RUN_ID" --users "${FIXTURE_USERS:-30}" \
-    > "$RUN_DIR/seed.log" 2>&1 || fail "fixture seeding failed"
+    npm run seed:loadtest -- --run-id "${RUN_ID}" --users "$USERS" \
+    > "$EVIDENCE_DIR/seed.log" 2>&1 || die "fixture seeding failed"
+printf '%s' "$USERS" > "$EVIDENCE_DIR/fixture-users"
 
-# ---------------------------------------------------------------- 6. evidence
+# Health: the app must answer, not merely have started.
+for i in $(seq 1 60); do
+    if docker compose -f infra/docker-compose.yml exec -T api \
+        sh -c 'curl -fsS http://127.0.0.1:3000/api/health' >/dev/null 2>&1; then
+        echo healthy > "$EVIDENCE_DIR/app-health"
+        break
+    fi
+    [ "$i" -eq 60 ] && die "application health check never passed"
+    sleep 5
+done
+
+# -------------------------------------------------- 5. evidence + TLS trust
 say "== evidence endpoint =="
-mkdir -p "$RUN_DIR/evidence"
+# The certificate carries an IP SAN for the instance's public address, so the
+# client's destination matches the SAN instead of a bare CN.
+PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $(curl -fsS -X PUT \
+    http://169.254.169.254/latest/api/token \
+    -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" \
+    http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+if [ -n "${PUBLIC_IP:-}" ]; then
+    SAN="IP:${PUBLIC_IP}"
+else
+    die "cannot determine public IPv4 for the certificate SAN"
+fi
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-    -keyout "$RUN_DIR/evidence.key" -out "$RUN_DIR/evidence.crt" \
-    -subj "/CN=capacity-run" >/dev/null 2>&1 || fail "cert generation failed"
-chmod 600 "$RUN_DIR/evidence.key"
+    -keyout "$RUN_DIR/tls.key" -out "$RUN_DIR/tls.crt" \
+    -subj "/CN=capacity-run" \
+    -addext "subjectAltName=${SAN}" >/dev/null 2>&1 \
+    || die "certificate generation failed"
+chmod 600 "$RUN_DIR/tls.key"
 
-# The bearer token is generated here and printed ONLY to the log the operator
-# fetches over TLS; it is never in Git and never in the instance tags.
-head -c 48 /dev/urandom | base64 | tr -d '\n' > "$RUN_DIR/evidence.token"
-chmod 600 "$RUN_DIR/evidence.token"
+# The certificate and the token are published to S3 so the OPERATOR can fetch
+# them out-of-band. They are the bootstrap's output, not its input.
+tar -czf "$RUN_DIR/trust.tar.gz" -C "$RUN_DIR" tls.crt
+printf '%s' "$EVIDENCE_TOKEN" > "$RUN_DIR/evidence.token.txt"
 
+# The endpoint serves ONLY the evidence directory (not the run directory, which
+# holds run.env and the private key) and only /evidence/<name>.tar.gz.
 cat > /etc/systemd/system/capacity-evidence.service <<UNIT
 [Unit]
 Description=capacity run evidence endpoint
-After=network-online.target
+After=network-online.target docker.service
 [Service]
-Environment=EVIDENCE_DIR=$RUN_DIR
-EnvironmentFile=$RUN_DIR/evidence.token.env
-ExecStart=/usr/bin/python3 $APP_DIR/infra/scripts/evidence_server.py --cert $RUN_DIR/evidence.crt --key $RUN_DIR/evidence.key --port 8443
+Environment=EVIDENCE_DIR=$EVIDENCE_DIR
+EnvironmentFile=/etc/capacity-run/evidence.env
+ExecStart=/usr/bin/python3 $APP_DIR/infra/scripts/evidence_server.py --cert $RUN_DIR/tls.crt --key $RUN_DIR/tls.key --port 8443
 Restart=always
 [Install]
 WantedBy=multi-user.target
 UNIT
-printf 'EVIDENCE_TOKEN=%s\n' "$(cat "$RUN_DIR/evidence.token")" > "$RUN_DIR/evidence.token.env"
-chmod 600 "$RUN_DIR/evidence.token.env"
+printf 'EVIDENCE_TOKEN=%s\n' "$EVIDENCE_TOKEN" > /etc/capacity-run/evidence.env
+chmod 600 /etc/capacity-run/evidence.env
 systemctl daemon-reload
-systemctl enable --now capacity-evidence.service || fail "evidence endpoint failed to start"
+systemctl enable --now capacity-evidence.service || die "evidence endpoint failed"
 
-# ---------------------------------------------------------------- 7. metrics
-say "== host metrics =="
+# ------------------------------------------------- 6. persistent units
+# These are real installed units, not transient ones, so a reboot keeps them.
+say "== lifecycle + metrics units =="
 cat > /etc/systemd/system/capacity-metrics.service <<UNIT
 [Unit]
 Description=capacity run host metrics
 After=network-online.target
 [Service]
+Environment=RUN_DIR=$RUN_DIR
+Environment=METRICS_INTERVAL=1
 ExecStart=/bin/bash $APP_DIR/infra/capacity-run/collect-metrics.sh
 Restart=always
 [Install]
 WantedBy=multi-user.target
 UNIT
-systemctl daemon-reload
-systemctl enable --now capacity-metrics.service || fail "metrics collector failed to start"
 
-# ---------------------------------------------------------------- 8. ready
-echo ready > "$RUN_DIR/bootstrap-status"
-say "bootstrap complete"
+# Fixed original deadline, persisted in the unit so a reboot recomputes the
+# remaining time from the SAME launch-based deadline rather than restarting 4h.
+cat > /etc/systemd/system/capacity-deadline.service <<UNIT
+[Unit]
+Description=capacity run deadline enforcement
+After=network.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash $APP_DIR/infra/capacity-run/deadline-guard.sh
+UNIT
+
+cat > /etc/systemd/system/capacity-deadline.timer <<UNIT
+[Unit]
+Description=capacity run deadline timer (launch-based, absolute)
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Unit=capacity-deadline.service
+[Install]
+WantedBy=timers.target
+UNIT
+
+cat > /etc/systemd/system/capacity-snapshot.service <<UNIT
+[Unit]
+Description=capacity run evidence snapshot
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $APP_DIR/infra/capacity-run/snapshot-evidence.sh
+UNIT
+
+cat > /etc/systemd/system/capacity-snapshot.timer <<UNIT
+[Unit]
+Description=periodic evidence snapshot
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+Unit=capacity-snapshot.service
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now capacity-metrics.service  || die "metrics service failed"
+systemctl enable --now capacity-deadline.timer   || die "deadline timer failed"
+systemctl enable --now capacity-snapshot.timer   || die "snapshot timer failed"
+
+# Record what is actually enabled, for the operator to read back.
+systemctl list-timers --all > "$EVIDENCE_DIR/timers.txt" 2>&1 || true
+systemctl is-enabled capacity-deadline.timer > "$EVIDENCE_DIR/deadline-timer-enabled" 2>&1 || true
+
+status ready
+say "bootstrap complete; deadline $DEADLINE_EPOCH"

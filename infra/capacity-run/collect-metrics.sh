@@ -1,52 +1,94 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
-# Host metrics for the capacity run, written for the evidence endpoint to serve.
+# Host metrics for the capacity run, sampled every second.
 #
-# This exists because the readiness and saturation evidence has to be readable
-# WITHOUT SSH: the instance has no key pair. Everything here lands as a file in
-# the evidence directory, which the operator fetches over the approved 443 path.
+# Two review findings shaped this:
 #
-# Sample cadence is deliberately coarse (10s). The run is minutes long and the
-# interesting signals - RSS against a 1 GB host, CPU credit balance - move on the
-# order of seconds, not milliseconds.
-set -euo pipefail
+#  1. The previous version defaulted the interval to 10 seconds, silently changing
+#     the agreed 1-second cadence. This one defaults to 1 second, and the systemd
+#     unit sets METRICS_INTERVAL=1 explicitly.
+#  2. The previous version read CloudWatch from the guest, but the guest has no
+#     AWS CLI and no instance role. **It does not touch AWS at all now.** CPU credit
+#     balance is collected operator-side with the existing `capacity` profile; a
+#     guest calling CloudWatch would have required putting AWS credentials on it,
+#     which is exactly what must not happen.
+#
+# Every failure is recorded as a failure. A missing or unreadable measurement
+# writes null plus an error, never a zero that looks healthy.
+set -uo pipefail
 
-RUN_DIR="${RUN_DIR:-/var/lib/capacity-run}"
-OUT="$RUN_DIR/evidence/host-metrics.jsonl"
-INTERVAL="${METRICS_INTERVAL:-10}"
+RUN_DIR="${RUN_DIR:-/var/lib/assetflow-capacity}"
+EVIDENCE_DIR="$RUN_DIR/evidence"
+OUT="$EVIDENCE_DIR/host-metrics.jsonl"
+INTERVAL="${METRICS_INTERVAL:-1}"
 
-mkdir -p "$(dirname "$OUT")"
+mkdir -p "$EVIDENCE_DIR"
+: >> "$OUT"
 
-emit() {
-    local ts rss_mb swap_used credits
+# Read a /proc field, or emit null. Never invent a value.
+num() { printf '%s' "$1" | grep -Eq '^[0-9]+$' && printf '%s' "$1" || printf 'null'; }
+
+sample() {
+    local ts mem_total mem_avail mem_used_pct swap_total swap_free swap_used
+    local oom dmesg_oom load1 restarts errors=0
+
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    # Sum of RSS across the app processes, in MB. This is the memory gate from
-    # the readiness checks: it must stay under 70% of 1024 MB before the ramp.
-    rss_mb="$(ps -eo rss=,args= \
-        | grep -E 'node|postgres|nginx' \
-        | grep -v grep \
-        | awk '{s+=$1} END {printf "%d", s/1024}' || echo 0)"
+    # Memory, from /proc/meminfo, in kB.
+    mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo '')
+    mem_avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo '')
+    if [ -n "$mem_total" ] && [ -n "$mem_avail" ] && [ "$mem_total" -gt 0 ] 2>/dev/null; then
+        mem_used_pct=$(( (mem_total - mem_avail) * 100 / mem_total ))
+    else
+        mem_used_pct=''
+        errors=$(( errors + 1 ))
+    fi
 
-    swap_used="$(free -m | awk '/Swap:/ {print $3}' || echo 0)"
-    credits="$(/usr/bin/aws cloudwatch get-metric-statistics --namespace AWS/EC2 \
-        --metric-name CPUCreditBalance --dimensions Name=InstanceId,Value="$(curl -fsS -H "X-aws-ec2-metadata-token: $(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null)" \
-        --start-time "$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
-        --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --period 300 --statistics Average \
-        --query 'Datapoints[0].Average' --output text 2>/dev/null || echo unknown)"
+    swap_total=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo '')
+    swap_free=$(awk '/^SwapFree:/ {print $2}' /proc/meminfo 2>/dev/null || echo '')
+    if [ -n "$swap_total" ] && [ -n "$swap_free" ]; then
+        swap_used=$(( (swap_total - swap_free) / 1024 ))
+    else
+        swap_used=''
+        errors=$(( errors + 1 ))
+    fi
 
-    printf '{"ts":"%s","rss_mb":%s,"swap_used_mb":%s,"cpu_credit_balance":"%s"}\n' \
-        "$ts" "$rss_mb" "$swap_used" "$credits" >> "$OUT"
+    # OOM events: kernel counter plus dmesg occurrences.
+    oom=$(awk '/^oom_kill /{s+=$2} END {print s+0}' /proc/vmstat 2>/dev/null || echo '')
+    dmesg_oom=$(journalctl -k --since '-2 min' 2>/dev/null | grep -c 'Out of memory' || echo 0)
 
-    # Lifecycle status, so readiness can prove the deadline without touching the guest.
-    systemctl is-active capacity-deadline.timer > "$RUN_DIR/evidence/timer-state" 2>/dev/null || true
-    cat "$RUN_DIR/deadline-epoch" > "$RUN_DIR/evidence/deadline-epoch" 2>/dev/null || true
-    cat "$RUN_DIR/bootstrap-status" > "$RUN_DIR/evidence/bootstrap-status" 2>/dev/null || true
-    cat "$RUN_DIR/deployed-commit" > "$RUN_DIR/evidence/deployed-commit" 2>/dev/null || true
+    load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo '')
+
+    # Container restart counts: a crash-looping app must be visible, not inferred.
+    if command -v docker >/dev/null 2>&1; then
+        restarts=$(docker ps -q 2>/dev/null | xargs -r docker inspect \
+            --format '{{.Name}} {{.RestartCount}}' 2>/dev/null | paste -sd',' - || echo '')
+    else
+        restarts=''
+        errors=$(( errors + 1 ))
+    fi
+
+    printf '{"ts":"%s","mem_used_pct":%s,"swap_used_mb":%s,"oom_kills":%s,"oom_dmesg":%s,"load1":%s,"restarts":"%s","errors":%d}\n' \
+        "$ts" \
+        "$(num "$mem_used_pct")" \
+        "$(num "$swap_used")" \
+        "$(num "$oom")" \
+        "$(num "$dmesg_oom")" \
+        "$(num "${load1%%.*}")" \
+        "${restarts}" \
+        "$errors" >> "$OUT"
+}
+
+# Publish operational state for the readiness check. These are outputs, not inputs.
+publish_state() {
+    systemctl is-active capacity-deadline.timer  > "$EVIDENCE_DIR/deadline-timer-state"  2>/dev/null || true
+    systemctl is-enabled capacity-deadline.timer > "$EVIDENCE_DIR/deadline-timer-enabled" 2>/dev/null || true
+    systemctl is-active capacity-evidence.service > "$EVIDENCE_DIR/evidence-service-state" 2>/dev/null || true
+    systemctl is-active capacity-metrics.service  > "$EVIDENCE_DIR/metrics-service-state"  2>/dev/null || true
 }
 
 while true; do
-    emit || true
+    sample || true
+    publish_state || true
     sleep "$INTERVAL"
 done
