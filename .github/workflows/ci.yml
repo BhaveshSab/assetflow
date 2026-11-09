@@ -661,7 +661,25 @@ jobs:
         run: |
           set -euo pipefail
           C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+
+          # The application's own nginx serves TLS on 443 from ./certs, which is
+          # where certbot writes on a real host. That directory does not exist in
+          # CI, so nginx would fail to start and the 8080 upstream would never
+          # listen. Supply the run certificate instead: it is the certificate this
+          # run actually trusts, and the single-port edge in front of it terminates
+          # TLS with the same file.
+          mkdir -p infra/certs/live/assetflow
+          cp "$RUN_DIR/trust/tls.crt"   infra/certs/live/assetflow/fullchain.pem
+          cp "$RUN_DIR/trust/tls.key"   infra/certs/live/assetflow/privkey.pem
+
           $C up -d api nginx
+          # nginx is the upstream the edge proxies to; if it is not up, the HTTPS
+          # path cannot work, so say that here rather than as a proxy timeout.
+          if [ "$($C ps --status running --services | grep -c '^nginx$')" -ne 1 ]; then
+            echo "::error title=app edge::the application nginx is not running"
+            $C logs --tail=60 nginx
+            exit 1
+          fi
           for i in $(seq 1 60); do
             if $C exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
               echo "API ready on 4000 /api/health/ready after ${i} attempt(s)"
@@ -789,3 +807,4 @@ jobs:
           docker rm -f cap-proxy >/dev/null 2>&1 || true
           docker compose --env-file infra/.env -f infra/docker-compose.yml down -v >/dev/null 2>&1 || true
           rm -f infra/.env
+          rm -rf infra/certs
