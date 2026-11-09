@@ -874,3 +874,89 @@ it is inert with no instance in the group, and its removal needs its own approva
    the approved configuration checks can actually be performed.
 
 None of these are load-testing questions; Stage 4 needs a stack that starts at all.
+
+---
+
+## 15. Stage 3 post-mortem and corrections
+
+### 15.1 Proven root cause: disk exhaustion
+
+The system log shows the image build reaching `npm ci`, Prisma generation and Nest
+compilation, then the export failing:
+
+```
+failed to write compressed diff
+no space left on device
+```
+
+and journald reporting `Failed to create new system journal: No space left on
+device`, followed by `[bootstrap][FATAL] migration failed`.
+
+Two things follow. The root volume was **8 GB, not the approved 30 GB**, because the
+launch command passed no block device mapping and the AMI default applied. And the
+bootstrap's `FATAL migration failed` label is **broader than the failure** — no SQL
+migration of ours failed; the disk was full.
+
+The npm deprecation and audit warnings in the same log are **not** the cause and are
+not treated as such.
+
+### 15.2 Correction to section 14.4
+
+Section 14.4 said the safety mechanics worked. That was too generous:
+
+* the **deadline service genuinely failed**, repeatedly, while the build ran;
+* the **operator watchdog never started** — it was prepared but the run never got there.
+
+What did work: the fail-closed shutdown fired, and
+`InstanceInitiatedShutdownBehavior=terminate` ended the instance and deleted the volume.
+
+### 15.3 Deadline service: unresolved, and why it is not simply "a failed unit"
+
+The guard's logic was tested directly in real systemd and is sound: five genuine
+timer activations, silence before the deadline, fail-closed on malformed and on
+unreadable deadlines, tolerance of a read-only evidence directory, and every exit path
+returning 0. `RemainAfterExit=yes` was confirmed to block re-activation, which is the
+defect the current shape avoids.
+
+The remaining hypothesis — systemd unable to journal while the disk was full — is
+**plausible but unproven**. The generic "Failed to start" text is not evidence for it.
+
+Mitigation, since journald could not be the record: `deadline-guard.sh` now writes to
+`/dev/console` as well as stdout, and logs its deadline file, the value and the current
+time on every invocation. That survives a full disk and lands in the EC2 system log.
+
+### 15.4 Corrections made
+
+| Change | Why |
+|---|---|
+| `launch-instance.sh` | One launcher replaces the hand-reconstructed command. Tags instance, volume **and network interface**; resolves the root device from the AMI and requests 30 GB gp3 explicitly with `DeleteOnTermination=true`; requires a client token and reconciles an uncertain response instead of retrying; refuses to duplicate an instance; rejects an oversized payload before any AWS call. |
+| Disk preflight in `user-data.sh` | Free space checked before any build work, 12 000 MB floor, recorded to evidence, fails closed if `df` cannot be read. An undersized volume is now reported as an undersized volume while there is room to report it. |
+| Console diagnostics in `deadline-guard.sh` | journald died of ENOSPC; `/dev/console` is independent of root-volume free space. |
+| 13 new contract tests | Fault-injected: removing the network-interface tag or the block device mapping makes them fail. |
+
+### 15.5 Rehearsal actually executed
+
+The real deployment path was rehearsed on CI hardware, not merely reasoned about:
+compose build, real migrations, seeding 200 accounts, **200 accounts proven by a
+database count**, the API readiness route, the HTTPS application path through the
+single-port edge, client-side readiness, a checksum-verified export, and genuine
+repeated systemd timer activation.
+
+Differences from EC2, stated plainly: CI has far more RAM than a 1 GiB t3.micro, its
+disk is not the 30 GB gp3 volume, and there is no real ingress or IMDS. The rehearsal
+proves the *procedure*, not the *hardware's* fitness. Peak disk usage on a real t3.micro
+remains **unmeasured**, so 30 GB is justified by arithmetic and the failure margin, not
+by observation.
+
+Real reboot survival of the deadline timer remains **untested**.
+
+### 15.6 Read permissions
+
+The run was denied `ec2:GetConsoleOutput`, `ec2:DescribeInstanceAttribute` and
+`ec2:DescribeInstanceCreditSpecifications`. `DescribeInstanceAttribute` *appears*
+allowed in the local policy document, but the deployed policy cannot be read by this
+identity (IAM self-inspection is explicitly denied), so the deployed content is
+**unverified** and the local file must not be assumed to match it. A minimal
+read-only policy is provided as `docs/results/capacity-run-stage3-read-policy.json`,
+scoped to three actions in `ap-southeast-2`, to be attached in the console as its own
+customer-managed policy rather than appended to the nearly-full Stage 2 policy.
