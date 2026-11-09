@@ -160,6 +160,33 @@ class DeadlineServiceTests(unittest.TestCase):
         self.assertIn('*[!0-9]*', code, 'whole-value validation is required')
 
 
+class ExecutableBitTests(unittest.TestCase):
+    """Scripts the pipeline invokes directly must be executable IN GIT.
+
+    chmod +x on a working copy proves nothing: Git stores the mode, and a
+    100644 entry is what the runner checks out. This was a real CI failure
+    ("Permission denied", exit 126) rather than a hypothetical.
+    """
+
+    def test_capacity_scripts_are_executable_in_git(self):
+        repo = Path(__file__).resolve().parents[2]
+        scripts = sorted(str(p.relative_to(repo)).replace(chr(92), '/')
+                         for p in (repo / 'infra/capacity-run').rglob('*.sh'))
+        scripts.append('infra/tests/integration/deadline-activation.sh')
+        proc = subprocess.run(['git', 'ls-files', '-s'] + scripts,
+                              cwd=repo, capture_output=True, text=True)
+        if proc.returncode != 0:
+            self.skipTest('not a git checkout')
+        for line in proc.stdout.splitlines():
+            mode, _, _ = line.split(maxsplit=2)
+            path = line.split(maxsplit=3)[3]
+            if path.endswith('.conf'):
+                continue
+            self.assertEqual(mode, '100755',
+                             f'{path} is {mode} in Git; the runner will get '
+                             'Permission denied')
+
+
 class PayloadSizeTests(unittest.TestCase):
     """EC2 rejects user-data above 16 KiB, and the CLI base64-encodes for you."""
 
