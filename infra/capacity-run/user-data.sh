@@ -69,8 +69,19 @@ die() {
 }
 
 # `set -e` alone does not describe an unguarded failure, and a failure inside a
-# function or subshell would otherwise report nothing at all.
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then printf "[bootstrap][FATAL] unexpected failure rc=%s at line %s (stage=%s)\n" "$rc" "$LINENO" "$STAGE" >&2; console_log "FATAL unexpected rc=$rc line=$LINENO stage=$STAGE"; status "failed: rc=$rc line=$LINENO stage=$STAGE"; /sbin/shutdown -h now || true; fi' ERR
+# function or subshell would otherwise report nothing at all. Named rather than
+# inline so the body is readable and statically checkable.
+on_error() {
+    local rc="$?"
+    if [ "$rc" -ne 0 ]; then
+        printf '[bootstrap][FATAL] unexpected failure rc=%s at line %s (stage=%s)\n' \
+            "$rc" "$1" "$STAGE" >&2
+        console_log "FATAL unexpected rc=$rc line=$1 stage=$STAGE"
+        status "failed: rc=$rc line=$1 stage=$STAGE"
+        /sbin/shutdown -h now || true
+    fi
+}
+trap 'on_error "$LINENO"' ERR
 
 # Marked before the config is sourced, so the variables are not yet set and `set -u`
 # would abort here. This has to survive being the first thing that runs.
