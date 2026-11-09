@@ -147,5 +147,72 @@ class BackupOrderingTests(unittest.TestCase):
         self.assertLess(upload_at, prune_at)
 
 
+class LoadTestIsolationContractTests(unittest.TestCase):
+    """The fixture must be owned by a run, so two runs cannot collide.
+
+    Before run ownership every run used `loadtest-001@assetflow.test` onwards.
+    A second concurrent run overwrote the first run's password, and `--delete`
+    removed whichever rows matched - possibly another live run's. These are
+    source-level pins: the behaviour itself is exercised against real PostgreSQL
+    by infra/tests/integration/integration-loadtest.sh in CI.
+    """
+
+    def read(self, rel):
+        return (ROOT / rel).read_text(encoding='utf-8')
+
+    def test_the_seed_requires_a_run_id(self):
+        seed = self.read('backend/prisma/seed-loadtest.ts')
+        self.assertIn('requireRunId', seed)
+        # A missing run id must be an error, not a silently shared namespace.
+        self.assertIn('fixtures are owned by a run', seed)
+        self.assertIn('LOADTEST_RUN_ID', seed)
+
+    def test_identities_are_run_scoped(self):
+        seed = self.read('backend/prisma/seed-loadtest.ts')
+        self.assertIn('emailFor(runId', seed)
+        k6 = self.read('infra/scripts/k6-load.js')
+        self.assertIn('LOADTEST_RUN_ID', k6)
+        # The old shared name must not remain in the address the driver signs in with.
+        self.assertNotIn("`loadtest-${String(index).padStart(3, '0')}@assetflow.test`", k6)
+
+    def test_the_run_id_is_embedded_in_every_asset_tag(self):
+        seed = self.read('backend/prisma/seed-loadtest.ts')
+        self.assertIn('"assetTag" LIKE ${tagPattern}', seed)
+        self.assertIn('TAG_PREFIX}${runId}', seed)
+
+    def test_delete_is_scoped_to_the_named_run(self):
+        seed = self.read('backend/prisma/seed-loadtest.ts')
+        # Deletion must use the exact per-run prefix, never a bare wildcard.
+        self.assertIn('startsWith: `${EMAIL_PREFIX}${runId}-`', seed)
+        self.assertIn('likeSafe', seed)
+
+    def test_the_script_binds_the_target_before_ramping(self):
+        script = self.read('infra/scripts/load-test.sh')
+        self.assertIn('target binding failed', script)
+        self.assertIn('LOADTEST_RUN_ID="$LOADTEST_RUN_ID"', script)
+        # Binding must be a sign-in, which only the fixture's own database can satisfy.
+        self.assertIn('/api/auth/login', script)
+        # And it must run for single-user mode too, since it is about which system.
+        self.assertNotIn('if [ "$SINGLE_USER" = false ] && [ "$LOADTEST_USERS" -gt 1 ]', script)
+
+    def test_cleanup_is_registered_before_the_seed(self):
+        script = self.read('infra/scripts/load-test.sh')
+        trap_at = script.index('trap load_cleanup EXIT')
+        seed_at = script.index('CLEANUP_REQUIRED=true')
+        self.assertLess(trap_at, seed_at, 'an interrupted seed would leave its rows behind')
+
+    def test_the_ramp_aborts_when_the_target_is_failing(self):
+        k6 = self.read('infra/scripts/k6-load.js')
+        self.assertIn('abortOnFail: true', k6)
+        script = self.read('infra/scripts/load-test.sh')
+        self.assertIn('ABORT_ERROR_RATE', script)
+        self.assertIn('ABORTED', script)
+
+    def test_the_live_load_gate_is_still_closed(self):
+        script = self.read('infra/scripts/load-test.sh')
+        self.assertIn('load execution disabled', script)
+        self.assertIn('--dry-run remains available', script)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -457,3 +457,76 @@ jobs:
           docker ps -aq --filter "name=assetflow-it-" | xargs -r docker rm -f
           docker volume ls -q --filter "name=assetflow-it-" | xargs -r docker volume rm
           docker network ls -q --filter "name=assetflow-it-" | xargs -r docker network rm
+
+  loadtest-isolation:
+    name: Load-test fixture isolation (real PostgreSQL, synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Lint the isolation harness
+        run: |
+          shellcheck --severity=warning --external-sources infra/tests/integration/integration-loadtest.sh
+          shellcheck --severity=warning --external-sources infra/scripts/load-test.sh
+          node --check infra/scripts/k6-load.js
+
+      - name: Type-check the seed script
+        working-directory: backend
+        run: |
+          npm ci
+          npx tsc --noEmit --skipLibCheck prisma/seed-loadtest.ts
+
+      - name: Run the isolated load-test fixture integration
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          rc=0
+          infra/tests/integration/integration-loadtest.sh "$PWD" 2>&1 | tee test-results/loadtest-isolation.log || rc=$?
+          echo "harness exit status: ${rc}"
+          if [ -f test-results/loadtest-isolation.txt ]; then
+            cat test-results/loadtest-isolation.txt
+          else
+            echo "::error title=loadtest isolation::the harness wrote no result summary"
+            exit 1
+          fi
+          exit "$rc"
+
+      - name: Publish the outcome in the job summary
+        if: always()
+        run: |
+          if [ -f test-results/loadtest-isolation.txt ]; then
+            {
+              echo '## Isolated load-test fixture'
+              echo
+              echo '```text'
+              cat test-results/loadtest-isolation.txt
+              echo '```'
+              echo
+              echo 'Synthetic data, disposable PostgreSQL 16, no AWS or production access.'
+              echo 'This proves fixture ownership and refusals. It is not a performance'
+              echo 'measurement, and it does not turn the live-load gate on.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The harness produced no summary; see the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep isolation evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-isolation-${{ github.sha }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Remove any leftover fixture resources
+        if: always()
+        run: |
+          docker ps -aq --filter "name=assetflow-lt-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-lt-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-lt-" | xargs -r docker network rm
