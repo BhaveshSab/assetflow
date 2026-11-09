@@ -89,40 +89,70 @@ An alternative that would let P2 pass *before* any creation is to authorize the
 would weaken the control. It is not recommended: the current behaviour is the
 correct one, and the ordering simply needs to place SG creation before P2.
 
-## Second finding — budget permissions are now incomplete
+## Second finding — budget permissions ARE present; the earlier claim was wrong
 
-The review removed the invalid `budgets:CreateBudget` and `budgets:DescribeBudgets`
-entries. The supported replacements are **not** present, so every budget step fails:
+**Correction.** An earlier revision of this document said the supported budget
+actions were "absent". That was wrong, and it was inferred from failed calls
+rather than from the policy. Read-only diagnosis shows the grants are present
+and correctly scoped; the denials had a different cause.
 
-| Operation | Action AWS actually checks | Current result |
-|-----------|---------------------------|----------------|
-| `budgets describe-budgets` | `budgets:ViewBudget` | `AccessDeniedException` |
-| `budgets create-budget` | **`budgets:ModifyBudget`** | `AccessDeniedException` |
+### Read-only inspection results
 
-Verified empirically: `create-budget` is authorized against **`budgets:ModifyBudget`**,
-not `budgets:CreateBudget`. `budgets:DescribeBudgets` does not exist; reading budgets
-requires `budgets:ViewBudget`.
+| Check | Result |
+|-------|--------|
+| `sts get-caller-identity` | `arn:aws:iam::459252806274:user/assetflow-capacity-run`, account `459252806274` — the intended principal, so no caller/profile mismatch |
+| `iam get-policy --policy-arn .../assetflow-capacity-run-stage2` | `AccessDenied`, **explicit deny in that same policy** — this identity cannot read its own policy document |
 
-The `create-budget` probe was denied before creation, so **no budget exists**. This
-could not be confirmed by listing, because listing is itself denied.
+Because IAM inspection is self-denied, the attached policy was inspected
+**behaviourally** instead:
 
-Suggested correction, scoped to the run's budget:
+| Call | Observed | What it proves |
+|------|----------|----------------|
+| `budgets describe-budget-actions-for-account` (granted on `*`) | **succeeds**, returns `{"Actions": []}` | the policy version **does** include this statement — rules out a version mismatch and a caller mismatch |
+| `budgets describe-budget --budget-name cap-20261109t0800z-a7f3` | `NotFoundException` | authorization **succeeded** and reached the service, so `budgets:ViewBudget` **is** granted on the exact budget ARN |
+| `budgets describe-budgets` (all budgets) | `AccessDenied`, `budgets:ViewBudget` on `budget/*` | this call needs ViewBudget on the **wildcard** ARN, which the policy deliberately does not grant |
+| `budgets update-budget` with an invalid amount | `ValidationException` | authorization **succeeded** (payload validated after auth), so `budgets:ModifyBudget` **is** granted — and an invalid payload cannot create a budget |
 
-```json
-{
-  "Effect": "Allow",
-  "Action": ["budgets:ViewBudget", "budgets:ModifyBudget"],
-  "Resource": "arn:aws:budgets::459252806274:budget/cap-20261109t0800z-a7f3"
-},
-{
-  "Effect": "Allow",
-  "Action": "budgets:DescribeBudgetActionsForAccount",
-  "Resource": "*"
-}
-```
+### Actual cause of the denials
 
-Because the $1 budget alarm is the spend guardrail, this must be resolved **before**
-any billable resource is created — not deferred.
+The denials come from **resource scope**, not from a missing action and not from
+a policy-version or caller mismatch:
+
+* `describe-budget` (one named budget) — authorized.
+* `describe-budgets` (list every budget) — needs `budget/*`, which the policy
+  intentionally withholds, so the run cannot enumerate the account's budgets.
+
+That is the correct, minimal grant. **No change is required.** Adding
+`budget/*` or duplicating statements would only widen access to make a listing
+probe succeed, which is exactly what was not to be done.
+
+### Two operational notes
+
+1. **Budgets has no dry-run.** Unlike EC2, there is no `--dry-run` and no
+   non-destructive authorization probe. The `update-budget` call above was safe
+   *only* because the payload was structurally invalid, so it could not create
+   anything even if authorized; the budget was confirmed still absent afterwards
+   (`NotFoundException`). Budget creation remains a separate, explicitly
+   approved step — it is not part of P1/P2 and was not performed.
+2. **The run's own budget checks must use the named budget**, not
+   `describe-budgets`. A checklist step that lists budgets will fail by design.
+
+### Supported action names, for the record
+
+`budgets:CreateBudget` and `budgets:DescribeBudgets` do not exist. Creation and
+update are authorized against `budgets:ModifyBudget`; reading is
+`budgets:ViewBudget`. The removal of the invalid entries was correct, and the
+replacement actions are present in the attached policy.
+
+### Distinguishing the two kinds of check
+
+Every P1/P2 EC2 check used **`--dry-run`**, which returns `DryRunOperation` or
+`UnauthorizedOperation` and performs no action. The Budgets results above are
+**real API calls that were denied** (or, for `update-budget`, authorised but
+rejected as unvalidatable) — they are not dry-runs, and no Budgets call
+performed a mutation. The report keeps these separate deliberately: an
+`AccessDenied` from a real call and a `DryRunOperation` from a dry-run are not
+the same evidence.
 
 ## State after these checks
 
@@ -132,7 +162,7 @@ any billable resource is created — not deferred.
 | Run-owned volumes | 0 |
 | Run-owned security groups | 0 |
 | Production instance | `running`, untouched |
-| Budgets | none created; budget APIs denied |
+| Budgets | none created; named-budget access confirmed, account-wide listing intentionally denied |
 | Resources created | **none** |
 
 ## Status of the checklist
@@ -140,6 +170,41 @@ any billable resource is created — not deferred.
 | Item | Status |
 |------|--------|
 | P1 production denial (instance, volume, SG, EIP) | **PASS** |
-| P2 launch authorization | **BLOCKED** — needs the run-owned SG to exist, and budget permissions to be corrected |
+| P2 launch authorization | **BLOCKED** — needs the run-owned SG to exist (budget permissions need no change) |
 | P3 run-owned positive control | not run (requires the approved instance) |
 | Items 3–22 | not started |
+
+## Two further corrections
+
+**CI reference.** The earlier text said the previous commit passed while the
+newer one was still running. The accurate sequence, all confirmed from Actions:
+
+| Commit | Workflow run | Result |
+|--------|--------------|--------|
+| `46519f6` | — | passed |
+| `ed6afda` | [`42591789902`](https://github.com/BhaveshSab/assetflow/actions/runs/42591789902) | **failed** — Restore integration: two leak assertions |
+| `509f194` | [`42594986863`](https://github.com/BhaveshSab/assetflow/actions/runs/42594986863) | **success** — all six jobs |
+
+`ed6afda` did not pass. It failed on `interrupted run cleans up`
+(`containers=0 volumes=1`) and `no restore resources leaked`
+(`volumes=1 networks=1`). The cause was that `retry()` discarded every attempt's
+stderr, so a failing `docker volume rm` reported only "cleanup failed", and the
+interrupted-run check watched containers and volumes but not networks, giving up
+after 20s while cleanup was still working through 1+2+3+4s per-step backoff.
+`509f194` keeps the last attempt's error in `RETRY_ERROR`, includes it in the
+failure message, polls all three resource types for up to 60s, and leaves the
+leak assertion itself unweakened.
+
+**Order of operations.** The intended sequence is:
+
+1. approved run-owned security group creation
+2. P2 (launch `--dry-run`)
+3. approved instance launch
+4. P3 (run-owned termination `--dry-run`)
+5. readiness
+6. load test
+7. evidence export
+8. approved cleanup
+
+The run-owned security group requirement is not weakened, and production is not
+altered, at any step.
