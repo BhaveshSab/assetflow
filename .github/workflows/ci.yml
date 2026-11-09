@@ -592,7 +592,8 @@ jobs:
       - name: Build images
         run: |
           set -euo pipefail
-          docker compose --env-file infra/.env -f infra/docker-compose.yml build api migrate web nginx
+          # There is no `web` service: the frontend is built into the nginx image.
+          docker compose --env-file infra/.env -f infra/docker-compose.yml build api migrate nginx
 
       - name: Start dependencies and migrate
         run: |
