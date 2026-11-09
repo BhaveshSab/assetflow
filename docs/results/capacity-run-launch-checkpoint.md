@@ -544,10 +544,14 @@ watchdog against a fake `aws`. The RunId-guard test was confirmed to fail when t
 guard is removed, so the tests are not vacuous. These artifacts are **in the
 repository**, not local-only.
 
-**CI-tested commit: `66c5589`** — run `42608467206`, all six jobs success. This is
-the commit that contains every artifact above, so it is what the launch pins.
-`6533edf` (run `42604425610`) also passed, but it covers the application only and
-predates these artifacts — it could not have been the right pin.
+**CI-tested commit: `943a39e`** — run `42611176739`, all six jobs success. This is
+the commit that contains every artifact above, including local trust generation, so
+it is what the launch pins.
+
+Earlier pins and why they are superseded: `66c5589` (run `42608467206`) covered the
+bootstrap/readiness fixes but still published trust to S3, which the identity
+denies. `6533edf` (run `42604425610`) passed but covered the application only and
+predated these artifacts entirely.
 
 ### 12.2 Ingress — 8443 only, exact discovered `/32`
 
