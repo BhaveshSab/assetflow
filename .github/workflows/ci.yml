@@ -324,7 +324,7 @@ jobs:
           npm ci --include=dev
           npx prisma generate
           npx prisma migrate deploy
-          npm run seed:loadtest -- --users 5 --assets 500
+          npm run seed:loadtest -- --run-id ci-load-${{ github.run_id }}-${{ github.run_attempt }} --users 5 --assets 500
           npm run build
       - name: Test k6 summary reporting
         run: node --test infra/tests/k6-summary.test.mjs
@@ -480,7 +480,21 @@ jobs:
         working-directory: backend
         run: |
           npm ci
-          npx tsc --noEmit --skipLibCheck prisma/seed-loadtest.ts
+          npx prisma generate
+          # Check against the project's own module mode. A bare
+          # `tsc --noEmit file.ts` ignores tsconfig.json and falls back to CommonJS,
+          # which cannot resolve the nodenext imports this project uses.
+          rc=0
+          npx tsc --noEmit -p tsconfig.json > /tmp/tsc.log 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            # Surface the diagnostics: the log is not downloadable without admin
+            # rights, so an annotation is the only way this is visible.
+            head -40 /tmp/tsc.log
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=tsc::${line}"
+            done < <(head -20 /tmp/tsc.log)
+          fi
+          exit "$rc"
 
       - name: Run the isolated load-test fixture integration
         run: |
