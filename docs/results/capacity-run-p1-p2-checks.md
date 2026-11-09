@@ -381,6 +381,7 @@ and P2 returned `DryRunOperation` under the attached policy.
 | Commit | Content | CI |
 |--------|---------|-----|
 | `0bf042c` | policy sync + regression tests | **no run was created** — GitHub did not fire `pull_request` for this push |
+| `93223c1` | policy correction + launch checkpoint | [`42602060340`](https://github.com/BhaveshSab/assetflow/actions/runs/42602060340) — **all six jobs success** |
 | `45992c1` | empty commit, same tree | [`42600811364`](https://github.com/BhaveshSab/assetflow/actions/runs/42600811364) — **all six jobs success** |
 
 The workflow has no path filter, so the missing run was a dropped trigger, not a
