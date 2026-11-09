@@ -615,3 +615,154 @@ add cost to a run intended to measure cost.
 * load testing — separate, after readiness passes
 * terminating a specific instance early — requested separately by exact ID
 * any production change, SNS resource, or budget action
+
+
+---
+
+## 13. Stage 2 handoff — read-only reconciliation at close
+
+Date of reconciliation run: see commit. No resources were created, changed or
+terminated for this section.
+
+### 13.1 Tested SHA and CI evidence
+
+| Item | Value |
+|---|---|
+| Tested SHA | `32e9bd2a8d3365f701764d1ba21a73725803ca64` |
+| CI run | `42624039643` — **all seven jobs success** |
+| Deployment evidence | `capacity-stack` job: real compose build, migrations, seeding 200 accounts, database-count proof, `4000/api/health/ready` readiness, HTTPS application path through the single-port edge, client-side readiness + checksum-verified export, real systemd repeated timer activation |
+
+Commits after the tested SHA at the time of this handoff: **one**, `c54004b`
+("Pin the launch to 32e9bd2"), which changes **only**
+`docs/results/capacity-run-launch-checkpoint.md`. It does not touch any executable
+launch artifact, so the tested SHA remains the launch pin. Branch tip is **not**
+silently substituted for the tested SHA.
+
+### 13.2 What the CI run proved, and what it did not
+
+Proved on GitHub-hosted CI hardware (much more RAM than the target):
+real compose build, real migrations, real seeding with a 200-account fixture
+verified by a `SELECT count(*)` on Postgres for the run's own prefix, the
+application's real readiness route, the HTTPS application path through the
+single-port edge, readiness and a checksum-verified export from the client side,
+and genuinely repeated systemd timer activations of the deadline guard (five with
+the fix, one with `RemainAfterExit=yes` as the control).
+
+NOT tested anywhere yet: the behaviour of a 1 GiB t3.micro (image build pressure,
+swap usage, credit behaviour), real EC2 launch and IMDS, real ingress `/32`, and
+survival of the deadline timer across a **real reboot**. Those belong to Stage 3
+and remain explicitly untested rather than assumed.
+
+### 13.3 Launch package (operator sequence, exact artifacts)
+
+All paths relative to the repository at the tested SHA. Nothing here embeds or
+prints secrets; rendered user-data is never committed.
+
+1. **Isolated application configuration** — the compose file has no defaults for
+   `POSTGRES_PASSWORD` / `REDIS_PASSWORD`; the API requires a unique `JWT_SECRET`
+   >= 32 chars; the seed refuses more than one account without `LOADTEST_PASSWORD`
+   (40 chars). Generate all of them per run:
+   ```bash
+   ./infra/capacity-run/generate-app-config.sh .capacity-app.env cap-20261109t0800z-a7f3
+   ```
+2. **Trust material** — certificate (EC P-256, DNS SAN `capacity-run.test`, no
+   IP SAN because the address is unknown before launch), key and bearer token:
+   ```bash
+   ./infra/capacity-run/generate-trust.sh .capacity-run-trust
+   ```
+3. **Render user-data with the correct encoding and size check** — the renderer
+   base64-encodes the payload for the EC2 API, embeds the trust material, the app
+   config and the deadline guard, strips comments, and must stay under the EC2 raw
+   16 KiB limit (currently ~13.9 KiB):
+   ```bash
+   set -a; . .capacity-app.env; . .capacity-run-trust/trust.env; set +a
+   LAUNCH_EPOCH=$(date +%s) \
+   EXPECTED_COMMIT=32e9bd2a8d3365f701764d1ba21a73725803ca64 \
+   RUN_ID=cap-20261109t0800z-a7f3 \
+   ./infra/capacity-run/render-user-data.sh > user-data.b64
+   base64 -d user-data.b64 | wc -c   # must be <= 16384
+   ```
+   The CLI encoding path: `aws ec2 run-instances --user-data file://user-data.raw`
+   where `user-data.raw` is the **decoded** script. Passing the base64 text to the
+   CLI would double-encode, which is why the render output is decoded to disk
+   first.
+4. **Discover the generator job's public IPv4 inside the job** — the only
+   supported source, since published range lists do not match:
+   ```bash
+   curl -fsS https://checkip.amazonaws.com/
+   ```
+5. **Keep that same runner alive** for the approved launch and readiness sequence —
+   discovery, authorizing, launching and readiness must all run in one job so the
+   source address cannot change mid-run.
+6. **Apply only the proposed rule** from that exact `/32`:
+   ```bash
+   aws ec2 authorize-security-group-ingress --group-id sg-012a0191f4e4a9a8c \
+     --protocol tcp --port 8443 --cidr <EGRESS_IP>/32
+   ```
+   Nothing else. No port 22, no `0.0.0.0/0`.
+7. **Launch exactly one instance pinned to the tested commit** — user-data carries
+   `EXPECTED_COMMIT=32e9bd2a8d3365f701764d1ba21a73725803ca64`; the bootstrap clones
+   the repo, checks out that exact SHA, verifies `rev-parse HEAD`, and refuses to
+   proceed on mismatch. Launch config in section 2 and the Stage 3 request.
+8. **Start and verify the detached operator watchdog**:
+   ```bash
+   setsid nohup ./infra/capacity-run/operator-watchdog.sh <instance-id> 14400 \
+     >> watchdog.log 2>&1 &
+   ```
+   It writes `pid` and a `heartbeat` file each cycle, re-derives the deadline from
+   the instance's actual `LaunchTime` via the EC2 API (never from a stored value),
+   refuses to act on an instance whose RunId tag does not match the run, and only
+   terminates when the launch-based deadline is reached.
+9. **Immediate P3, inventory and authenticated TLS readiness** — `run-instances
+   --dry-run` against the returned ID, then the inventory sweep
+   (`infra/capacity-run/inventory-sweep.sh`), then
+   `infra/capacity-run/readiness-check.sh <public-ip> 8443` with
+   `EVIDENCE_CA`, `EVIDENCE_TOKEN`, `CAPACITY_HOSTNAME=capacity-run.test` set. The
+   client connects to the real address while verifying the certified name
+   (`--resolve`); no `-k`.
+
+### 13.4 Verified AWS state at handoff (resource-specific queries)
+
+All queries used the `capacity` profile; errors are reported, never zeroed.
+
+| Check | Result | Notes |
+|---|---|---|
+| Caller / account | `arn:aws:iam::459252806274:user/assetflow-capacity-run` | `sts get-caller-identity` |
+| Region | `ap-southeast-2` | desc. instances returns Sydney |
+| Run-owned instances (any state) | **0** | `describe-instances` filter tag:RunId, exit 0 |
+| Run-owned volumes | **0** | `describe-volumes` filter tag:RunId, exit 0 |
+| Expected SG | `sg-012a0191f4e4a9a8c` `cap-20261109t0800z-a7f3-sg` | exists |
+|  — VPC | `vpc-0bcfe8d7f2e811bb3` | matches run VPC |
+|  — tags | `Name=assetflow-capacity-sg`, `Project=assetflow-capacity`, `RunId=cap-20261109t0800z-a7f3` | verified |
+|  — inbound | **0 rules** | `length(IpPermissions)` = 0 |
+| Run-tagged SGs | exactly 1 | no extras |
+| Run-tagged EIPs | 0 | `describe-addresses` |
+| Budget | `cap-20261109t0800z-a7f3`, COST USD 1.00, MONTHLY | |
+|  — notification | ACTUAL GREATER_THAN 80%, 1 EMAIL subscriber, address redacted | |
+|  — delivery | **configured only, not delivery-verified** | a delayed alert, not a cap |
+|  — actions | none (account-wide query, exit 0) | per-budget call is denied by policy; this is a permission boundary, not a zero |
+|  — health | HEALTHY, actual spend $0.00 | |
+| Production | `i-0ff4690ec52d0dc01` running, t3.micro, ap-southeast-2b | read-only |
+
+### 13.5 Lifecycle and cost, recorded
+
+* Guest deadline: absolute `LAUNCH_EPOCH + 14400`, provisioned by the operator at
+  render time (the launch instant is the only correct anchor; IMDS does not expose
+  it). The guard validates the whole value (no digit-stripping), fails closed, and
+  shuts the guest down, which terminates the instance because of _terminate_
+  behaviour, deleting the root volume (DeleteOnTermination=true).
+* Operator watchdog deadline: re-derived every cycle from the returned instance's
+  actual `LaunchTime` + 4 h. Independent of the guest.
+* Timer polling delay: `OnUnitActiveSec=60s` means enforcement can lag the
+  deadline by up to ~60 s between ticks; the watchdog polls the EC2 API on its own
+  interval and is the tighter bound of the two. A reboot would re-arm the timer
+  from the same absolute deadline, but a real reboot has not been performed and is
+  not claimed to have been tested.
+* Four-hour termination and readiness-failure cleanup are both part of the Stage 3
+  request (self-termination + teardown if readiness fails).
+* Partial cost estimate and exclusions (section 3): gp3 30 GB / ~4 h
+  ~$0.0158; instance ~$0.0728; total ~$0.0886; **excludes** data transfer out,
+  provisioned IOPS/throughput above baseline, and any build/retry spill. `$1` is
+  the notification threshold, `$5` is the monitoring tripwire; **neither is a hard
+  spending cap** — nothing enforces cost, so the 4-hour lifetime and the operator
+  are the real limits.
