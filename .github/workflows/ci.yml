@@ -704,9 +704,11 @@ jobs:
           # 3. A well-formed pin pulls and never builds. The digests are
           #    deliberately nonexistent, so the pull must fail - the property
           #    under test is that it fails AT THE PULL, having attempted no build.
+          #    Not --quiet: the "pulling" marker is normal progress, and
+          #    suppressing it would hide the very thing being asserted.
           set +e
           FIXTURE_API_DIGEST="$A64" FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$A64" \
-            bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin3 --quiet \
+            bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin3 \
             >/tmp/pin3.out 2>&1
           set -e
           grep -q 'pulling the pinned images by digest' /tmp/pin3.out \
