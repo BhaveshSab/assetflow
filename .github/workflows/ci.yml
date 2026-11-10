@@ -678,11 +678,12 @@ jobs:
           # how an earlier attempt ran code from a revision that had not been
           # tested. These guards are the only thing standing between a typo and
           # a silent substitution, so they are exercised directly.
-          A64="sha256:$(printf 'a%.0s' $(seq 64))"
-          B64="sha256:$(printf 'b%.0s' $(seq 64))"
+          REPO="ghcr.io/assetflow-capacity-test"
+          A64="$REPO/api@sha256:$(printf 'a%.0s' $(seq 64))"
+          B64="$REPO/web@sha256:$(printf 'b%.0s' $(seq 64))"
 
           # 1. A tag, however it is spelled, is refused.
-          if FIXTURE_API_DIGEST="ghcr.io/x/assetflow-capacity-api:latest" \
+          if FIXTURE_API_DIGEST="$REPO/api:latest" \
              FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$B64" \
              bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin1 --quiet \
              2>/tmp/pin1.err; then
@@ -700,19 +701,23 @@ jobs:
           grep -q 'partial pin' /tmp/pin2.err
           echo "partial pin refused: $(head -1 /tmp/pin2.err)"
 
-          # 3. A well-formed pin does NOT compile; it resolves to a pull.
+          # 3. A well-formed pin pulls and never builds. The digests are
+          #    deliberately nonexistent, so the pull must fail - the property
+          #    under test is that it fails AT THE PULL, having attempted no build.
           set +e
           FIXTURE_API_DIGEST="$A64" FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$A64" \
             bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin3 --quiet \
             >/tmp/pin3.out 2>&1
           set -e
-          # This digest does not exist, so the pull must fail - and it must fail
-          # at the pull, before any build is attempted. That is the property.
-          grep -q 'pinned images by digest' /tmp/pin3.out \
+          grep -q 'pulling the pinned images by digest' /tmp/pin3.out \
             || { echo "::error title=pin::pinned mode did not reach the pull"; cat /tmp/pin3.out; exit 1; }
+          grep -q 'cannot pull' /tmp/pin3.out \
+            || { echo "::error title=pin::pinned mode did not report the failed pull"; cat /tmp/pin3.out; exit 1; }
           if grep -q 'building images' /tmp/pin3.out; then
             echo "::error title=pin::pinned mode fell back to a build"; exit 1
           fi
+          test ! -s /tmp/pin3/build.log \
+            || { echo "::error title=pin::pinned mode wrote a build log"; exit 1; }
           echo "pinned mode pulls and never builds"
 
       - name: Serve bootstrap status before the application is up
