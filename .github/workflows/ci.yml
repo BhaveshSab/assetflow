@@ -812,11 +812,18 @@ jobs:
           # Now the failure path: a seed run against a database that cannot be
           # reached must leave an exit status and a redacted error behind.
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
-          REACHABLE="postgresql://assetflow:SuperSecret123@127.0.0.1:1/none"
-          LOADTEST_PASSWORD="$LT_PW" \
-            bash infra/capacity-run/seed-fixtures.sh \
-              --run-id cap-ci-fail-0001 --users 5 --evidence-dir "$R/evidence" \
-              >/tmp/failseed.log 2>&1 && { echo "::error::the fail seed should not have succeeded"; exit 1; } || true
+          # Stop PostgreSQL so the seed hits a genuinely unreachable database,
+          # which is the failure that has to leave a readable record. Restart it
+          # afterwards so later steps still have a working stack.
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          $C stop postgres >/dev/null
+          FAILED_SEED_RC=0
+          LOADTEST_PASSWORD="$LT_PW"             bash infra/capacity-run/seed-fixtures.sh               --run-id cap-ci-fail-0001 --users 5 --evidence-dir "$R/evidence"               >/tmp/failseed.log 2>&1 || FAILED_SEED_RC=$?
+          $C start postgres >/dev/null
+          test "$FAILED_SEED_RC" -ne 0 || {
+            echo "::error title=harness::the seed was expected to fail and did not"
+            cat /tmp/failseed.log; exit 1; }
+          echo "the seed failed as intended with rc=$FAILED_SEED_RC"
           test -s "$R/evidence/seed-exit" || {
             echo "::error title=exit::a failed seed left no exit status"; cat /tmp/failseed.log; exit 1; }
           echo "failed seed recorded exit $(cat "$R/evidence/seed-exit")"
