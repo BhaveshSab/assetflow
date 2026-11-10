@@ -671,6 +671,161 @@ jobs:
           test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
 
 
+      - name: Serve bootstrap status before the application is up
+        run: |
+          set -euo pipefail
+          # The whole point of the status endpoint is that it answers while the
+          # application is still failing or absent. The API is not started yet in
+          # this job, so a pass here proves the endpoint does not depend on it.
+          R="$RUNNER_TEMP/status-run"
+          mkdir -p "$R/evidence"
+          echo "fixtures" > "$R/evidence/stage-current"
+          printf 'failed: rc=137 line=88 stage=fixtures' > "$R/evidence/bootstrap-status"
+          echo 137 > "$R/evidence/seed-exit"
+          echo 61 > "$R/evidence/seed-elapsed"
+          seq 1 7 | sed 's/^/created loadtest-cap-ci-0001-00/; s/$/@assetflow.test/' > "$R/evidence/seed.log"
+          echo "postgresql://assetflow:SuperSecret123@postgres:5432/assetflow" >> "$R/evidence/seed.log"
+          TOKEN="ci-status-token-$$"
+
+          python3 "$GITHUB_WORKSPACE/infra/capacity-run/bootstrap-status.py" \
+            --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+            --run-dir "$R" --port 9444 --token "$TOKEN" >/tmp/status.log 2>&1 &
+          echo $! > /tmp/status.pid
+          for i in $(seq 1 30); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 \
+              -H "Authorization: Bearer $TOKEN" \
+              https://capacity-run.test:9444/status > /tmp/status.json && break
+            [ "$i" -eq 30 ] && { cat /tmp/status.log; exit 1; }
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          s = json.load(open('/tmp/status.json'))
+          assert s['stage'] == 'fixtures', s
+          assert s['application_ready'] is False, 'readiness must never be implied'
+          print('status: stage=%s application_ready=%s' % (s['stage'], s['application_ready']))
+          PY
+
+          # Credentials are rejected without the token, and a wrong one too.
+          for hdr in "" "Authorization: Bearer wrong-token"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 ${hdr:+-H "$hdr"} \
+              https://capacity-run.test:9444/status || echo 000)
+            test "$code" = "401" || { echo "::error title=auth::expected 401, got $code"; exit 1; }
+          done
+          echo "unauthenticated and wrong-token requests were both refused"
+
+          # A failure snapshot is retained and carries no secret.
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9444:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9444/status/failure > /tmp/failure.json
+          python3 - <<'PY'
+          import json
+          body = open('/tmp/failure.json').read()
+          assert 'SuperSecret123' not in body, 'a password leaked into the failure snapshot'
+          f = json.loads(body)
+          assert f['seed_log_tail'], 'the seed log tail was not retained'
+          print('failure snapshot retained %d tail line(s), no secret present' % len(f['seed_log_tail']))
+          PY
+
+          # A seed that fails must leave a readable exit status, not a bare error.
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9444:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9444/status/seed > /tmp/seed.json
+          python3 - <<'PY'
+          import json
+          s = json.load(open('/tmp/seed.json'))
+          assert s['exit_code'] == 137, s
+          assert s['state'] == 'failed', s
+          assert s['elapsed_seconds'] == '61', s
+          print('seed: exit=%s elapsed=%ss' % (s['exit_code'], s['elapsed_seconds']))
+          PY
+
+          # The run directory holds generated credentials and must not be served.
+          for path in /seed.log /evidence/seed.log /../evidence/seed.log; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 -H "Authorization: Bearer $TOKEN" \
+              "https://capacity-run.test:9444$path" || echo 000)
+            test "$code" = "404" || { echo "::error::path $path returned $code, not 404"; exit 1; }
+          done
+          echo "the run directory is not served"
+
+          kill "$(cat /tmp/status.pid)" 2>/dev/null || true
+
+      - name: A long seed exposes progress and a failed seed retains its exit status
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          R="$RUNNER_TEMP/seeddiag"
+          mkdir -p "$R/evidence"
+
+          # Run a genuinely long seed (300 accounts, bcrypt cost 12) in the
+          # background and poll the endpoint WHILE it is still running, which is
+          # the case that failed on real hardware.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
+            --run-id cap-ci-slow-0001 --users 300 --evidence-dir "$R/evidence" \
+            >/tmp/slowseed.log 2>&1 &
+          SEED_PID=$!
+
+          TOKEN="ci-seed-token-$$"
+          python3 "$GITHUB_WORKSPACE/infra/capacity-run/bootstrap-status.py" \
+            --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+            --run-dir "$R" --port 9445 --token "$TOKEN" >/tmp/seedstatus.log 2>&1 &
+          STATUS_PID=$!
+          trap 'kill $STATUS_PID 2>/dev/null || true' EXIT
+          sleep 3
+
+          observed_running=0
+          for i in $(seq 1 40); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9445:127.0.0.1 \
+              -H "Authorization: Bearer $TOKEN" \
+              https://capacity-run.test:9445/status/seed > /tmp/s.json || { sleep 2; continue; }
+            state=$(python3 -c "import json;print(json.load(open('/tmp/s.json'))['state'])")
+            echo "poll $i: seed state=$state"
+            if kill -0 "$SEED_PID" 2>/dev/null; then observed_running=1; break; fi
+            if [ "$state" = "not-started" ]; then observed_running=1; break; fi
+            sleep 2
+          done
+          test "$observed_running" = "1" || {
+            echo "::error title=progress::the seed finished before any poll; the test proves nothing"
+            cat /tmp/slowseed.log; exit 1; }
+          echo "the endpoint reported seed state while the seed was still running"
+
+          wait "$SEED_PID" && SEED_RC=0 || SEED_RC=$?
+          echo "slow seed finished with rc=$SEED_RC"
+
+          # Now the failure path: a seed run against a database that cannot be
+          # reached must leave an exit status and a redacted error behind.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          REACHABLE="postgresql://assetflow:SuperSecret123@127.0.0.1:1/none"
+          LOADTEST_PASSWORD="$LT_PW" \
+            bash infra/capacity-run/seed-fixtures.sh \
+              --run-id cap-ci-fail-0001 --users 5 --evidence-dir "$R/evidence" \
+              >/tmp/failseed.log 2>&1 && { echo "::error::the fail seed should not have succeeded"; exit 1; } || true
+          test -s "$R/evidence/seed-exit" || {
+            echo "::error title=exit::a failed seed left no exit status"; cat /tmp/failseed.log; exit 1; }
+          echo "failed seed recorded exit $(cat "$R/evidence/seed-exit")"
+          if grep -q 'SuperSecret123' /tmp/failseed.log; then
+            echo "::error title=redaction::the seed error leaked a password"; exit 1
+          fi
+
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9445:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9445/status/failure > /tmp/f.json
+          python3 - <<'PY'
+          import json
+          f = json.load(open('/tmp/f.json'))
+          body = json.dumps(f)
+          assert 'SuperSecret123' not in body, 'password leaked into the failure snapshot'
+          print('failure snapshot present and redacted')
+          PY
+
       - name: Start the application and probe the real readiness route
         run: |
           set -euo pipefail
