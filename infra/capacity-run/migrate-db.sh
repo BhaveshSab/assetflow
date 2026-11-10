@@ -74,9 +74,16 @@ if [ -n "${FIXTURE_MIGRATE_DIGEST:-}${FIXTURE_API_DIGEST:-}${FIXTURE_WEB_DIGEST:
     for required in FIXTURE_MIGRATE_DIGEST FIXTURE_API_DIGEST FIXTURE_WEB_DIGEST; do
         eval "value=\${$required:-}"
         [ -n "$value" ] || { echo "migrate-db: $required is empty but others are set; refusing a partial pin" >&2; exit 2; }
+        # A digest reference is repository@sha256:<64 hex>. Requiring the @ form
+        # (not just a sha256: prefix) is what makes a tag impossible here: a tag
+        # can never be spelled repository@sha256:...
         case "$value" in
-            sha256:*) ;;
-            *) echo "migrate-db: $required must be an immutable sha256 digest, got '$value'" >&2; exit 2 ;;
+            *@sha256:*) ;;
+            *) echo "migrate-db: $required must be an immutable image@sha256: digest, got '$value'" >&2; exit 2 ;;
+        esac
+        case "${value##*@}" in
+            sha256:????????????????????????????????????????????????????????????????) ;;
+            *) echo "migrate-db: $required digest is not 64 hex characters: '$value'" >&2; exit 2 ;;
         esac
     done
     export MIGRATE_IMAGE="$FIXTURE_MIGRATE_DIGEST"

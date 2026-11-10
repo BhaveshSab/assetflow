@@ -689,7 +689,7 @@ jobs:
              2>/tmp/pin1.err; then
             echo "::error title=pin::a mutable tag was accepted"; exit 1
           fi
-          grep -q 'immutable sha256 digest' /tmp/pin1.err
+          grep -q 'immutable image@sha256: digest' /tmp/pin1.err
           echo "mutable tag refused: $(head -1 /tmp/pin1.err)"
 
           # 2. A partial pin is refused rather than falling back to a build.
@@ -1174,27 +1174,39 @@ jobs:
             # exists, so what runs is what was measured.
             docker tag "$local_tag:$SHA" "$remote:$SHA"
             docker push "$remote:$SHA" | tail -2
-            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$remote:$SHA" \
-              | sed 's/.*@//')
-            test -n "$digest" || { echo "::error title=digest::no digest for $remote"; exit 1; }
-            printf '%s %s %s\n' "$target" "$remote" "$digest" >> "$RUNNER_TEMP/digests.txt"
-            echo "$target -> $remote@$digest"
+            # The full repository@sha256:... reference is what the guest pins.
+            # A bare `sha256:...` has no repository and Docker cannot pull it,
+            # so it is recorded in the exact form the guest will use.
+            ref=$(docker inspect --format '{{index .RepoDigests 0}}' "$remote:$SHA")
+            case "$ref" in
+              *@sha256:*) ;;
+              *) echo "::error title=digest::$remote:$SHA has no repo@sha256: digest ($ref)"; exit 1 ;;
+            esac
+            printf '%s=%s\n' "$(echo "$target" | tr '[:lower:]' '[:upper:]')" "$ref" >> "$RUNNER_TEMP/digests.txt"
+            echo "$target -> $ref"
           done
-          echo "source_revision $SHA" >> "$RUNNER_TEMP/digests.txt"
           cat "$RUNNER_TEMP/digests.txt"
+          # Emit the file the bootstrap sources, so the guest form is provably
+          # the same as the form verified here.
+          {
+            printf 'FIXTURE_API_DIGEST="%s"\n' "$(grep '^API=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+            printf 'FIXTURE_MIGRATE_DIGEST="%s"\n' "$(grep '^MIGRATE=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+            printf 'FIXTURE_WEB_DIGEST="%s"\n' "$(grep '^WEB=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+          } > "$RUNNER_TEMP/image-digests.env"
+          cat "$RUNNER_TEMP/image-digests.env"
 
       - name: Verify anonymous pull using only the digest
         run: |
           set -euo pipefail
-          # Public repo visibility does NOT make packages public. Prove the pull
-          # works with no credentials before anything depends on it.
+          # Public repository visibility does NOT make packages public. Prove the
+          # pull works with no credentials before anything depends on it.
           docker logout ghcr.io >/dev/null 2>&1 || true
           rm -f "$HOME/.docker/config.json" 2>/dev/null || true
-          while read -r target remote digest; do
-            [ "$target" = "source_revision" ] && continue
-            echo "anonymous pull of $remote@$digest"
-            docker pull "$remote@$digest" >/dev/null || {
-              echo "::error title=anonymous pull::$remote@$digest is not publicly pullable"
+          while IFS='=' read -r name ref; do
+            case "$name" in API|MIGRATE|WEB) ;; *) continue ;; esac
+            echo "anonymous pull of $ref"
+            docker pull "$ref" >/dev/null || {
+              echo "::error title=anonymous pull::$ref is not publicly pullable"
               exit 1; }
           done < "$RUNNER_TEMP/digests.txt"
           echo "all three images pull anonymously by digest"
@@ -1203,5 +1215,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: capacity-image-digests
-          path: ${{ runner.temp }}/digests.txt
+          path: |
+            ${{ runner.temp }}/digests.txt
+            ${{ runner.temp }}/image-digests.env
           retention-days: 30

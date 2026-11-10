@@ -131,8 +131,9 @@ class DigestPinnedDeploymentTests(unittest.TestCase):
     def test_only_sha256_digests_are_accepted(self):
         # A tag would be mutable, which is how a previous run executed code from
         # a different revision than the one that had been tested.
-        self.assertIn("must be an immutable sha256 digest", self.script)
-        self.assertIn("sha256:*) ;;", self.script)
+        # The @ form is required, so a tag can never be spelled as a pin.
+        self.assertIn("must be an immutable image@sha256: digest", self.script)
+        self.assertIn("*@sha256:*", self.script)
 
     def test_resolved_digest_is_compared(self):
         self.assertIn("resolved to '$resolved', not the pinned digest", self.script)
