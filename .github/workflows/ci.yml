@@ -1129,22 +1129,20 @@ jobs:
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           echo "building from $SHA"
-          docker buildx build --load \
+          # Paths and targets taken from infra/docker-compose.yml so the published
+          # image is the same one compose would have built locally.
+          docker build \
             --build-arg GIT_SHA="$SHA" \
-            -f backend/Dockerfile --target api \
-            -t "capacity-api:$SHA" backend
-          docker buildx build --load \
+            -f infra/docker/Dockerfile.api --target runtime \
+            -t "capacity-api:$SHA" .
+          docker build \
             --build-arg GIT_SHA="$SHA" \
-            -f backend/Dockerfile --target migrate \
-            -t "capacity-migrate:$SHA" backend
-          docker buildx build --load \
+            -f infra/docker/Dockerfile.api --target migrate \
+            -t "capacity-migrate:$SHA" .
+          docker build \
             --build-arg GIT_SHA="$SHA" \
-            -f frontend/Dockerfile --target web \
-            -t "capacity-web:$SHA" frontend || \
-          docker buildx build --load \
-            --build-arg GIT_SHA="$SHA" \
-            -f frontend/Dockerfile \
-            -t "capacity-web:$SHA" frontend
+            -f infra/docker/Dockerfile.nginx \
+            -t "capacity-web:$SHA" .
 
       - name: Prove no secret reached a layer
         run: |
@@ -1152,13 +1150,15 @@ jobs:
           SHA="$(git rev-parse HEAD)"
           for img in capacity-api capacity-migrate capacity-web; do
             echo "--- $img ---"
-            # Scan the built filesystem for the shapes that would matter. A hit
-            # here aborts before publication, which is the point of building
-            # locally first.
-            if docker run --rm --entrypoint sh "$img:$SHA" -c \
-              'ls -a /app 2>/dev/null; find / -maxdepth 3 \( -name ".env" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null' \
-              | grep -E '(^|/)\.env$|\.pem$|\.key$'; then
+            # A published layer is permanent, so scan the built filesystem for the
+            # shapes that would matter. A hit here aborts before publication,
+            # which is the point of building locally first.
+            hits=$(docker run --rm --entrypoint sh "$img:$SHA" -c \
+              'ls -a /app 2>/dev/null; find /app /usr/src -maxdepth 4 \( -name ".env" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null' \
+              | grep -E '(^|/)\.env$|\.pem$|\.key$' || true)
+            if [ -n "$hits" ]; then
               echo "::error title=layer secret::$img contains credential-shaped files"
+              echo "$hits"
               exit 1
             fi
           done
