@@ -94,15 +94,37 @@ rc=0
 # --no-deps: postgres is already up and healthy from the migrate step. Letting
 # this re-create it would reset the schema underneath the fixtures.
 # TS_NODE_TRANSPILE_ONLY: the seed is executed, not type-checked.
+#
+# The compose invocation runs in the background so its pid and the container it
+# starts can be recorded while it is still running. Without that, a seed killed
+# without writing its own exit record leaves no way to tell "still working" from
+# "died" - the distinction one earlier run could not make.
 $COMPOSE run --rm --no-deps \
     -e TS_NODE_TRANSPILE_ONLY=true \
     -e LOADTEST_PASSWORD="${LOADTEST_PASSWORD:-}" \
     migrate npm run seed:loadtest -- --run-id "$RUN_ID" --users "$USERS" \
-    > "$SEED_LOG" 2>&1 || rc=$?
+    > "$SEED_LOG" 2>&1 &
+SEED_RUN_PID=$!
+if [ -n "$EVIDENCE_DIR" ]; then
+    printf '%s' "$SEED_RUN_PID" > "$EVIDENCE_DIR/seed-pid"
+    # Record the seed container too, so liveness can be asked of Docker rather
+    # than inferred from a log line. Absence means "cannot tell", never "dead".
+    for _ in $(seq 1 30); do
+        cid=$($COMPOSE ps -q migrate 2>/dev/null | head -1 || true)
+        if [ -n "$cid" ]; then
+            printf '%s' "$cid" > "$EVIDENCE_DIR/seed-container"
+            break
+        fi
+        kill -0 "$SEED_RUN_PID" 2>/dev/null || break
+        sleep 1
+    done
+fi
 
+wait "$SEED_RUN_PID" || rc=$?
 SEED_ELAPSED=$(( $(date +%s) - SEED_START ))
 if [ -n "$EVIDENCE_DIR" ]; then
     printf '%s' "$rc" > "$EVIDENCE_DIR/seed-exit"
+    date -u +%s > "$EVIDENCE_DIR/seed-finished-at"
     printf '%s' "$SEED_ELAPSED" > "$EVIDENCE_DIR/seed-elapsed"
     # A negative or >128 status means the shell reported a signal, not an exit
     # code: 128+N is the shell's encoding of "killed by signal N".

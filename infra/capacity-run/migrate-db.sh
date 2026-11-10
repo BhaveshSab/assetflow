@@ -58,16 +58,64 @@ if [ -n "${RUN_ID:-}" ]; then
     export WEB_IMAGE="assetflow-web:${RUN_ID}"
 fi
 
-say "building images from the pinned checkout"
-$COMPOSE build api migrate nginx > "$EVIDENCE_DIR/build.log" 2>&1 || {
-    echo "migrate-db: image build failed (see $EVIDENCE_DIR/build.log)"
-    tail -25 "$EVIDENCE_DIR/build.log" 2>/dev/null
-    exit 1
-}
+# Image selection. Two modes, and the choice is explicit rather than implied.
+#
+# PINNED MODE (the measurement run): the operator supplies the three immutable
+# digests that CI built and published from the same commit, and the guest pulls
+# exactly those. Nothing is compiled on the measurement server, so its CPU
+# credits are not spent on a build. A digest cannot be retagged, so a `latest`
+# or any other mutable tag cannot be substituted - which is the failure mode an
+# earlier attempt hit.
+#
+# BUILD MODE (CI, and local work): no digests supplied, so the images are built
+# from the checked-out commit. This stays available so the shared path can be
+# exercised end to end without a registry.
+if [ -n "${FIXTURE_MIGRATE_DIGEST:-}${FIXTURE_API_DIGEST:-}${FIXTURE_WEB_DIGEST:-}" ]; then
+    for required in FIXTURE_MIGRATE_DIGEST FIXTURE_API_DIGEST FIXTURE_WEB_DIGEST; do
+        eval "value=\${$required:-}"
+        [ -n "$value" ] || { echo "migrate-db: $required is empty but others are set; refusing a partial pin" >&2; exit 2; }
+        case "$value" in
+            sha256:*) ;;
+            *) echo "migrate-db: $required must be an immutable sha256 digest, got '$value'" >&2; exit 2 ;;
+        esac
+    done
+    export MIGRATE_IMAGE="$FIXTURE_MIGRATE_DIGEST"
+    export API_IMAGE="$FIXTURE_API_DIGEST"
+    export WEB_IMAGE="$FIXTURE_WEB_DIGEST"
+    say "pulling the pinned images by digest (no build)"
+    # By digest only. There is deliberately no tag here to fall back to.
+    for image in "$API_IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"; do
+        echo "pull $image" >> "$EVIDENCE_DIR/pull.log"
+        if ! docker pull "$image" >> "$EVIDENCE_DIR/pull.log" 2>&1; then
+            echo "migrate-db: cannot pull $image"
+            tail -15 "$EVIDENCE_DIR/pull.log" 2>/dev/null
+            exit 1
+        fi
+    done
+    # Prove what is actually local matches what was asked for. A digest pull that
+    # silently resolved to something else would defeat the point of pinning.
+    for image in "$API_IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"; do
+        resolved=$(docker inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null | sed 's/.*@//')
+        printf '%s resolved=%s\n' "$image" "$resolved" >> "$EVIDENCE_DIR/digests.txt"
+        [ "$resolved" = "${image##*@}" ] || {
+            echo "migrate-db: $image resolved to '$resolved', not the pinned digest"
+            exit 1
+        }
+    done
+    say "pinned images verified by digest"
+    $COMPOSE images > "$EVIDENCE_DIR/images.txt" 2>&1 || true
+else
+    say "building images from the pinned checkout"
+    $COMPOSE build api migrate nginx > "$EVIDENCE_DIR/build.log" 2>&1 || {
+        echo "migrate-db: image build failed (see $EVIDENCE_DIR/build.log)"
+        tail -25 "$EVIDENCE_DIR/build.log" 2>/dev/null
+        exit 1
+    }
 
-# Record the actual image IDs, so the evidence shows what ran rather than what
-# was asked for.
-$COMPOSE images > "$EVIDENCE_DIR/images.txt" 2>&1 || true
+    # Record the actual image IDs, so the evidence shows what ran rather than what
+    # was asked for.
+    $COMPOSE images > "$EVIDENCE_DIR/images.txt" 2>&1 || true
+fi
 say "images"
 [ "$QUIET" -eq 1 ] || sed -n '1,12p' "$EVIDENCE_DIR/images.txt"
 

@@ -100,7 +100,7 @@ status running
 
 # ------------------------------------------------------------------ 1. inputs
 stage_begin "inputs"
-[ -r "$CONFIG" ] || die "missing $CONFIG: no provisioning path, refusing to continue"
+[ -r "$CONFIG" ] || die "missing $CONFIG, refusing to continue"
 # shellcheck disable=SC1090,SC1091
 set -a
 # shellcheck disable=SC1090
@@ -120,7 +120,7 @@ DEADLINE_EPOCH=$(( LAUNCH_EPOCH + 14400 ))
 NOW=$(date +%s)
 if [ "$DEADLINE_EPOCH" -le "$NOW" ]; then
     # Already past the window: do not run, and do not linger.
-    die "deadline already passed at bootstrap (deadline=$DEADLINE_EPOCH now=$NOW)"
+    die "deadline passed at bootstrap ($DEADLINE_EPOCH < $NOW)"
 fi
 
 printf '%s' "$LAUNCH_EPOCH"   > "$EVIDENCE_DIR/launch-epoch"
@@ -134,7 +134,7 @@ say "deadline $DEADLINE_EPOCH ($(( DEADLINE_EPOCH - NOW ))s remaining)"
 stage_begin "deadline (pre-packages)"
 # Embedded by the renderer: not cloned yet, and must not depend on the network.
 install -d -m 0755 /usr/local/lib/capacity-run
-[ -s "$RUN_DIR_SRC/deadline-guard.sh" ] || die "deadline guard was not embedded in the payload"
+[ -s "$RUN_DIR_SRC/deadline-guard.sh" ] || die "deadline guard not embedded"
 install -m 0755 "$RUN_DIR_SRC/deadline-guard.sh" /usr/local/lib/capacity-run/deadline-guard.sh
 
 cat > /etc/systemd/system/capacity-deadline.service <<UNIT
@@ -177,9 +177,14 @@ systemctl is-active capacity-deadline.timer > "$EVIDENCE_DIR/deadline-timer-stat
 # /status to it. This is NOT a readiness signal: it reports that the guest is
 # alive and what stage it is in, never that the application works.
 BS=/etc/capacity-run/bs.py
-curl -fsSL --max-time 30 "https://raw.githubusercontent.com/BhaveshSab/assetflow/$EXPECTED_COMMIT/infra/capacity-run/bootstrap-status.py" -o $BS || die "cannot fetch bootstrap-status.py"
-printf '[Unit]\nDescription=cap status\nAfter=network-online.target\n[Service]\nEnvironmentFile=%s\nExecStart=/usr/bin/python3 %s --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --run-dir %s --port 9444\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' \
-    "$CONFIG" "$BS" "$RUN_DIR" > /etc/systemd/system/capacity-status.service
+curl -fsSL --max-time 30 "https://raw.githubusercontent.com/BhaveshSab/assetflow/$EXPECTED_COMMIT/infra/capacity-run/bootstrap-status.py" -o $BS || die "no bootstrap-status.py"
+# Loopback service emitter. Four units repeated the same [Unit]/[Service]/
+# [Install] scaffolding, and user-data is capped at 16 KiB, so it is written
+# once here instead of four times inline.
+unit() { printf '[Unit]\nDescription=%s\nAfter=network-online.target\n[Service]\n%s\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' "$2" "$3" > "/etc/systemd/system/$1.service"; }
+
+unit capacity-status "cap status" "EnvironmentFile=$CONFIG
+ExecStart=/usr/bin/python3 $BS --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --run-dir $RUN_DIR --port 9444"
 systemctl enable --now capacity-status.service || die "status endpoint failed"
 # ------------------------------------------------------------- 2. packages
 stage_begin "packages"
@@ -224,7 +229,7 @@ say "disk: root=${TOTAL_MB}MB available=${AVAIL_MB}MB required=${MIN_FREE_MB}MB"
 printf 'root_mb=%s avail_mb=%s required_mb=%s\n' "$TOTAL_MB" "$AVAIL_MB" "$MIN_FREE_MB" \
     > "$EVIDENCE_DIR/disk-preflight"
 if [ -z "$AVAIL_MB" ] || [ "$AVAIL_MB" -lt "$MIN_FREE_MB" ]; then
-    die "insufficient disk: ${AVAIL_MB:-unknown}MB free, ${MIN_FREE_MB}MB required (root=${TOTAL_MB:-unknown}MB)"
+    die "disk: ${AVAIL_MB:-?}MB free, need ${MIN_FREE_MB}MB (root=${TOTAL_MB:-?}MB)"
 fi
 
 # ---------------------------------------------------------------- 3. code
@@ -235,7 +240,7 @@ git -C "$APP_DIR" checkout -q "$EXPECTED_COMMIT" \
     || die "cannot check out pinned commit $EXPECTED_COMMIT"
 DEPLOYED=$(git -C "$APP_DIR" rev-parse HEAD)
 printf '%s' "$DEPLOYED" > "$EVIDENCE_DIR/deployed-commit"
-[ "$DEPLOYED" = "$EXPECTED_COMMIT" ] || die "deployed $DEPLOYED != expected $EXPECTED_COMMIT"
+[ "$DEPLOYED" = "$EXPECTED_COMMIT" ] || die "deployed $DEPLOYED != $EXPECTED_COMMIT"
 stage_done "code"
 
 # ---------------------------------------------------------------- 4. app config
@@ -281,7 +286,12 @@ COMPOSE="docker compose --env-file infra/.env -f infra/docker-compose.yml"
 # and verify the database's own schema state. The previous version used
 # `up -d migrate`, which returns before the migration finishes, and a log check
 # that fell through to say() - it could not fail.
+# Pull the immutable digests CI published for this exact commit. Absent file
+# or absent values means build mode, which is what CI itself exercises.
+DIGEST_FILE="$APP_DIR/infra/capacity-run/image-digests.env"
+if [ -r "$DIGEST_FILE" ]; then . "$DIGEST_FILE"; fi
 RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" \
+FIXTURE_API_DIGEST="${FIXTURE_API_DIGEST:-}" FIXTURE_MIGRATE_DIGEST="${FIXTURE_MIGRATE_DIGEST:-}" FIXTURE_WEB_DIGEST="${FIXTURE_WEB_DIGEST:-}" \
     bash "$APP_DIR/infra/capacity-run/migrate-db.sh" \
         --evidence-dir "$EVIDENCE_DIR" --timeout 900 \
     || die "database migration did not complete (see $EVIDENCE_DIR/migrate.log)"
@@ -293,7 +303,12 @@ stage_begin "fixtures"
 # One shared path with CI. The bootstrap used to inline its own copy of this
 # command; that copy is how it drifted from CI and pulled a stale image.
 USERS="${FIXTURE_USERS:-200}"
+# The seed runs in the migrate image, so it needs the same pin. Without this it
+# would fall back to the compose default tag and could run different code from
+# the migration that just succeeded - the defect that made an earlier attempt
+# seed against the wrong schema.
 LOADTEST_PASSWORD="$LOADTEST_PASSWORD" COMPOSE="$COMPOSE" \
+MIGRATE_IMAGE="${FIXTURE_MIGRATE_DIGEST:-assetflow-migrate:${RUN_ID}}" API_IMAGE="${FIXTURE_API_DIGEST:-assetflow-api:${RUN_ID}}" WEB_IMAGE="${FIXTURE_WEB_DIGEST:-assetflow-web:${RUN_ID}}" \
     bash "$APP_DIR/infra/capacity-run/seed-fixtures.sh" \
         --run-id "${RUN_ID}" --users "$USERS" --evidence-dir "$EVIDENCE_DIR" \
     || die "fixture seeding failed (see $EVIDENCE_DIR/seed.log)"
@@ -347,8 +362,9 @@ $COMPOSE up -d nginx || die "application edge failed to restart on loopback"
 # except the proxy.
 printf 'EVIDENCE_TOKEN=%s\n' "$EVIDENCE_TOKEN" > /etc/capacity-run/evidence.env
 chmod 600 /etc/capacity-run/evidence.env
-printf '[Unit]\nDescription=cap evidence\nAfter=network-online.target\n[Service]\nEnvironment=EVIDENCE_DIR=%s\nEnvironmentFile=/etc/capacity-run/evidence.env\nExecStart=/usr/bin/python3 %s/infra/scripts/evidence_server.py --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --port 9443 --host 127.0.0.1\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' \
-    "$EVIDENCE_DIR" "$APP_DIR" > /etc/systemd/system/capacity-evidence.service
+unit capacity-evidence "cap evidence" "Environment=EVIDENCE_DIR=$EVIDENCE_DIR
+EnvironmentFile=/etc/capacity-run/evidence.env
+ExecStart=/usr/bin/python3 $APP_DIR/infra/scripts/evidence_server.py --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --port 9443 --host 127.0.0.1"
 systemctl daemon-reload
 systemctl enable --now capacity-evidence.service || die "evidence endpoint failed"
 
@@ -374,7 +390,7 @@ for i in $(seq 1 30); do
     A=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/health/ready || echo 0)
     E=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $EVIDENCE_TOKEN" https://127.0.0.1:8443/evidence/snapshot-latest.tar.gz || echo 0)
     [ "$A" = "200" ] && [ "$E" = "200" ] && break
-    [ "$i" -eq 30 ] && die "single-port edge cannot reach app ($A) or evidence ($E)"
+    [ "$i" -eq 30 ] && die "edge cannot reach app ($A) or evidence ($E)"
     sleep 2
 done
 printf 'app=%s evidence=%s\n' "$A" "$E" > "$EVIDENCE_DIR/edge-routing"
@@ -383,10 +399,12 @@ say "edge: app /api -> 8080, evidence /evidence -> 9443 (both 200)"
 # ------------------------------------------------- 6. persistent units
 # These are real installed units, not transient ones, so a reboot keeps them.
 stage_begin "lifecycle + metrics units"
-printf '[Unit]\nDescription=cap metrics\nAfter=network-online.target\n[Service]\nEnvironment=RUN_DIR=%s\nEnvironment=METRICS_INTERVAL=1\nExecStart=/bin/bash %s/infra/capacity-run/collect-metrics.sh\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' "$RUN_DIR" "$APP_DIR" > /etc/systemd/system/capacity-metrics.service
+unit capacity-metrics "cap metrics" "Environment=RUN_DIR=$RUN_DIR
+Environment=METRICS_INTERVAL=1
+ExecStart=/bin/bash $APP_DIR/infra/capacity-run/collect-metrics.sh"
 
-printf '[Unit]\nDescription=cap snapshot\n[Service]\nType=oneshot\nExecStart=/bin/bash %s/infra/capacity-run/snapshot-evidence.sh\n' "$APP_DIR" > /etc/systemd/system/capacity-snapshot.service
-printf '[Unit]\nDescription=cap snapshot timer\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nUnit=capacity-snapshot.service\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/capacity-snapshot.timer
+printf '[Unit]\n[Service]\nType=oneshot\nExecStart=/bin/bash %s/infra/capacity-run/snapshot-evidence.sh\n' "$APP_DIR" > /etc/systemd/system/capacity-snapshot.service
+printf '[Unit]\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nUnit=capacity-snapshot.service\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/capacity-snapshot.timer
 
 systemctl daemon-reload
 systemctl enable --now capacity-metrics.service  || die "metrics service failed"

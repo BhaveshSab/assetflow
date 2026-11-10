@@ -28,8 +28,10 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import os
 import re
 import shutil
+import subprocess
 import ssl
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -94,20 +96,117 @@ def memory() -> dict:
     return out
 
 
+# Seed lifecycle states. The point of the extra ones is that a seed which dies
+# without writing its own exit record must still be visible: that was the case
+# a previous run hit, where the instance was gone and nothing said why.
+#
+#   not-started  no start marker yet
+#   running      start marker present, no completion record, work still alive
+#   succeeded    completion record, exit 0
+#   failed       completion record, non-zero exit
+#   interrupted  start marker present, no completion record, and the process or
+#                container is no longer running - it died without recording why
+#   unknown      the evidence needed to decide is unreadable
+SEED_STATES = ("not-started", "running", "succeeded", "failed", "interrupted", "unknown")
+
+
+def _alive(pid_text: str) -> bool | None:
+    """True/False if the pid's liveness can be decided, None if it cannot.
+
+    None is not False: an unreadable or absent pid must not be reported as dead,
+    because that would turn "I cannot tell" into "it stopped".
+    """
+    pid_text = pid_text.strip()
+    if not pid_text or not pid_text.isdigit():
+        return None
+    try:
+        os.kill(int(pid_text), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def _container_running(run_dir: Path) -> bool | None:
+    """Whether the seed container is up, or None if that cannot be established.
+
+    The helper writes the container id it started. We ask Docker about that exact
+    container so liveness does not depend on the seed process cooperating.
+    """
+    cid = read_small(run_dir / "evidence" / "seed-container", 128).strip()
+    if not cid or len(cid) < 8 or not re.fullmatch(r"[0-9a-fA-F]+", cid):
+        return None
+    try:
+        proc = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", cid],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = proc.stdout.strip()
+    if out == "true":
+        return True
+    if out == "false":
+        return False
+    # A non-zero status here means we could not ask, not that it stopped.
+    return None
+
+
 def seed(run_dir: Path) -> dict:
     ev = run_dir / "evidence"
-    out: dict = {"state": "not-started"}
+    started = read_small(ev / "seed-started-at").strip()
     code = read_small(ev / "seed-exit").strip()
-    if code:
+
+    out: dict = {}
+
+    if not started and not code:
+        out["state"] = "not-started"
+    elif code:
         try:
-            out["exit_code"] = int(code)
-            out["state"] = "finished" if int(code) == 0 else "failed"
+            exit_code = int(code)
         except ValueError:
+            # A completion record we cannot parse is not a success.
             out["state"] = "unknown"
-    for label, field in (("seed-signal", "signal"), ("seed-elapsed", "elapsed_seconds"), ("seed-started-at", "started_at"), ("fixture-users", "accounts_verified")):
+            out["reason"] = "seed-exit is not an integer"
+        else:
+            out["state"] = "succeeded" if exit_code == 0 else "failed"
+            out["exit_code"] = exit_code
+    else:
+        # Started, no completion record. Decide from liveness, never from timing:
+        # a slow seed and a dead seed look identical from the clock alone.
+        pid_alive = _alive(read_small(ev / "seed-pid", 32))
+        container_alive = _container_running(run_dir)
+        if pid_alive is False or container_alive is False:
+            out["state"] = "interrupted"
+            out["reason"] = (
+                "the seed started and no completion record was written, and the "
+                "seed is no longer running"
+            )
+            # Deliberately no exit code and no cause: neither is known. A
+            # vanished process does not prove a timeout, and 137 alone does not
+            # prove an OOM kill.
+            out["exit_code"] = None
+            out["cause"] = "unknown"
+        elif pid_alive or container_alive:
+            out["state"] = "running"
+        else:
+            out["state"] = "unknown"
+            out["reason"] = "started, no completion record, liveness cannot be determined"
+
+    for label, field in (
+        ("seed-signal", "signal"),
+        ("seed-elapsed", "elapsed_seconds"),
+        ("seed-started-at", "started_at"),
+        ("seed-finished-at", "finished_at"),
+        ("fixture-users", "accounts_verified"),
+    ):
         value = read_small(ev / label).strip()
         if value:
             out[field] = value
+
     log = read_small(ev / "seed.log", 16384)
     if log:
         # Progress, so a long seed is visibly moving rather than silently hung.

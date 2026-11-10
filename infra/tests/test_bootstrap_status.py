@@ -107,8 +107,9 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(report["state"], "failed")
 
     def test_seed_success_is_distinguished(self):
+        self.write("seed-started-at", "100")
         self.write("seed-exit", "0")
-        self.assertEqual(self.mod.seed(self.run_dir)["state"], "finished")
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "succeeded")
 
     def test_unstarted_seed_says_so(self):
         self.assertEqual(self.mod.seed(self.run_dir)["state"], "not-started")
@@ -148,6 +149,151 @@ class SnapshotTests(unittest.TestCase):
             + json.dumps(self.mod.failure(self.run_dir))
         )
         self.assertNotIn("S3cr3tPass", blob)
+
+
+
+class SeedStateMachineTests(unittest.TestCase):
+    """A seed that dies without recording an exit must still be visible.
+
+    This is the exact gap a previous run fell into: the instance was gone, the
+    console buffer had rolled, and nothing said whether the seed was still
+    working, had failed, or had been killed. The observer decides from process
+    and container liveness, not from the seed's own cooperation, and it refuses
+    to invent an exit code or a cause it did not observe.
+    """
+
+    def setUp(self):
+        self.mod = load_module()
+        self.dir = tempfile.mkdtemp()
+        self.run_dir = Path(self.dir) / "run"
+        (self.run_dir / "evidence").mkdir(parents=True)
+
+    def write(self, name, value):
+        (self.run_dir / "evidence" / name).write_text(str(value), encoding="utf-8")
+
+    def test_states_are_the_documented_set(self):
+        self.assertEqual(
+            set(self.mod.SEED_STATES),
+            {"not-started", "running", "succeeded", "failed", "interrupted", "unknown"},
+        )
+
+    def test_nothing_recorded_is_not_started(self):
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "not-started")
+
+    def test_exit_zero_is_succeeded(self):
+        self.write("seed-started-at", "100")
+        self.write("seed-exit", "0")
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "succeeded")
+
+    def test_nonzero_exit_is_failed(self):
+        self.write("seed-started-at", "100")
+        self.write("seed-exit", "1")
+        state = self.mod.seed(self.run_dir)
+        self.assertEqual(state["state"], "failed")
+        self.assertEqual(state["exit_code"], 1)
+
+    def test_unparseable_exit_is_unknown_not_success(self):
+        self.write("seed-started-at", "100")
+        self.write("seed-exit", "not-a-number")
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "unknown")
+
+    def test_started_with_live_process_is_running(self):
+        self.write("seed-started-at", "100")
+        # Our own pid is unambiguously alive.
+        self.write("seed-pid", os.getpid())
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "running")
+
+    def test_started_with_dead_process_is_interrupted(self):
+        self.write("seed-started-at", "100")
+        # A pid that cannot exist: liveness is decidable and negative.
+        self.write("seed-pid", "4000001")
+        state = self.mod.seed(self.run_dir)
+        self.assertEqual(state["state"], "interrupted")
+
+    def test_interrupted_invents_no_exit_code_or_cause(self):
+        # The whole point: absence of evidence must not become a fabricated one.
+        self.write("seed-started-at", "100")
+        self.write("seed-pid", "4000001")
+        state = self.mod.seed(self.run_dir)
+        self.assertIsNone(state["exit_code"])
+        self.assertEqual(state["cause"], "unknown")
+        self.assertNotIn("signal", state)
+
+    def test_unreadable_liveness_is_unknown_not_dead(self):
+        # No pid and no container id: we cannot tell. Reporting "interrupted"
+        # here would be an invention; reporting "succeeded" would be a lie.
+        self.write("seed-started-at", "100")
+        state = self.mod.seed(self.run_dir)
+        self.assertEqual(state["state"], "unknown")
+        self.assertIn("cannot be determined", state["reason"])
+
+    def test_garbage_pid_does_not_count_as_dead(self):
+        self.write("seed-started-at", "100")
+        self.write("seed-pid", "not-a-pid")
+        self.assertEqual(self.mod.seed(self.run_dir)["state"], "unknown")
+
+    def test_progress_is_reported_while_running(self):
+        self.write("seed-started-at", "100")
+        self.write("seed-pid", os.getpid())
+        self.write("seed.log", chr(10).join(f"created loadtest-cap-0001-{i:03d}@assetflow.test" for i in range(5)))
+        state = self.mod.seed(self.run_dir)
+        self.assertEqual(state["state"], "running")
+        self.assertEqual(state["accounts_seen_in_log"], 5)
+
+    def test_container_absence_is_not_death(self):
+        # Docker being unavailable must not be read as "the container stopped".
+        self.write("seed-started-at", "100")
+        self.write("seed-container", "deadbeefcafe")
+        state = self.mod.seed(self.run_dir)
+        # No pid, and docker cannot answer in this environment: unknown.
+        self.assertIn(state["state"], ("unknown", "running"))
+
+    def test_helper_records_liveness_inputs(self):
+        helper = (ROOT / "infra" / "capacity-run" / "seed-fixtures.sh").read_text(encoding="utf-8")
+        for marker in ("seed-pid", "seed-container", "seed-finished-at"):
+            self.assertIn(marker, helper, f"{marker} must be recorded for the observer")
+
+
+class DeliberateTerminationTests(unittest.TestCase):
+    """Kill a real seed and prove the retained snapshot says so."""
+
+    def setUp(self):
+        self.mod = load_module()
+        self.dir = tempfile.mkdtemp()
+        self.run_dir = Path(self.dir) / "run"
+        (self.run_dir / "evidence").mkdir(parents=True)
+
+    def test_killed_process_becomes_interrupted(self):
+        # Start a real process that writes a start marker and then blocks.
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+        )
+        try:
+            (self.run_dir / "evidence" / "seed-started-at").write_text("100", encoding="utf-8")
+            (self.run_dir / "evidence" / "seed-pid").write_text(str(proc.pid), encoding="utf-8")
+            self.assertEqual(self.mod.seed(self.run_dir)["state"], "running")
+            proc.kill()
+            proc.wait(timeout=10)
+            state = self.mod.seed(self.run_dir)
+            self.assertEqual(state["state"], "interrupted")
+            self.assertIsNone(state["exit_code"])
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_interrupted_snapshot_reaches_the_endpoint(self):
+        # The retained snapshot the operator reads must carry the new state,
+        # otherwise the state machine only exists in unit tests.
+        (self.run_dir / "evidence" / "seed-started-at").write_text("100", encoding="utf-8")
+        (self.run_dir / "evidence" / "seed-pid").write_text("4000001", encoding="utf-8")
+        report = self.mod.seed(self.run_dir)
+        self.assertEqual(report["state"], "interrupted")
+        self.assertEqual(report["cause"], "unknown")
+        blob = json.dumps(report)
+        self.assertIn("interrupted", blob)
+        # And it must not claim a cause it did not observe.
+        self.assertNotIn("oom", blob.lower())
+        self.assertNotIn("timeout", blob.lower())
 
 
 class EndpointTests(unittest.TestCase):
@@ -305,9 +451,12 @@ class BootstrapOrderingTests(unittest.TestCase):
 
     def test_service_reads_token_from_run_config(self):
         # The unit gets its token from the operator-provisioned run config, so no
-        # token is written into the payload.
-        self.assertIn("EnvironmentFile=%s", self.text)
-        self.assertIn('"$CONFIG" "$BS" "$RUN_DIR"', self.text)
+        # token is written into the payload. The unit is emitted by the shared
+        # `unit()` helper now, so assert the property rather than the literal
+        # printf arguments.
+        self.assertIn("EnvironmentFile=$CONFIG", self.text)
+        self.assertIn("unit capacity-status", self.text)
+        self.assertNotIn("EVIDENCE_TOKEN=" , self.text.split("unit capacity-status")[1].split("\n")[0])
 
     def test_stage_is_recorded_for_the_endpoint(self):
         self.assertIn('"$EVIDENCE_DIR/stage-current"', self.text)

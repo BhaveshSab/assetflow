@@ -323,7 +323,7 @@ class LaunchCommandDriftTests(unittest.TestCase):
         """Free space is checked in the guest before the image build starts."""
         text = USER_DATA.read_text(encoding='utf-8')
         self.assertIn('MIN_FREE_MB', text)
-        self.assertIn('insufficient disk', text)
+        self.assertIn('disk: ', text)
 
     def test_does_not_assume_public_addressing(self):
         """Reachability is asserted from the subnet and read back after launch."""
@@ -358,7 +358,7 @@ class DiskPreflightTests(unittest.TestCase):
 
     def test_preflight_refuses_below_a_floor(self):
         self.assertIn('MIN_FREE_MB', self.text)
-        self.assertIn('insufficient disk', self.text)
+        self.assertIn('disk: ', self.text)
 
     def test_preflight_records_its_observation(self):
         self.assertIn('disk-preflight', self.text)

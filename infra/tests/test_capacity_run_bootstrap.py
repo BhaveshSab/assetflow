@@ -110,3 +110,46 @@ class WatchdogTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DigestPinnedDeploymentTests(unittest.TestCase):
+    """The measurement guest must pull CI's images, never compile them."""
+
+    def setUp(self):
+        self.script = (CAPACITY_DIR / "migrate-db.sh").read_text(encoding="utf-8")
+        self.bootstrap = (CAPACITY_DIR / "user-data.sh").read_text(encoding="utf-8")
+
+    def test_pinned_mode_pulls_and_never_builds(self):
+        pinned = self.script.split("else", 1)[0]
+        self.assertIn("docker pull", pinned)
+        self.assertNotIn("$COMPOSE build", pinned)
+
+    def test_partial_pin_is_refused(self):
+        # Two digests and a missing third must not silently fall back to a build.
+        self.assertIn("refusing a partial pin", self.script)
+
+    def test_only_sha256_digests_are_accepted(self):
+        # A tag would be mutable, which is how a previous run executed code from
+        # a different revision than the one that had been tested.
+        self.assertIn("must be an immutable sha256 digest", self.script)
+        self.assertIn("sha256:*) ;;", self.script)
+
+    def test_resolved_digest_is_compared(self):
+        self.assertIn("resolved to '$resolved', not the pinned digest", self.script)
+
+    def test_seed_uses_the_same_pinned_image_as_the_migration(self):
+        # The seed runs in the migrate image; unpinned it could run different code.
+        self.assertIn('MIGRATE_IMAGE="${FIXTURE_MIGRATE_DIGEST:-assetflow-migrate:${RUN_ID}}"', self.bootstrap)
+
+    def test_digests_are_not_carried_in_user_data(self):
+        # 71 characters each against a 16 KiB cap; they live in the checkout.
+        self.assertIn("image-digests.env", self.bootstrap)
+        self.assertNotIn("FIXTURE_API_DIGEST=$", self.bootstrap)
+
+    def test_published_images_have_no_latest_tag(self):
+        ci = (CAPACITY_DIR.parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        job = ci.split("capacity-images:", 1)[1]
+        self.assertNotIn(":latest", job)
+        self.assertIn("packages: write", job)
+        # Anonymous pull must be proven before anything depends on it.
+        self.assertIn("docker logout ghcr.io", job)

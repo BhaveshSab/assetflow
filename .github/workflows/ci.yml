@@ -1022,3 +1022,137 @@ jobs:
           docker compose --env-file infra/.env -f infra/docker-compose.yml down -v >/dev/null 2>&1 || true
           rm -f infra/.env
           rm -rf infra/certs
+
+  capacity-images:
+    name: Publish capacity-test images (digest-pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only from this branch, and only after the capacity stack has proven the
+    # same code path. Publishing on every push would produce images nobody
+    # measured.
+    needs: [capacity-stack]
+    if: github.ref == 'refs/heads/arena/595baf83-assetflow'
+    permissions:
+      contents: read
+      # Scoped to this job only. Nothing on EC2 receives a token: the guest pulls
+      # anonymously by digest.
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to publish anything from a secret-bearing context
+        run: |
+          set -euo pipefail
+          # A published layer is permanent. Check the build context BEFORE
+          # building: anything matching these would be readable by anyone who
+          # pulls the image.
+          offenders=$(git ls-files | grep -E '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|token|credentials|.*\.tar\.gz)$' \
+            | grep -vE '\.env\.example$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error title=secret in context::tracked files that must never be published:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "no tracked env/key/token/archive files"
+
+      - name: Confirm .dockerignore excludes secrets
+        run: |
+          set -euo pipefail
+          for pattern in '.env' 'infra/certs' '**/*.log'; do
+            grep -qF "$pattern" .dockerignore || {
+              echo "::error title=dockerignore::$pattern is not excluded"; exit 1; }
+          done
+          echo ".dockerignore excludes env files, certs and logs"
+
+      - name: Log in to GitHub Container Registry
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build the three capacity images from this commit
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "building from $SHA"
+          docker buildx build --load \
+            --build-arg GIT_SHA="$SHA" \
+            -f backend/Dockerfile --target api \
+            -t "capacity-api:$SHA" backend
+          docker buildx build --load \
+            --build-arg GIT_SHA="$SHA" \
+            -f backend/Dockerfile --target migrate \
+            -t "capacity-migrate:$SHA" backend
+          docker buildx build --load \
+            --build-arg GIT_SHA="$SHA" \
+            -f frontend/Dockerfile --target web \
+            -t "capacity-web:$SHA" frontend || \
+          docker buildx build --load \
+            --build-arg GIT_SHA="$SHA" \
+            -f frontend/Dockerfile \
+            -t "capacity-web:$SHA" frontend
+
+      - name: Prove no secret reached a layer
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          for img in capacity-api capacity-migrate capacity-web; do
+            echo "--- $img ---"
+            # Scan the built filesystem for the shapes that would matter. A hit
+            # here aborts before publication, which is the point of building
+            # locally first.
+            if docker run --rm --entrypoint sh "$img:$SHA" -c \
+              'ls -a /app 2>/dev/null; find / -maxdepth 3 \( -name ".env" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null' \
+              | grep -E '(^|/)\.env$|\.pem$|\.key$'; then
+              echo "::error title=layer secret::$img contains credential-shaped files"
+              exit 1
+            fi
+          done
+          echo "no env/key files inside any image"
+
+      - name: Publish by digest and record it
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          : > "$RUNNER_TEMP/digests.txt"
+          for pair in "api:capacity-api" "migrate:capacity-migrate" "web:capacity-web"; do
+            target="${pair%%:*}"
+            local_tag="${pair##*:}"
+            remote="ghcr.io/$OWNER/assetflow-capacity-$target"
+            # Never publish `latest`: a mutable tag is what let a previous run
+            # pull an image from a different revision. Only the commit tag
+            # exists, so what runs is what was measured.
+            docker tag "$local_tag:$SHA" "$remote:$SHA"
+            docker push "$remote:$SHA" | tail -2
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$remote:$SHA" \
+              | sed 's/.*@//')
+            test -n "$digest" || { echo "::error title=digest::no digest for $remote"; exit 1; }
+            printf '%s %s %s\n' "$target" "$remote" "$digest" >> "$RUNNER_TEMP/digests.txt"
+            echo "$target -> $remote@$digest"
+          done
+          echo "source_revision $SHA" >> "$RUNNER_TEMP/digests.txt"
+          cat "$RUNNER_TEMP/digests.txt"
+
+      - name: Verify anonymous pull using only the digest
+        run: |
+          set -euo pipefail
+          # Public repo visibility does NOT make packages public. Prove the pull
+          # works with no credentials before anything depends on it.
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+          while read -r target remote digest; do
+            [ "$target" = "source_revision" ] && continue
+            echo "anonymous pull of $remote@$digest"
+            docker pull "$remote@$digest" >/dev/null || {
+              echo "::error title=anonymous pull::$remote@$digest is not publicly pullable"
+              exit 1; }
+          done < "$RUNNER_TEMP/digests.txt"
+          echo "all three images pull anonymously by digest"
+
+      - name: Upload the digest record
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-image-digests
+          path: ${{ runner.temp }}/digests.txt
+          retention-days: 30
