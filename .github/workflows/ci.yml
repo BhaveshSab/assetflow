@@ -1082,7 +1082,10 @@ jobs:
     # same code path. Publishing on every push would produce images nobody
     # measured.
     needs: [capacity-stack]
-    if: github.ref == 'refs/heads/arena/595baf83-assetflow'
+    # Runs on this branch and on pull requests from it. github.ref is
+    # refs/pull/N/merge for a pull_request event, so comparing it to a branch
+    # name silently skipped the job - and then there would be no digests to pin.
+    if: github.head_ref == 'arena/595baf83-assetflow' || github.ref == 'refs/heads/arena/595baf83-assetflow'
     permissions:
       contents: read
       # Scoped to this job only. Nothing on EC2 receives a token: the guest pulls
