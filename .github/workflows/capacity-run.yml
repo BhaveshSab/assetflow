@@ -155,6 +155,7 @@ jobs:
             --client-token "$TOKEN" \
             --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
                          "ResourceType=volume,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
+                         "ResourceType=network-interface,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
             --user-data "file:///tmp/user-data.b64" \
             --query 'Instances[0].InstanceId' --output text)
           echo "instance: $ID"
