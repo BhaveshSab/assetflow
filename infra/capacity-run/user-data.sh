@@ -242,42 +242,46 @@ chmod 600 "$APP_DIR/infra/.env"
 # ---------------------------------------------------------------- 5. deploy
 stage_begin "deploy"
 cd "$APP_DIR"
+
+# Pin the image tags to this run. The compose default points at
+# ghcr.io/...:latest, which a real run pulled instead of building: the pull
+# succeeded, the migrate container reported Started 75ms later having applied
+# nothing, and fixture seeding failed in 37s against a schema that did not match
+# this code. A run-local tag cannot be pulled from anywhere, so the build below
+# is the only way the image can exist.
+export MIGRATE_IMAGE="assetflow-migrate:${RUN_ID}"
+export API_IMAGE="assetflow-api:${RUN_ID}"
+export WEB_IMAGE="assetflow-web:${RUN_ID}"
+
 COMPOSE="docker compose --env-file infra/.env -f infra/docker-compose.yml"
 $COMPOSE config >/dev/null || die "compose config rejected the generated environment"
+$COMPOSE build api migrate nginx || die "image build failed"
 $COMPOSE up -d postgres redis || die "dependency services failed"
 $COMPOSE up -d migrate        || die "migration failed"
+
+# Prove the migration actually ran, instead of trusting a container that exits 0
+# because it never did any work.
+$COMPOSE logs migrate > "$EVIDENCE_DIR/migrate.log" 2>&1 || true
+grep -q "No pending migrations" "$EVIDENCE_DIR/migrate.log" \
+    || grep -q "Applying migration" "$EVIDENCE_DIR/migrate.log" \
+    || say "migrate log did not report an applied or pending-free state (see migrate.log)"
 
 # ---------------------------------------------------------------- 6. seed
 # `npm prune --omit=dev` strips ts-node from the api runtime image, so seeding
 # cannot run there. The migrate image is built from the builder stage and still
 # has ts-node + prisma/.
 stage_begin "fixtures"
+# One shared path with CI. The bootstrap used to inline its own copy of this
+# command; that copy is how it drifted from CI and pulled a stale image.
 USERS="${FIXTURE_USERS:-200}"
-# LOADTEST_PASSWORD is mandatory for more than one account: the seed refuses to
-# create 200 accounts without it. ts-node runs transpile-only because the seed is
-# executed here, not type-checked, and the migrate stage sets NODE_ENV=production.
-$COMPOSE run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
-    -e LOADTEST_PASSWORD="$LOADTEST_PASSWORD" migrate \
-    npm run seed:loadtest -- --run-id "${RUN_ID}" --users "$USERS" \
-    > "$EVIDENCE_DIR/seed.log" 2>&1 || die "fixture seeding failed (see seed.log)"
+LOADTEST_PASSWORD="$LOADTEST_PASSWORD" COMPOSE="$COMPOSE" \
+    bash "$APP_DIR/infra/capacity-run/seed-fixtures.sh" \
+        --run-id "${RUN_ID}" --users "$USERS" --evidence-dir "$EVIDENCE_DIR" \
+    || die "fixture seeding failed (see $EVIDENCE_DIR/seed.log)"
+SEEDED="$(tr -d '[:space:]' < "$EVIDENCE_DIR/fixture-users" 2>/dev/null || true)"
+say "verified $SEEDED run-owned accounts with stored hashes"
+stage_done "fixtures"
 
-# Proof is a COUNT IN THE DATABASE, not the seed exit code nor a written file.
-SEEDED=$($COMPOSE exec -T postgres psql -U "${POSTGRES_USER:-assetflow}" \
-    -d "${POSTGRES_DB:-assetflow}" -tAc \
-    "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-${RUN_ID}-%@assetflow.test'" \
-    2>/dev/null | tr -d '[:space:]')
-case "$SEEDED" in
-    ''|*[!0-9]*) die "could not count seeded accounts (got '${SEEDED}')" ;;
-esac
-printf '%s' "$SEEDED" > "$EVIDENCE_DIR/fixture-users"
-[ "$SEEDED" -ge "$USERS" ] || die "only $SEEDED accounts exist, expected $USERS"
-say "verified $SEEDED run-owned accounts in the database"
-
-$COMPOSE up -d api nginx || die "application services failed"
-
-# ---------------------------------------------------------------- 7. health
-# API listens on 4000; readiness route /api/health/ready. Probed with `node`
-# because curl is not in the image.
 stage_begin "application health"
 for i in $(seq 1 90); do
     if $COMPOSE exec -T api node -e \

@@ -117,20 +117,25 @@ class SeedingTests(unittest.TestCase):
                             'npm prune --omit=dev removes ts-node')
 
     def test_seeds_from_the_image_that_keeps_dev_dependencies(self):
-        self.assertIn('migrate', self.src)
-        self.assertIn('npm run seed:loadtest', self.src)
+        # The seeding moved into the shared helper (see test_seed_fixtures.py).
+        # The helper still targets the migrate image, which keeps ts-node.
+        helper = (CAPACITY / 'seed-fixtures.sh').read_text(encoding='utf-8')
+        self.assertIn('migrate', helper)
+        self.assertIn('npm run seed:loadtest', helper)
         self.assertIn('npm prune --omit=dev', self.dockerfile,
                       'premise: the runtime image prunes ts-node')
 
     def test_proves_the_account_count_by_querying_the_database(self):
-        self.assertIn('SELECT count(*)', self.src)
-        self.assertIn('fixture-users', self.src)
+        helper = (CAPACITY / 'seed-fixtures.sh').read_text(encoding='utf-8')
+        self.assertIn('SELECT count(*)', helper)
+        self.assertIn('fixture-users', helper)
 
     def test_loadtest_password_is_supplied(self):
         """The seed refuses to create more than one account without this, so a
-        200-account fixture cannot be seeded unless the bootstrap provides it."""
-        self.assertIn('LOADTEST_PASSWORD', self.src)
-        self.assertIn('-e LOADTEST_PASSWORD=', self.src)
+        200-account fixture cannot be seeded unless it is provided."""
+        helper = (CAPACITY / 'seed-fixtures.sh').read_text(encoding='utf-8')
+        self.assertIn('LOADTEST_PASSWORD', helper)
+        self.assertIn('-e LOADTEST_PASSWORD=', helper)
 
     def test_generated_loadtest_password_has_the_expected_shape(self):
         import tempfile
@@ -144,9 +149,9 @@ class SeedingTests(unittest.TestCase):
             self.assertNotIn(ch, value, 'must survive argv and env-file quoting')
 
     def test_run_scoped_isolation_is_used(self):
-        self.assertIn('--run-id', self.src)
-        self.assertIn('cap-2026', self.src) if 'cap-2026' in self.src else None
-        self.assertIn("loadtest-${RUN_ID}-", self.src)
+        helper = (CAPACITY / 'seed-fixtures.sh').read_text(encoding='utf-8')
+        self.assertIn('--run-id', helper)
+        self.assertIn("loadtest-${RUN_ID}-", helper)
 
 
 class DeadlineServiceTests(unittest.TestCase):

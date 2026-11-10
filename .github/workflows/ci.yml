@@ -621,28 +621,13 @@ jobs:
       - name: Seed 200 run-owned accounts in the image that has ts-node
         run: |
           set -euo pipefail
-          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
-          # --no-deps is deliberate: postgres is already up and healthy from the
-          # migrate step, and letting this re-create it would reset the schema.
-          # TS_NODE_TRANSPILE_ONLY: the seed is executed, not type-checked, and
-          # the migrate stage sets NODE_ENV=production which makes ts-node apply
-          # production type rules and fail on type-only diagnostics that the
-          # build has already validated.
-          # LOADTEST_PASSWORD is mandatory above one account: the seed refuses
-          # otherwise. Taken from the generated run configuration, exactly as
-          # the bootstrap does.
+          # The SAME helper the EC2 bootstrap runs. Two inline copies of this
+          # command used to drift: CI built the images, the bootstrap did not,
+          # so a real run pulled a prebuilt migrate image and seeded against a
+          # schema that did not match the code.
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
           test -n "$LT_PW" || { echo "::error::LOADTEST_PASSWORD missing from .env"; exit 1; }
-          rc=0
-          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
-             -e LOADTEST_PASSWORD="$LT_PW" migrate \
-             npm run seed:loadtest -- --run-id cap-ci-0001 --users 200 2>&1 | tee /tmp/seed.log || rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "::error title=seed::seeding failed with exit ${rc}"
-            tail -40 /tmp/seed.log
-            $C ps
-            exit "$rc"
-          fi
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh             --run-id cap-ci-0001 --users 200 --evidence-dir "$RUNNER_TEMP/fixtures"
 
       - name: Prove 200 usable accounts exist by querying the database
         run: |
