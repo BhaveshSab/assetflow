@@ -42,8 +42,13 @@ ENDPOINTS = ("/status", "/status/seed", "/status/host", "/status/failure")
 # is a better outcome than a leaked connection string in a record.
 _SECRETS = (
     (re.compile(r"(postgres(?:ql)?://)[^@/\s]+@"), r"\1***@"),
-    (re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization)\b\s*[=:]\s*\S+"), r"\1=***"),
-    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]+"), "Bearer ***"),
+    # Matches LOADTEST_PASSWORD=..., not just a bare `password=`; the previous
+    # \b-anchored pattern missed every prefixed name, which is most of them.
+    (re.compile(r"(?i)([\w-]*(?:password|passwd|secret|token|api[_-]?key))\s*[=:]\s*\S+"), r"\1=***"),
+    # Bearer must be masked as a whole; masking only `Authorization:` left the
+    # token itself in the output.
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+"), "Bearer ***"),
+    (re.compile(r"(?i)\bauthorization\s*[=:]\s*\S+"), "Authorization=***"),
     (re.compile(r'("(?:passwordHash|password|jwtSecret|secret)"\s*:\s*")[^"]*'), r"\1***"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "[private key removed]"),
 )
@@ -191,6 +196,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found", "available": list(ENDPOINTS)})
 
 
+def build_server(cert: str, key: str, token: str, run_dir: Path, port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+    """Construct the TLS server. Port 0 asks the OS for a free one (tests)."""
+    if not token:
+        raise ValueError("refusing to start without a token")
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.token = token
+    server.run_dir = Path(run_dir)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=cert, keyfile=key)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    return server
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--cert", required=True)
@@ -200,15 +218,11 @@ def main() -> int:
     p.add_argument("--port", type=int, default=9444)
     p.add_argument("--host", default="127.0.0.1")
     a = p.parse_args()
-    if not a.token:
-        print("bootstrap_status: refusing to start without a token", flush=True)
+    try:
+        server = build_server(a.cert, a.key, a.token, Path(a.run_dir), a.port, a.host)
+    except ValueError as exc:
+        print(f"bootstrap_status: {exc}", flush=True)
         return 2
-    server = ThreadingHTTPServer((a.host, a.port), Handler)
-    server.token = a.token
-    server.run_dir = Path(a.run_dir)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(certfile=a.cert, keyfile=a.key)
-    server.socket = ctx.wrap_socket(server.socket, server_side=True)
     print(f"bootstrap_status: listening on {a.host}:{a.port}", flush=True)
     try:
         server.serve_forever()

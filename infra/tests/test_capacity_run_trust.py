@@ -145,13 +145,31 @@ class RenderedBootstrapTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         script = base64.b64decode(proc.stdout).decode('utf-8')
 
-        # The prologue must write the operator's cert and key verbatim.
-        expected_crt = base64.b64encode(
-            (self.out / 'tls.crt').read_bytes()).decode()
-        self.assertIn(expected_crt, script)
+        # The bytes on disk must equal the operator's, whatever encoding the
+        # payload uses to stay inside the 16 KiB limit. Both forms are checked
+        # by decoding what the script actually contains.
+        expected_crt = (self.out / 'tls.crt').read_bytes()
+        expected_key = (self.out / 'tls.key').read_bytes()
+        self.assertIn(expected_crt, self._decode_payload_field(script, 'tls.crt'))
+        self.assertIn(expected_key, self._decode_payload_field(script, 'tls.key'))
         self.assertIn('/etc/capacity-run/tls.crt', script)
         self.assertIn('/etc/capacity-run/tls.key', script)
         self.assertIn('chmod 600 /etc/capacity-run/tls.key', script)
+
+    @staticmethod
+    def _decode_payload_field(script: str, target: str) -> bytes:
+        """Decode the line that writes `target`, which may be gzipped."""
+        import gzip as _gzip
+        for line in script.splitlines():
+            if f'> /etc/capacity-run/{target}' not in line:
+                continue
+            if "| base64 -d | gzip -d" in line:
+                blob = line.split("echo '", 1)[1].split("'", 1)[0]
+                return _gzip.decompress(base64.b64decode(blob))
+            if "| base64 -d" in line:
+                blob = line.split("echo '", 1)[1].split("'", 1)[0]
+                return base64.b64decode(blob)
+        raise AssertionError(f'no line writes {target}')
 
     def test_rendered_payload_configures_the_certified_hostname(self):
         proc = self.render()

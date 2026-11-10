@@ -81,6 +81,15 @@ summarise() {
 
 say "seeding $USERS account(s) for run $RUN_ID"
 
+# Record timing and outcome where the bootstrap-status endpoint can read them,
+# BEFORE the seed runs. A seed killed for OOM would otherwise leave no exit
+# status at all, and the operator would have only a vanished console line.
+if [ -n "$EVIDENCE_DIR" ]; then
+    mkdir -p "$EVIDENCE_DIR"
+    date -u +%s > "$EVIDENCE_DIR/seed-started-at"
+fi
+SEED_START=$(date +%s)
+
 rc=0
 # --no-deps: postgres is already up and healthy from the migrate step. Letting
 # this re-create it would reset the schema underneath the fixtures.
@@ -91,8 +100,19 @@ $COMPOSE run --rm --no-deps \
     migrate npm run seed:loadtest -- --run-id "$RUN_ID" --users "$USERS" \
     > "$SEED_LOG" 2>&1 || rc=$?
 
+SEED_ELAPSED=$(( $(date +%s) - SEED_START ))
+if [ -n "$EVIDENCE_DIR" ]; then
+    printf '%s' "$rc" > "$EVIDENCE_DIR/seed-exit"
+    printf '%s' "$SEED_ELAPSED" > "$EVIDENCE_DIR/seed-elapsed"
+    # A negative or >128 status means the shell reported a signal, not an exit
+    # code: 128+N is the shell's encoding of "killed by signal N".
+    if [ "$rc" -gt 128 ]; then
+        printf '%s' "$(( rc - 128 ))" > "$EVIDENCE_DIR/seed-signal"
+    fi
+fi
+
 if [ "$rc" -ne 0 ]; then
-    echo "seed-fixtures: seeding failed with exit $rc"
+    echo "seed-fixtures: seeding failed with exit $rc after ${SEED_ELAPSED}s"
     summarise "$SEED_LOG"
     if [ -n "$EVIDENCE_DIR" ]; then
         mkdir -p "$EVIDENCE_DIR"
@@ -132,6 +152,10 @@ esac
 if [ -n "$EVIDENCE_DIR" ]; then
     mkdir -p "$EVIDENCE_DIR"
     printf '%s' "$SEEDED" > "$EVIDENCE_DIR/fixture-users"
+    # Keep the log on success too: it is the only place the per-account progress
+    # lines live, and the status endpoint counts them to show a long seed moving.
+    mv "$SEED_LOG" "$EVIDENCE_DIR/seed.log" 2>/dev/null || true
+    chmod 600 "$EVIDENCE_DIR/seed.log" 2>/dev/null || true
 fi
 
 say "verified $SEEDED accounts with stored hashes"
