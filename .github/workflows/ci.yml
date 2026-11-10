@@ -671,6 +671,50 @@ jobs:
           test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
 
 
+      - name: Refuse a mutable tag or a partial digest pin
+        run: |
+          set -euo pipefail
+          # The guest must pull immutable digests, never a tag: a mutable tag is
+          # how an earlier attempt ran code from a revision that had not been
+          # tested. These guards are the only thing standing between a typo and
+          # a silent substitution, so they are exercised directly.
+          A64="sha256:$(printf 'a%.0s' $(seq 64))"
+          B64="sha256:$(printf 'b%.0s' $(seq 64))"
+
+          # 1. A tag, however it is spelled, is refused.
+          if FIXTURE_API_DIGEST="ghcr.io/x/assetflow-capacity-api:latest" \
+             FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$B64" \
+             bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin1 --quiet \
+             2>/tmp/pin1.err; then
+            echo "::error title=pin::a mutable tag was accepted"; exit 1
+          fi
+          grep -q 'immutable sha256 digest' /tmp/pin1.err
+          echo "mutable tag refused: $(head -1 /tmp/pin1.err)"
+
+          # 2. A partial pin is refused rather than falling back to a build.
+          if FIXTURE_API_DIGEST="$A64" \
+             bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin2 --quiet \
+             2>/tmp/pin2.err; then
+            echo "::error title=pin::a partial pin was accepted"; exit 1
+          fi
+          grep -q 'partial pin' /tmp/pin2.err
+          echo "partial pin refused: $(head -1 /tmp/pin2.err)"
+
+          # 3. A well-formed pin does NOT compile; it resolves to a pull.
+          set +e
+          FIXTURE_API_DIGEST="$A64" FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$A64" \
+            bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin3 --quiet \
+            >/tmp/pin3.out 2>&1
+          set -e
+          # This digest does not exist, so the pull must fail - and it must fail
+          # at the pull, before any build is attempted. That is the property.
+          grep -q 'pinned images by digest' /tmp/pin3.out \
+            || { echo "::error title=pin::pinned mode did not reach the pull"; cat /tmp/pin3.out; exit 1; }
+          if grep -q 'building images' /tmp/pin3.out; then
+            echo "::error title=pin::pinned mode fell back to a build"; exit 1
+          fi
+          echo "pinned mode pulls and never builds"
+
       - name: Serve bootstrap status before the application is up
         run: |
           set -euo pipefail

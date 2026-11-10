@@ -289,6 +289,7 @@ COMPOSE="docker compose --env-file infra/.env -f infra/docker-compose.yml"
 # Pull the immutable digests CI published for this exact commit. Absent file
 # or absent values means build mode, which is what CI itself exercises.
 DIGEST_FILE="$APP_DIR/infra/capacity-run/image-digests.env"
+# shellcheck disable=SC1090
 if [ -r "$DIGEST_FILE" ]; then . "$DIGEST_FILE"; fi
 RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" \
 FIXTURE_API_DIGEST="${FIXTURE_API_DIGEST:-}" FIXTURE_MIGRATE_DIGEST="${FIXTURE_MIGRATE_DIGEST:-}" FIXTURE_WEB_DIGEST="${FIXTURE_WEB_DIGEST:-}" \
