@@ -643,22 +643,6 @@ jobs:
           test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
 
 
-      - name: REPRO - run the bootstrap exact fixture seeding command
-        if: always()
-        run: |
-          set -uo pipefail
-          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
-          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
-          echo "LOADTEST_PASSWORD present: $([ -n "$LT_PW" ] && echo yes || echo NO)"
-          rc=0
-          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true              -e LOADTEST_PASSWORD="$LT_PW" migrate              npm run seed:loadtest -- --run-id cap-20261109t0800z-a7f3 --users 200              > /tmp/bootstrap-seed.log 2>&1 || rc=$?
-          echo "=== bootstrap-exact seed exit: $rc ==="
-          # Print in small chunks so the log survives any truncation of the step.
-          sed -n '1,25p' /tmp/bootstrap-seed.log
-          echo "..."
-          sed -n '$p' /tmp/bootstrap-seed.log
-          exit "$rc"
-
       - name: Start the application and probe the real readiness route
         run: |
           set -euo pipefail
@@ -743,6 +727,34 @@ jobs:
             sleep 2
           done
           echo "HTTPS application path returned $code"
+
+      - name: Sign in as a generated fixture account through the real API
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          # A row count does not show an account can log in: the password, the
+          # hash format and the login route all have to agree. This is the check
+          # that a 200-account fixture is actually usable.
+          email="loadtest-cap-ci-0001-001@assetflow.test"
+          pw="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          body="$(printf '{"email":"%s","password":"%s"}' "$email" "$pw")"
+          for i in $(seq 1 20); do
+            code="$($C exec -T api node -e "
+              fetch('http://127.0.0.1:4000/api/auth/login', {
+                method:'POST', headers:{'content-type':'application/json'},
+                body: process.argv[1]
+              }).then(r=>{process.stdout.write(String(r.status));process.exit(0)})
+                .catch(()=>{process.stdout.write('0');process.exit(0)})
+            " "$body")"
+            if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+              echo "fixture account signed in through the API (HTTP $code)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error title=fixture login::no fixture account could sign in (last HTTP $code)"
+          $C logs --tail=60 api
+          exit 1
 
       - name: Readiness and checksum-verified export as a client
         run: |
