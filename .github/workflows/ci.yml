@@ -767,7 +767,7 @@ jobs:
           # the case that failed on real hardware.
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
           LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
-            --run-id cap-ci-slow-0001 --users 300 --evidence-dir "$R/evidence" \
+            --run-id cap-ci-slow-0001 --users 3000 --evidence-dir "$R/evidence" \
             >/tmp/slowseed.log 2>&1 &
           SEED_PID=$!
 
@@ -777,7 +777,13 @@ jobs:
             --run-dir "$R" --port 9445 --token "$TOKEN" >/tmp/seedstatus.log 2>&1 &
           STATUS_PID=$!
           trap 'kill $STATUS_PID 2>/dev/null || true' EXIT
-          sleep 3
+          # Wait only for the listener, not for a fixed sleep: a fixed sleep let
+          # the seed finish first, and the test then proved nothing.
+          for i in $(seq 1 30); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt"               --resolve capacity-run.test:9445:127.0.0.1               -H "Authorization: Bearer $TOKEN"               https://capacity-run.test:9445/status >/dev/null 2>&1 && break
+            [ "$i" -eq 30 ] && { cat /tmp/seedstatus.log; exit 1; }
+            sleep 1
+          done
 
           observed_running=0
           for i in $(seq 1 40); do
