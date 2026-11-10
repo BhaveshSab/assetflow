@@ -666,24 +666,13 @@ jobs:
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
           echo "LOADTEST_PASSWORD present: $([ -n "$LT_PW" ] && echo yes || echo NO)"
           rc=0
-          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
-             -e LOADTEST_PASSWORD="$LT_PW" migrate \
-             npm run seed:loadtest -- --run-id cap-20261109t0800z-a7f3 --users 200 \
-             > /tmp/bootstrap-seed.log 2>&1 || rc=$?
-          echo "=== bootstrap-style seed exit: $rc ==="
-          echo "--- first 60 lines ---"
-          head -60 /tmp/bootstrap-seed.log
-          echo "--- last 40 lines ---"
-          tail -40 /tmp/bootstrap-seed.log
-          {
-            echo '## Bootstrap-exact seed reproduction'
-            echo ''
-            echo "Exit status: $rc"
-            echo ''
-            echo '```'
-            head -40 /tmp/bootstrap-seed.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true              -e LOADTEST_PASSWORD="$LT_PW" migrate              npm run seed:loadtest -- --run-id cap-20261109t0800z-a7f3 --users 200              > /tmp/bootstrap-seed.log 2>&1 || rc=$?
+          echo "=== bootstrap-exact seed exit: $rc ==="
+          # Print in small chunks so the log survives any truncation of the step.
+          sed -n '1,25p' /tmp/bootstrap-seed.log
+          echo "..."
+          sed -n '$p' /tmp/bootstrap-seed.log
+          exit "$rc"
 
       - name: Start the application and probe the real readiness route
         run: |
