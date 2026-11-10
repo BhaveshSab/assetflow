@@ -1,0 +1,225 @@
+name: Capacity run (single launch)
+
+# One bounded measurement run, driven from a GitHub-hosted runner because that
+# runner is the only authorized client: its public address is discovered inside
+# the job and is the single /32 allowed to reach the instance. The same job stays
+# alive for the whole run so the ingress rule can be removed when it ends.
+#
+# Deliberately manual: no push, no schedule. A human starts it, and only one
+# instance is ever created.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type LAUNCH-ONE to create exactly one t3.micro'
+        required: true
+        type: string
+      launch_epoch:
+        description: 'Unix timestamp to use as the run start (blank = now)'
+        required: false
+        type: string
+
+concurrency:
+  group: capacity-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-2
+  RUN_ID: cap-20261109t0800z-a7f3
+  SG_ID: sg-012a0191f4e4a9a8c
+  SUBNET_ID: subnet-01f25dc99e013aa6a
+  AMI_ID: ami-01e91e94accc42eec
+  INSTANCE_TYPE: t3.micro
+
+jobs:
+  run:
+    name: Launch, observe, clean up
+    runs-on: ubuntu-latest
+    timeout-minutes: 290
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to run without an explicit confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirmation }}" != "LAUNCH-ONE" ]; then
+            echo "::error title=confirmation::type LAUNCH-ONE to create an instance"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        run: |
+          set -euo pipefail
+          echo "::add-mask::${{ secrets.AWS_ACCESS_KEY_ID }}"
+          mkdir -p ~/.aws
+          printf '[capacity]\naws_access_key_id=%s\naws_secret_access_key=%s\n' \
+            "${{ secrets.AWS_ACCESS_KEY_ID }}" "${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            > ~/.aws/credentials
+          chmod 600 ~/.aws/credentials
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq curl
+
+      - name: Discover this runner's public address
+        id: ip
+        run: |
+          set -euo pipefail
+          # The only client authorized to reach the instance. Discovered here, in
+          # this job, and never substituted with an operator address: the whole
+          # point is that the allowance follows the actual client.
+          IP="$(curl -fsS --max-time 20 https://api.ipify.org)"
+          case "$IP" in
+            *[!0-9.]*|'') echo "::error title=ip::could not determine a public IPv4"; exit 1 ;;
+          esac
+          echo "runner public IPv4: $IP"
+          echo "addr=$IP" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight - zero active run instances and zero run volumes
+        id: preflight
+        run: |
+          set -euo pipefail
+          aws ec2 describe-instances --region "$AWS_REGION" \
+            --filters "Name=tag:RunId,Values=$RUN_ID" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text \
+            > /tmp/live.txt || { echo "::error title=preflight::describe-instances failed"; exit 1; }
+          if [ -s /tmp/live.txt ]; then
+            echo "::error title=preflight::a run instance is still active:"; cat /tmp/live.txt; exit 1
+          fi
+          aws ec2 describe-volumes --region "$AWS_REGION" \
+            --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text > /tmp/vols.txt 2>&1 \
+            || { echo "::error title=preflight::describe-volumes failed"; exit 1; }
+          if [ -s /tmp/vols.txt ]; then
+            echo "::error title=preflight::a run volume still exists:"; cat /tmp/vols.txt; exit 1
+          fi
+          echo "zero active run instances and zero run volumes"
+
+      - name: Allow tcp/8443 from this runner only
+        id: ingress
+        run: |
+          set -euo pipefail
+          RULE=$(aws ec2 authorize-security-group-ingress --region "$AWS_REGION" \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=8443,ToPort=8443,IpRanges=[{CidrIp=${{ steps.ip.outputs.addr }}/32,Description=capacity-run-$RUN_ID}]" \
+            --output json) || { echo "::error title=ingress::authorize failed"; exit 1; }
+          echo "ingress opened for ${{ steps.ip.outputs.addr }}/32 on tcp/8443"
+          echo "$RULE"
+
+      - name: Launch exactly one instance
+        id: launch
+        run: |
+          set -euo pipefail
+          # A fresh idempotency token per attempt. Reusing one would let a retried
+          # call return the FIRST instance rather than reporting a conflict.
+          TOKEN="cap-$(date -u +%Y%m%dT%H%M%SZ)-$(openssl rand -hex 8)"
+          echo "idempotency token: $TOKEN"
+
+          LAUNCH_EPOCH="${{ inputs.launch_epoch }}"
+          [ -n "$LAUNCH_EPOCH" ] || LAUNCH_EPOCH="$(date +%s)"
+
+          # Render the payload from this checkout, with the operator's values and
+          # the digests CI published. The renderer refuses to emit plaintext.
+          export LAUNCH_EPOCH EXPECTED_COMMIT="$(git rev-parse HEAD)" \
+                 RUN_ID CAPACITY_HOSTNAME=capacity-run.test \
+                 EVIDENCE_TOKEN='${{ secrets.EVIDENCE_TOKEN }}' \
+                 TLS_CRT_B64='${{ secrets.TLS_CRT_B64 }}' \
+                 TLS_KEY_B64='${{ secrets.TLS_KEY_B64 }}' \
+                 POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
+                 REDIS_PASSWORD='${{ secrets.REDIS_PASSWORD }}' \
+                 GRAFANA_ADMIN_PASSWORD='${{ secrets.GRAFANA_ADMIN_PASSWORD }}' \
+                 JWT_SECRET='${{ secrets.JWT_SECRET }}' \
+                 LOADTEST_PASSWORD='${{ secrets.LOADTEST_PASSWORD }}'
+          bash infra/capacity-run/render-user-data.sh > /tmp/user-data.b64
+          RAW=$(base64 -d /tmp/user-data.b64 | wc -c)
+          echo "raw user-data: $RAW bytes (AWS limit 16384)"
+          if [ "$RAW" -gt 16384 ]; then
+            echo "::error title=payload::too large"; exit 1
+          fi
+
+          # The digests must be present, or the guest compiles for an hour.
+          grep -q 'assetflow-capacity-api@sha256:' infra/capacity-run/image-digests.env \
+            || { echo "::error title=digest::no image digests pinned"; exit 1; }
+
+          ID=$(aws ec2 run-instances --region "$AWS_REGION" \
+            --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" \
+            --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
+            --no-key-name \
+            --credit-specification CpuCredits=standard \
+            --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}' \
+            --instance-initiated-shutdown-behavior terminate \
+            --client-token "$TOKEN" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
+                         "ResourceType=volume,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
+            --user-data "file:///tmp/user-data.b64" \
+            --query 'Instances[0].InstanceId' --output text)
+          echo "instance: $ID"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "$ID" > /tmp/instance-id
+
+      - name: Verify the configuration that was actually created
+        run: |
+          set -euo pipefail
+          ID=$(cat /tmp/instance-id)
+          aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" --output json > /tmp/desc.json
+          jq -e '.Reservations[0].Instances[0] | .InstanceType=="t3.micro"' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0] | .Placement.AvailabilityZone=="ap-southeast-2b"' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0] | (.KeyName // "")==""' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0] | (.IamInstanceProfile // null)==null' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0] | .InstanceInitiatedShutdownBehavior=="terminate"' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0] | .CreditSpecification.CpuCredits=="standard"' /tmp/desc.json >/dev/null
+          jq -e '.Reservations[0].Instances[0].BlockDeviceMappings[0] | .DeviceName=="/dev/sda1" and .Ebs.VolumeSize==30 and .Ebs.VolumeType=="gp3" and .Ebs.DeleteOnTermination==true' /tmp/desc.json >/dev/null
+          echo "configuration verified: t3.micro ap-southeast-2b, 30 GB gp3 /dev/sda1 DeleteOnTermination, standard credits, shutdown=terminate, no key, no role"
+
+      - name: Observe until the deadline
+        env:
+          AWS_PROFILE: capacity
+          WATCHDOG_POLL: '60'
+          WATCHDOG_STATE_DIR: ${{ runner.temp }}/watchdog
+        run: |
+          set -euo pipefail
+          ID=$(cat /tmp/instance-id)
+          # Positional: <instance-id> [lifetime-seconds]. It re-derives the deadline
+          # from the instance's own LaunchTime every cycle and terminates by that
+          # exact ID, so a missed cycle cannot extend the run.
+          bash infra/capacity-run/operator-watchdog.sh "$ID" 14400 || {
+            echo "::warning title=watchdog::watchdog exited non-zero"; }
+        continue-on-error: true
+
+      - name: Keep the run alive while it is observed
+        run: |
+          set -euo pipefail
+          echo "the watchdog step holds this job; the job ending is what closes the ingress"
+
+      - name: Remove only the ingress rule this run added
+        if: always()
+        run: |
+          set -euo pipefail
+          aws ec2 revoke-security-group-ingress --region "$AWS_REGION" \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=8443,ToPort=8443,IpRanges=[{CidrIp=${{ steps.ip.outputs.addr }}/32}]" \
+            && echo "ingress rule for ${{ steps.ip.outputs.addr }}/32 removed" \
+            || echo "::warning title=ingress::rule was already absent"
+          aws ec2 describe-security-groups --region "$AWS_REGION" --group-ids "$SG_ID" \
+            --query 'SecurityGroups[0].IpPermissions' --output json
+
+      - name: Report and terminate if the instance outlived its window
+        if: always()
+        run: |
+          set -euo pipefail
+          ID=$(cat /tmp/instance-id 2>/dev/null || true)
+          [ -n "$ID" ] || { echo "no instance was created"; exit 0; }
+          STATE=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
+          echo "instance $ID ended in state: $STATE"
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            echo "::warning title=lifetime::instance still up after the job; terminating the verified ID only"
+            aws ec2 terminate-instances --region "$AWS_REGION" --instance-ids "$ID" >/dev/null
+          fi
+          aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].[InstanceId,State.Name,CreditSpecification.CpuCredits,LaunchTime]' --output text || true
