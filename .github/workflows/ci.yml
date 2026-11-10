@@ -658,7 +658,7 @@ jobs:
           test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
 
 
-      - name: REPRO: run the bootstrap's exact fixture seeding command
+      - name: REPRO - run the bootstrap exact fixture seeding command
         if: always()
         run: |
           set -uo pipefail
