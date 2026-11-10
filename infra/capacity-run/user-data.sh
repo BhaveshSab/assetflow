@@ -243,33 +243,24 @@ chmod 600 "$APP_DIR/infra/.env"
 stage_begin "deploy"
 cd "$APP_DIR"
 
-# Pin the image tags to this run. The compose default points at
-# ghcr.io/...:latest, which a real run pulled instead of building: the pull
-# succeeded, the migrate container reported Started 75ms later having applied
-# nothing, and fixture seeding failed in 37s against a schema that did not match
-# this code. A run-local tag cannot be pulled from anywhere, so the build below
-# is the only way the image can exist.
-export MIGRATE_IMAGE="assetflow-migrate:${RUN_ID}"
-export API_IMAGE="assetflow-api:${RUN_ID}"
-export WEB_IMAGE="assetflow-web:${RUN_ID}"
-
+# Images are pinned to this run by migrate-db.sh, which also builds them from the
+# checked-out commit. A run-local tag cannot be pulled, so the build is the only
+# way the image can exist - that closes the defect where `up -d migrate` pulled
+# ghcr.io/...:latest from another revision.
 COMPOSE="docker compose --env-file infra/.env -f infra/docker-compose.yml"
-$COMPOSE config >/dev/null || die "compose config rejected the generated environment"
-$COMPOSE build api migrate nginx || die "image build failed"
-$COMPOSE up -d postgres redis || die "dependency services failed"
-$COMPOSE up -d migrate        || die "migration failed"
 
-# Prove the migration actually ran, instead of trusting a container that exits 0
-# because it never did any work.
-$COMPOSE logs migrate > "$EVIDENCE_DIR/migrate.log" 2>&1 || true
-grep -q "No pending migrations" "$EVIDENCE_DIR/migrate.log" \
-    || grep -q "Applying migration" "$EVIDENCE_DIR/migrate.log" \
-    || say "migrate log did not report an applied or pending-free state (see migrate.log)"
+# Migration is now a hard gate: build, run in the foreground, require exit 0,
+# and verify the database's own schema state. The previous version used
+# `up -d migrate`, which returns before the migration finishes, and a log check
+# that fell through to say() - it could not fail.
+RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" \
+    bash "$APP_DIR/infra/capacity-run/migrate-db.sh" \
+        --evidence-dir "$EVIDENCE_DIR" --timeout 900 \
+    || die "database migration did not complete (see $EVIDENCE_DIR/migrate.log)"
+say "migration verified against the database"
+stage_done "deploy"
 
 # ---------------------------------------------------------------- 6. seed
-# `npm prune --omit=dev` strips ts-node from the api runtime image, so seeding
-# cannot run there. The migrate image is built from the builder stage and still
-# has ts-node + prisma/.
 stage_begin "fixtures"
 # One shared path with CI. The bootstrap used to inline its own copy of this
 # command; that copy is how it drifted from CI and pulled a stale image.

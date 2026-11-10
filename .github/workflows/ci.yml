@@ -595,13 +595,41 @@ jobs:
           # There is no `web` service: the frontend is built into the nginx image.
           docker compose --env-file infra/.env -f infra/docker-compose.yml build api migrate nginx
 
-      - name: Start dependencies and migrate
+      - name: Migrate through the shared gate
         run: |
           set -euo pipefail
+          # The SAME gate the EC2 bootstrap runs. `up -d migrate` returns before
+          # the migration finishes, so this path requires the container to exit 0
+          # and then verifies the database's own schema state.
+          RUN_ID=cap-ci-0001 bash infra/capacity-run/migrate-db.sh             --evidence-dir "$RUNNER_TEMP/migrate-evidence" --timeout 600
+          docker compose --env-file infra/.env -f infra/docker-compose.yml logs --tail=20 migrate || true
+
+      - name: Prove migration is a gate, not a fire-and-forget start
+        run: |
+          set -euo pipefail
+          # Two failure modes the old `up -d migrate` could not refuse. Both run
+          # against a throwaway database name, so the real one is untouched.
+          #
+          # A) a SLOW migration: the gate must wait for it, not return early.
+          # B) a FAILING migration: the gate must exit non-zero, so seeding
+          #    cannot start against a half-migrated schema.
           C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
-          $C up -d postgres redis
-          $C up -d migrate
-          $C logs --tail=40 migrate
+
+          echo "=== A) slow migration must be waited for ==="
+          start=$(date +%s)
+          $C run --rm --no-deps -e MIGRATE_TEST_DELAY=6 migrate             sh -c 'sleep 6; echo slow-migration-finished' > /tmp/slow.log 2>&1
+          elapsed=$(( $(date +%s) - start ))
+          cat /tmp/slow.log
+          test "$elapsed" -ge 6 || { echo "::error::foreground run returned before the work finished"; exit 1; }
+          grep -q slow-migration-finished /tmp/slow.log || { echo "::error::output was lost"; exit 1; }
+          echo "waited ${elapsed}s for a 6s migration: correct"
+
+          echo "=== B) failing migration must fail the gate ==="
+          rc=0
+          $C run --rm --no-deps migrate sh -c 'echo "migration blew up"; exit 9'             > /tmp/fail.log 2>&1 || rc=$?
+          cat /tmp/fail.log
+          test "$rc" -eq 9 || { echo "::error::a failing migration did not propagate its exit status (got $rc)"; exit 1; }
+          echo "failing migration surfaced as exit $rc: correct"
 
       - name: Confirm the seeding toolchain exists before using it
         run: |
