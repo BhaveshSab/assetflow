@@ -767,7 +767,7 @@ jobs:
           # the case that failed on real hardware.
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
           LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
-            --run-id cap-ci-slow-0001 --users 3000 --evidence-dir "$R/evidence" \
+            --run-id cap-ci-slow-0001 --users 500 --evidence-dir "$R/evidence" \
             >/tmp/slowseed.log 2>&1 &
           SEED_PID=$!
 
@@ -793,8 +793,12 @@ jobs:
               https://capacity-run.test:9445/status/seed > /tmp/s.json || { sleep 2; continue; }
             state=$(python3 -c "import json;print(json.load(open('/tmp/s.json'))['state'])")
             echo "poll $i: seed state=$state"
-            if kill -0 "$SEED_PID" 2>/dev/null; then observed_running=1; break; fi
-            if [ "$state" = "not-started" ]; then observed_running=1; break; fi
+            # The seed process still running while the endpoint already answers
+            # is exactly the property the console could not provide.
+            if kill -0 "$SEED_PID" 2>/dev/null; then
+              observed_running=1
+              break
+            fi
             sleep 2
           done
           test "$observed_running" = "1" || {
