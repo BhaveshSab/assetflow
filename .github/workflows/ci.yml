@@ -657,6 +657,25 @@ jobs:
             "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-cap-ci-0001-%' AND (\"passwordHash\" IS NULL OR \"passwordHash\" = '')" > /tmp/nohash
           test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
 
+
+      - name: REPRO: run the bootstrap's exact fixture seeding command
+        if: always()
+        run: |
+          set -uo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          echo "LOADTEST_PASSWORD present: $([ -n "$LT_PW" ] && echo yes || echo NO)"
+          rc=0
+          $C run --rm --no-deps -e TS_NODE_TRANSPILE_ONLY=true \
+             -e LOADTEST_PASSWORD="$LT_PW" migrate \
+             npm run seed:loadtest -- --run-id cap-20261109t0800z-a7f3 --users 200 \
+             > /tmp/bootstrap-seed.log 2>&1 || rc=$?
+          echo "=== bootstrap-style seed exit: $rc ==="
+          echo "--- first 60 lines ---"
+          head -60 /tmp/bootstrap-seed.log
+          echo "--- last 40 lines ---"
+          tail -40 /tmp/bootstrap-seed.log
+
       - name: Start the application and probe the real readiness route
         run: |
           set -euo pipefail
