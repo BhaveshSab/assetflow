@@ -54,13 +54,23 @@ status() { printf '%s' "$1" > "$EVIDENCE_DIR/bootstrap-status"; }
 
 # A stage marker at entry and completion, so a silent death still names the last
 # stage entered and whether it finished.
-stage_begin() { STAGE="$1"; console_log "stage-begin: $1"; say "== $1 =="; }
+stage_begin() {
+    STAGE="$1"
+    { printf '%s' "$1" > "$EVIDENCE_DIR/stage-current"; date -u +%s > "$EVIDENCE_DIR/stage-started-at"; } 2>/dev/null || true
+    console_log "stage-begin: $1"
+    say "== $1 =="
+}
 stage_done()  { console_log "stage-done: $1"; say "== $1 done =="; }
 
 # Refuse to leave a half-configured host running.
 die() {
     printf '[bootstrap][FATAL] %s\n' "$*" >&2
     console_log "FATAL: $* (stage=$STAGE line=${BASH_LINENO[0]:-?})"
+    # A short marker survives console truncation and is what the status endpoint
+    # serves; the console copy may scroll out of the ring buffer before anyone
+    # can read it.
+    printf 'stage=%s line=%s rc=die one-line=%s\n' \
+        "$STAGE" "${BASH_LINENO[0]:-?}" "$*" > "$EVIDENCE_DIR/failure-summary" 2>/dev/null || true
     status "failed: $*"
     # The instance was launched with InstanceInitiatedShutdownBehavior=terminate,
     # so this TERMINATES it and deletes the root volume.
@@ -153,6 +163,24 @@ systemctl daemon-reload
 systemctl enable --now capacity-deadline.timer || die "deadline timer failed"
 systemctl is-active capacity-deadline.timer > "$EVIDENCE_DIR/deadline-timer-state" 2>&1 || true
 
+# ------------------------------------------- 2a. early diagnostic endpoint
+# Started HERE, before packages, builds, migrations and seeding, so a failure
+# anywhere after this point is retrievable while it happens. A previous run's
+# 58-minute build filled the console ring buffer and the fixture failure
+# scrolled out; the operator was left with a log that had already gone.
+#
+# The script is fetched from the pinned commit rather than embedded: EC2 caps
+# user-data at 16 KiB and the payload was already within ~700 bytes of it. The
+# repo is public and the bootstrap already clones it, so this adds no credential.
+#
+# Loopback-only until the single-port edge arrives at the end and proxies
+# /status to it. This is NOT a readiness signal: it reports that the guest is
+# alive and what stage it is in, never that the application works.
+BS=/etc/capacity-run/bs.py
+curl -fsSL --max-time 30 "https://raw.githubusercontent.com/BhaveshSab/assetflow/$EXPECTED_COMMIT/infra/capacity-run/bootstrap-status.py" -o $BS || die "cannot fetch bootstrap-status.py"
+printf '[Unit]\nDescription=cap status\nAfter=network-online.target\n[Service]\nEnvironmentFile=%s\nExecStart=/usr/bin/python3 %s --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --run-dir %s --port 9444\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' \
+    "$CONFIG" "$BS" "$RUN_DIR" > /etc/systemd/system/capacity-status.service
+systemctl enable --now capacity-status.service || die "status endpoint failed"
 # ------------------------------------------------------------- 2. packages
 stage_begin "packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -317,20 +345,10 @@ $COMPOSE up -d nginx || die "application edge failed to restart on loopback"
 
 # The evidence server moves to a loopback-only port; nothing external is exposed
 # except the proxy.
-cat > /etc/systemd/system/capacity-evidence.service <<UNIT
-[Unit]
-Description=capacity run evidence endpoint (loopback only)
-After=network-online.target
-[Service]
-Environment=EVIDENCE_DIR=$EVIDENCE_DIR
-EnvironmentFile=/etc/capacity-run/evidence.env
-ExecStart=/usr/bin/python3 $APP_DIR/infra/scripts/evidence_server.py --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --port 9443 --host 127.0.0.1
-Restart=always
-[Install]
-WantedBy=multi-user.target
-UNIT
 printf 'EVIDENCE_TOKEN=%s\n' "$EVIDENCE_TOKEN" > /etc/capacity-run/evidence.env
 chmod 600 /etc/capacity-run/evidence.env
+printf '[Unit]\nDescription=cap evidence\nAfter=network-online.target\n[Service]\nEnvironment=EVIDENCE_DIR=%s\nEnvironmentFile=/etc/capacity-run/evidence.env\nExecStart=/usr/bin/python3 %s/infra/scripts/evidence_server.py --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --port 9443 --host 127.0.0.1\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' \
+    "$EVIDENCE_DIR" "$APP_DIR" > /etc/systemd/system/capacity-evidence.service
 systemctl daemon-reload
 systemctl enable --now capacity-evidence.service || die "evidence endpoint failed"
 

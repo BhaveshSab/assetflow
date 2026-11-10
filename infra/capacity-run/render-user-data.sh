@@ -28,6 +28,11 @@ set -euo pipefail
 : "${EVIDENCE_TOKEN:?EVIDENCE_TOKEN must be set (from generate-trust.sh)}"
 : "${TLS_CRT_B64:?TLS_CRT_B64 must be set (from generate-trust.sh)}"
 : "${TLS_KEY_B64:?TLS_KEY_B64 must be set (from generate-trust.sh)}"
+# The certificate and key are the largest fixed part of the payload, and EC2 caps
+# user-data at 16 KiB. They travel gzipped so the diagnostic service fits inside
+# that limit instead of pushing the payload over it.
+TLS_CRT_GZ="$(printf '%s' "$TLS_CRT_B64" | base64 -d | gzip -9 | base64 -w0)"
+TLS_KEY_GZ="$(printf '%s' "$TLS_KEY_B64" | base64 -d | gzip -9 | base64 -w0)"
 : "${RUN_ID:?RUN_ID must be set}"
 # The compose file has no defaults for these; without them the stack cannot
 # start at all, so rendering without them is a hard error.
@@ -98,8 +103,8 @@ echo "capacity-bootstrap: prelude start" > /dev/console 2>/dev/null || true
 mkdir -p /etc/capacity-run
 chmod 700 /etc/capacity-run
 
-echo '${TLS_CRT_B64}' | base64 -d > /etc/capacity-run/tls.crt
-echo '${TLS_KEY_B64}' | base64 -d > /etc/capacity-run/tls.key
+echo '${TLS_CRT_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.crt
+echo '${TLS_KEY_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
 
 mkdir -p /usr/local/lib/capacity-run-src

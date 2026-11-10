@@ -74,9 +74,32 @@ say "images"
 say "starting dependencies"
 $COMPOSE up -d postgres redis || { echo "migrate-db: dependency services failed"; exit 1; }
 
+# ---- wait for the database to actually accept queries ----------------------
+# `up -d` returns once containers are *started*, not healthy, and the migration
+# below uses `--no-deps`, so compose does not wait for the healthcheck. Postgres
+# binds its port before it can authenticate, so a migration started in that gap
+# fails with P1001 "Can't reach database server" - which is exactly what a run
+# recorded. Wait for a real query, bounded, and say so if it never arrives.
+DB_WAIT="${DB_WAIT:-180}"
+say "waiting for postgres to accept queries (bounded ${DB_WAIT}s)"
+db_ready=0
+for _ in $(seq 1 "$DB_WAIT"); do
+    if $COMPOSE exec -T postgres pg_isready -U "${POSTGRES_USER:-assetflow}" \
+            -d "${POSTGRES_DB:-assetflow}" > "$EVIDENCE_DIR/pg-ready.log" 2>&1; then
+        db_ready=1
+        break
+    fi
+    sleep 1
+done
+if [ "$db_ready" -ne 1 ]; then
+    echo "migrate-db: postgres did not accept queries within ${DB_WAIT}s"
+    tail -10 "$EVIDENCE_DIR/pg-ready.log" 2>/dev/null || true
+    exit 1
+fi
+say "postgres is accepting queries"
+
 # ---- the actual gate ------------------------------------------------------
 # `run` (not `up -d`) blocks until the container exits and returns its status.
-# Depends-on ensures postgres is healthy first.
 say "running migrations (foreground, timeout ${TIMEOUT}s)"
 rc=0
 timeout "$TIMEOUT" $COMPOSE run --rm --no-deps migrate \
