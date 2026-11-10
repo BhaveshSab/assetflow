@@ -5,16 +5,16 @@ separately rather than presented as one.
 
 | What | Value |
 |---|---|
-| Branch head (executable artifact, what a human reviews) | `cbb810245ca156b4a1ef3c67f795373713573a95` |
-| Image source revision (what CI actually built) | `b0b8289b5053d701b8071ba7ad0b6d827bd88cc1` |
-| CI run | `42882129762` |
+| Branch head at launch | `ab44deda62f0e17181a9d99ff838a9bc917f6389` |
+| Image source revision (what CI actually built) | `6716baf31986d9c45eeb4bc5455410bb2968bd06` |
+| CI run (green, 8/8) | `42888092072` on the branch head |
 | Publish job | *Publish capacity-test images (digest-pinned)* — **success** |
 
 ## Why they differ
 
 The workflow triggers on `pull_request`, and GitHub checks out a synthetic merge
 commit for that event. `git rev-parse HEAD` inside the job therefore returns the
-merge commit `b0b8289...`, not the branch head. The images are built from the
+merge commit, not the branch head. The tags above record which one. The images are built from the
 merge of this branch into `main`.
 
 This is stated rather than glossed: the images are built from a commit that
@@ -29,12 +29,12 @@ removal of `~/.docker/config.json`, and independently by resolving a
 pull-scoped token for each package with no credential).
 
 ```
-ghcr.io/bhaveshsab/assetflow-capacity-api@sha256:41e5b24d3b6f1864172bc60f7da24ea5dead7fe40a07e811e791c45c80738e87
-ghcr.io/bhaveshsab/assetflow-capacity-migrate@sha256:140d29fa8c433cd62a29a9ee95e26b9dd80af30554acee9e4612857949a71d93
-ghcr.io/bhaveshsab/assetflow-capacity-web@sha256:9e19270a9e43bc837aea184bc2fe1b2a8499afe0164df14ea494ce0af1aeb3df
+ghcr.io/bhaveshsab/assetflow-capacity-api@sha256:29c7c3748239958ae83c6f4238ca9ac16ac5075cad7ddf5afe85333cc025f130
+ghcr.io/bhaveshsab/assetflow-capacity-migrate@sha256:c10658535ea7e7d4092297921a405562801bda6286ec0b641d68000042faecb1
+ghcr.io/bhaveshsab/assetflow-capacity-web@sha256:17d15ee19b8cc918c97da1b81aa6aa60a98442c04acca9b953a416afca4abc75
 ```
 
-Tag on each: `b0b8289b5053d701b8071ba7ad0b6d827bd88cc1`. There is **no `latest`**
+Tag on each: `6716baf31986d9c45eeb4bc5455410bb2968bd06`. There is **no `latest`**
 tag: the publish step only ever pushes the commit tag, so a mutable tag cannot
 be substituted.
 
