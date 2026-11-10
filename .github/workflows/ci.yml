@@ -722,6 +722,37 @@ jobs:
             || { echo "::error title=pin::pinned mode wrote a build log"; exit 1; }
           echo "pinned mode pulls and never builds"
 
+      - name: Verify the committed digests are anonymously pullable
+        run: |
+          set -euo pipefail
+          # The launch pins these exact digests. If they are not pullable without
+          # credentials, the guest would fall back to building - the 58-minute
+          # compile that consumed the measurement instance's credits. Prove the
+          # property here, with the credential removed, not on the instance.
+          . infra/capacity-run/image-digests.env
+          missing=0
+          for value in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            case "$value" in
+              *@sha256:*) ;;
+              *) echo "::error title=digest::not a repository@sha256: reference: $value"; missing=1 ;;
+            esac
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+          for value in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            echo "anonymous pull of $value"
+            docker pull "$value" >/dev/null || {
+              echo "::error title=anonymous pull::$value is not publicly pullable"
+              exit 1; }
+            got=$(docker inspect --format '{{index .RepoDigests 0}}' "$value" | sed 's/.*@//')
+            want=${value##*@}
+            [ "$got" = "$want" ] || {
+              echo "::error title=digest::$value resolved to $got"; exit 1; }
+          done
+          echo "all three committed digests pull anonymously and resolve to themselves"
+
       - name: Serve bootstrap status before the application is up
         run: |
           set -euo pipefail
