@@ -675,6 +675,15 @@ jobs:
           head -60 /tmp/bootstrap-seed.log
           echo "--- last 40 lines ---"
           tail -40 /tmp/bootstrap-seed.log
+          {
+            echo '## Bootstrap-exact seed reproduction'
+            echo ''
+            echo "Exit status: $rc"
+            echo ''
+            echo '```'
+            head -40 /tmp/bootstrap-seed.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Start the application and probe the real readiness route
         run: |
