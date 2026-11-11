@@ -757,9 +757,9 @@ jobs:
         run: |
           set -euo pipefail
           # The pins are only meaningful if the deployment path actually runs
-          # against them. The existing capacity-stack steps build images locally,
-          # which proves the mechanics but not the digests that will be pulled on
-          # the instance. This step uses the real pins and nothing else.
+          # against them. The steps above build images locally, which proves the
+          # mechanics but not the digests that will be pulled on the instance.
+          # This step uses the real pins and nothing else.
           . infra/capacity-run/image-digests.env
           export FIXTURE_API_DIGEST FIXTURE_MIGRATE_DIGEST FIXTURE_WEB_DIGEST
 
@@ -770,36 +770,44 @@ jobs:
           rm -rf "$E"; mkdir -p "$E"
           C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
 
-          RUN_ID=cap-ci-pinned bash infra/capacity-run/migrate-db.sh             --evidence-dir "$E" --timeout 900 >/dev/null 2>&1 || {
-              echo "::error title=rehearsal::pinned migration did not succeed"; exit 1; }
+          # The mode marker is printed to stdout, not to pull.log: pull.log holds
+          # only docker pull's own output. Capture stdout and check it there.
+          RUN_ID=cap-ci-pinned bash infra/capacity-run/migrate-db.sh \
+            --evidence-dir "$E" --timeout 900 > "$E/run.out" 2>&1 || {
+              echo "::error title=rehearsal::pinned migration did not succeed"
+              tail -30 "$E/run.out"; exit 1; }
 
+          grep -q 'pulling the pinned images by digest' "$E/run.out" || {
+            echo "::error title=rehearsal::did not pull by digest"; tail -20 "$E/run.out"; exit 1; }
           test -s "$E/pull.log" || { echo "::error title=rehearsal::no pull log"; exit 1; }
-          grep -q 'pulling the pinned images by digest' "$E/pull.log"             || { echo "::error title=rehearsal::did not pull by digest"; exit 1; }
+          for f in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            grep -q "pull $f" "$E/pull.log" || {
+              echo "::error title=rehearsal::$f was not pulled"; exit 1; }
+          done
           if [ -s "$E/build.log" ]; then
             echo "::error title=rehearsal::an image was built instead of pulled"; exit 1
           fi
-          for f in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
-            test -s "$E/digests.txt" || { echo "::error title=rehearsal::no digests.txt"; exit 1; }
-            grep -q "${f##*@}" "$E/digests.txt"               || { echo "::error title=rehearsal::$f not recorded as resolved"; exit 1; }
-          done
           echo "pinned images pulled by digest and used for the migration"
 
           # The schema the pinned migration image produced is the schema the
           # seeded fixtures are read from, so assert it before seeding.
-          $C exec -T postgres psql -U assetflow -d assetflow -tAc             "select count(*) from information_schema.tables where table_schema='public'"             > "$E/tables.txt"
+          $C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'" \
+            > "$E/tables.txt"
           TABLES=$(tr -d '[:space:]' < "$E/tables.txt")
           case "$TABLES" in ''|*[!0-9]*) TABLES=0 ;; esac
           if [ "$TABLES" -lt 5 ]; then
-            echo "::error title=rehearsal::pinned migration produced $TABLES tables"
-            exit 1
+            echo "::error title=rehearsal::pinned migration produced $TABLES tables"; exit 1
           fi
           echo "pinned migration produced $TABLES tables"
 
           # Seed through the same entry point the instance uses.
-          $C run --rm --no-deps api             npx ts-node --transpile-only prisma/seed-loadtest.ts               --run-id cap-ci-pinned --users 4 >/dev/null 2>&1 || {
-                echo "::error title=rehearsal::seeding failed against the pinned images"; exit 1; }
+          $C run --rm --no-deps api \
+            npx ts-node --transpile-only prisma/seed-loadtest.ts \
+              --run-id cap-ci-pinned --users 4 > "$E/seed.out" 2>&1 || {
+                echo "::error title=rehearsal::seeding failed against the pinned images"
+                tail -20 "$E/seed.out"; exit 1; }
           echo "seeding succeeded against the pinned images"
-
       - name: Record the pinned rehearsal in the job summary
         if: always()
         run: |
