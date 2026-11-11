@@ -753,6 +753,69 @@ jobs:
           done
           echo "all three committed digests pull anonymously and resolve to themselves"
 
+      - name: Rehearse migrations and seeding against the committed pinned images
+        run: |
+          set -euo pipefail
+          # The pins are only meaningful if the deployment path actually runs
+          # against them. The existing capacity-stack steps build images locally,
+          # which proves the mechanics but not the digests that will be pulled on
+          # the instance. This step uses the real pins and nothing else.
+          . infra/capacity-run/image-digests.env
+          export FIXTURE_API_DIGEST FIXTURE_MIGRATE_DIGEST FIXTURE_WEB_DIGEST
+
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+
+          E="$RUNNER_TEMP/pin-rehearsal"
+          rm -rf "$E"; mkdir -p "$E"
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+
+          RUN_ID=cap-ci-pinned bash infra/capacity-run/migrate-db.sh             --evidence-dir "$E" --timeout 900 >/dev/null 2>&1 || {
+              echo "::error title=rehearsal::pinned migration did not succeed"; exit 1; }
+
+          test -s "$E/pull.log" || { echo "::error title=rehearsal::no pull log"; exit 1; }
+          grep -q 'pulling the pinned images by digest' "$E/pull.log"             || { echo "::error title=rehearsal::did not pull by digest"; exit 1; }
+          if [ -s "$E/build.log" ]; then
+            echo "::error title=rehearsal::an image was built instead of pulled"; exit 1
+          fi
+          for f in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            test -s "$E/digests.txt" || { echo "::error title=rehearsal::no digests.txt"; exit 1; }
+            grep -q "${f##*@}" "$E/digests.txt"               || { echo "::error title=rehearsal::$f not recorded as resolved"; exit 1; }
+          done
+          echo "pinned images pulled by digest and used for the migration"
+
+          # The schema the pinned migration image produced is the schema the
+          # seeded fixtures are read from, so assert it before seeding.
+          $C exec -T postgres psql -U assetflow -d assetflow -tAc             "select count(*) from information_schema.tables where table_schema='public'"             > "$E/tables.txt"
+          TABLES=$(tr -d '[:space:]' < "$E/tables.txt")
+          case "$TABLES" in ''|*[!0-9]*) TABLES=0 ;; esac
+          if [ "$TABLES" -lt 5 ]; then
+            echo "::error title=rehearsal::pinned migration produced $TABLES tables"
+            exit 1
+          fi
+          echo "pinned migration produced $TABLES tables"
+
+          # Seed through the same entry point the instance uses.
+          $C run --rm --no-deps api             npx ts-node --transpile-only prisma/seed-loadtest.ts               --run-id cap-ci-pinned --users 4 >/dev/null 2>&1 || {
+                echo "::error title=rehearsal::seeding failed against the pinned images"; exit 1; }
+          echo "seeding succeeded against the pinned images"
+
+      - name: Record the pinned rehearsal in the job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/pin-rehearsal"
+          {
+            echo "## Pinned-image rehearsal"
+            if [ -s "$E/pull.log" ] && [ ! -s "$E/build.log" ]; then
+              echo "- pulled by digest, nothing built"
+            else
+              echo "- NOT confirmed (see the rehearsal step log)"
+            fi
+            [ -s "$E/tables.txt" ] && echo "- tables: $(tr -d '[:space:]' < "$E/tables.txt")"
+            [ -s "$E/digests.txt" ] && echo '- resolved digests recorded'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Serve bootstrap status before the application is up
         run: |
           set -euo pipefail
