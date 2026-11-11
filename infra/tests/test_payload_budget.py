@@ -72,5 +72,41 @@ class PayloadBudgetTests(unittest.TestCase):
         self.assertIn("a 64-char digest is inlined in user-data", seg)
 
 
+class LaunchOrderTests(unittest.TestCase):
+    """The payload must be proven before a security-group rule is opened.
+
+    Two attempts were spent on defects that only appeared at launch time. Both
+    would have been caught by validating the real payload first.
+    """
+
+    def setUp(self):
+        self.steps = __import__('yaml').safe_load(
+            WORKFLOW.read_text(encoding='utf-8'))['jobs']['run']['steps']
+        self.names = [s.get('name', '') for s in self.steps]
+
+    def index(self, fragment):
+        return next(i for i, n in enumerate(self.names) if fragment in n)
+
+    def test_render_precedes_ingress(self):
+        self.assertLess(self.index('Render the exact payload'), self.index('Open tcp/8443'))
+
+    def test_validation_and_dry_run_precede_ingress(self):
+        render = self.steps[self.index('Render the exact payload')]['run']
+        self.assertIn('--dry-run', render)
+        self.assertIn('bash -n', render)
+        self.assertIn('16384', render)
+        self.assertLess(self.index('Render the exact payload'), self.index('Open tcp/8443'))
+
+    def test_launch_reuses_the_validated_file(self):
+        launch = self.steps[self.index('Launch exactly one instance')]['run']
+        self.assertIn('state/user-data.sh', launch)
+        # The launch must not re-render.
+        self.assertNotIn('render-user-data.sh', launch)
+        self.assertNotIn('base64', launch)
+
+    def test_secrets_and_tls_are_generated_before_rendering(self):
+        self.assertLess(self.index('Generate run-scoped secrets'), self.index('Render the exact payload'))
+
+
 if __name__ == "__main__":
     unittest.main()
