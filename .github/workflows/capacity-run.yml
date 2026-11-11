@@ -283,6 +283,11 @@ jobs:
                  TLS_KEY_B64="$(base64 -w0 < "$RUNNER_TEMP/trust/tls.key")"
           bash infra/capacity-run/render-user-data.sh > "$UD"
 
+          # Persist the launch instant and the derived guest deadline: the hold
+          # below must never outlive the instance's own 4-hour lifetime.
+          printf '%s' "$LAUNCH_EPOCH" > "$S/launch-epoch"
+          printf '%s' "$(( LAUNCH_EPOCH + 14400 ))" > "$S/deadline-epoch"
+
           BYTES=$(wc -c < "$UD")
           echo "payload: $BYTES bytes, limit 16384, headroom $((16384 - BYTES))"
 
@@ -346,6 +351,9 @@ jobs:
           bash infra/capacity-run/ingress.sh open \
             --cidr "${{ steps.ip.outputs.addr }}/32" \
             --state-dir "$RUNNER_TEMP/state"
+          # Stage 4 runs on this same runner, so this exact /32 is the only
+          # source that will be allowed through tcp/8443.
+          printf '%s/32' "${{ steps.ip.outputs.addr }}" > "$RUNNER_TEMP/state/ingress-cidr"
 
       - name: Launch exactly one instance
         id: launch
@@ -389,14 +397,30 @@ jobs:
         # runner; nothing here terminates the instance on success.
         timeout-minutes: 240
         run: |
-          set -euo pipefail
+          set -uo pipefail
           set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          # The supervisor exits nonzero when the Stage 3 contract is not met.
+          # Its status is captured rather than aborting the job: cleanup and
+          # retention must always run, and the verdict is published so the job
+          # can fail afterwards. A green job must never mean "cleanup succeeded".
+          set +e
           bash infra/capacity-run/supervise-run.sh \
             --instance "$(cat "$RUNNER_TEMP/state/instance-id")" \
             --host "$CAPACITY_HOSTNAME" \
             --trust-dir "$RUNNER_TEMP/trust" \
             --state-dir "$RUNNER_TEMP/state" \
             --max-minutes 230
+          RC=$?
+          set -e
+          echo "supervisor rc=$RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -eq 0 ]; then
+            echo "stage3=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "stage3=fail" >> "$GITHUB_OUTPUT"
+            V="$(cat "$RUNNER_TEMP/state/verdict" 2>/dev/null || echo 'no verdict recorded')"
+            echo "::error title=Stage 3::$V"
+          fi
 
       - name: Record the outcome
         if: always()
@@ -433,7 +457,7 @@ jobs:
       - name: Terminate only if this run did not reach readiness
         if: always()
         env:
-          STAGE3_OK: ${{ steps.observe.outcome }}
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
         run: |
           set -euo pipefail
           source infra/capacity-run/aws-context.sh
@@ -464,7 +488,7 @@ jobs:
 
           READY=""
           [ -f "$S/ready-code" ] && READY=$(cat "$S/ready-code")
-          if [ "$STAGE3_OK" = "success" ] && [ "$READY" = "200" ]; then
+          if [ "$STAGE3_OK" = "pass" ] && [ "$READY" = "200" ]; then
             echo "Stage 3 reached readiness; NOT terminating. The guest deadline terminates it."
             echo "- instance retained for a possibly approved Stage 4: $ID" >> "$GITHUB_STEP_SUMMARY"
             echo "retain" > "$S/retain-instance"
@@ -514,3 +538,72 @@ jobs:
             echo "NOTE: the instance and its ingress were retained for Stage 4."
             echo "The guest terminates itself at the 4-hour deadline."
           fi
+
+      - name: Hold this runner for a possible Stage 4 approval
+        # Retaining the INSTANCE is not enough for Stage 4. The runner's own
+        # public address is the only address allowed through tcp/8443, and its
+        # private CA, token and state are the only things that can verify the
+        # run's TLS. If the job exits, the runner is destroyed and all three are
+        # lost - the retained instance becomes unreachable and unusable.
+        #
+        # So the job, not just the instance, is held. Bounded by STAGE4_HOLD_MINUTES
+        # and also by the run's absolute deadline, AND hard-capped so it can never
+        # outlive the 4-hour instance lifetime. No AWS service or permission is
+        # involved: this is a wait inside the job that is already running.
+        if: always() && steps.observe.outputs.stage3 == 'pass'
+        env:
+          HOLD_MINUTES: ${{ vars.STAGE4_HOLD_MINUTES || '45' }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          echo "Stage 3 passed. Holding this runner so a Stage 4 approval can run
+          against the SAME runner: same source /32, same private CA, same token,
+          same state directory and the same retained instance."
+          echo "Hold is $HOLD_MINUTES minutes (max 120), bounded by the guest deadline."
+          echo "Retained instance: $(cat "$S/instance-id" 2>/dev/null || echo unknown)"
+          echo "Runner /32: $(cat "$S/ingress-cidr" 2>/dev/null || echo unknown)"
+          [[ "$HOLD_MINUTES" =~ ^[0-9]+$ ]] || { echo "::error title=hold::STAGE4_HOLD_MINUTES is not a number"; exit 1; }
+          [ "$HOLD_MINUTES" -le 120 ] || HOLD_MINUTES=120
+
+          # Resolve the absolute guest deadline and never run past it.
+          DEADLINE=$(cat "$S/deadline-epoch" 2>/dev/null || echo 0)
+          END=$(( $(date +%s) + HOLD_MINUTES * 60 ))
+          if [ "$DEADLINE" -gt 0 ] && [ "$END" -gt "$DEADLINE" ]; then
+            END=$(( DEADLINE - 300 ))
+          fi
+
+          echo "hold-until-epoch=$END" > "$S/hold-window"
+          echo "The runner stays alive until $END. Start Stage 4 within this window;"
+          echo "afterwards the guest terminates itself at its deadline."
+          while [ "$(date +%s)" -lt "$END" ]; do
+            ST=$(cap_aws ec2 describe-instances --instance-ids "$(cat "$S/instance-id")" \
+                   --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
+            if [ "$ST" = "terminated" ] || [ "$ST" = "shutting-down" ]; then
+              echo "instance is $ST; the hold ends here"
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "hold window closed"
+
+      - name: Fail the job when Stage 3 did not meet its contract
+        # Cleanup and retention above always run first. This step is what makes
+        # the job's colour mean something: a green job means the Stage 3
+        # contract was satisfied, not merely that cleanup succeeded.
+        if: always()
+        env:
+          STAGE3: ${{ steps.observe.outputs.stage3 }}
+          OBSERVE_OUTCOME: ${{ steps.observe.outcome }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          V="$(cat "$S/verdict" 2>/dev/null || echo 'no verdict recorded')"
+          echo "Stage 3 verdict: $STAGE3 ($V)"
+          echo "### Stage 3: ${STAGE3:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$V" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STAGE3" != "pass" ]; then
+            echo "::error title=Stage 3 FAILED::$V"
+            exit 1
+          fi
+          echo "Stage 3 contract satisfied."

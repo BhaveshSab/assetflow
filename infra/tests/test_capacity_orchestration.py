@@ -468,18 +468,21 @@ class SupervisionTests(unittest.TestCase):
     def test_watchdog_started_detached(self):
         self.assertIn("setsid nohup", self.text)
 
-    def test_heartbeat_verified_not_assumed(self):
-        self.assertIn("heartbeat", self.text)
-        self.assertIn("advancing", self.text)
-        self.assertIn("NOT advancing", self.text)
+    def test_watchdog_is_mandatory_not_advisory(self):
+        # A watchdog that is not provably alive leaves nothing bounding the run,
+        # so the supervisor must stop rather than proceed and record it politely.
+        self.assertIn("watchdog did not report alive", self.text)
+        self.assertRegex(self.text, r"fail 1 \"watchdog")
 
-    def test_watchdog_pid_liveness_checked(self):
-        self.assertIn("kill -0", self.text)
+    def test_watchdog_death_is_rechecked_every_pass(self):
+        # Not "read the file once and ignore it afterwards".
+        self.assertIn("watchdog stopped while the run was still live", self.text)
 
     def test_p3_runs_against_the_real_instance_id(self):
-        self.assertIn("terminate-instances --instance-ids \"$INSTANCE_ID\" --dry-run", self.text)
-        # P3 can only be about an instance that exists.
-        self.assertIn("there is no", self.text.lower())
+        self.assertIn('--instance-ids "$INSTANCE_ID" --dry-run', self.text)
+
+    def test_p3_refusal_stops_the_run(self):
+        self.assertIn("cleanup could not be guaranteed", self.text)
 
     def test_status_polling_starts_concurrently(self):
         self.assertIn("poll-status.sh", self.text)
@@ -496,9 +499,24 @@ class SupervisionTests(unittest.TestCase):
         self.assertIn("no load test was run", self.text)
         self.assertNotIn("k6", self.text)
 
-    def test_failed_readiness_is_retained(self):
-        self.assertIn("readiness probe failed", self.text)
+    def test_failed_readiness_is_retained_and_fails(self):
+        # The old version wrote a conclusion and exited 0 regardless.
+        self.assertIn("readiness was not reached", self.text)
         self.assertIn("retained", self.text)
+        self.assertIn("fail 3", self.text)
+
+    def test_readiness_is_probed_inside_the_loop_not_after_it(self):
+        # The defect: the route was probed once, after the loop, by which time
+        # the instance was already dead. It must be probed while observing.
+        loop = self.text[self.text.index("while [ \"$(date +%s)\"" ):]
+        self.assertIn("probe_ready", loop)
+        self.assertIn("/api/health/ready", self.text)
+
+    def test_application_ready_is_never_waited_on(self):
+        # bootstrap-status.py hard-codes application_ready=false. Waiting for it
+        # to become true is a deadlock, and it is what killed run 43007413527.
+        self.assertIn("not a gate", self.text)
+        self.assertNotIn('if [ "$READY" = "true" ]', self.text)
 
 
 class WorkflowStructureTests(unittest.TestCase):

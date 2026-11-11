@@ -1226,6 +1226,10 @@ jobs:
           # A launch was spent on a payload that rendered to 17991 bytes against a
           # 16384 limit. These pin the TLS shape that keeps it inside the budget.
           python3 -m unittest infra.tests.test_payload_budget -v
+          # Runs the REAL supervisor against real TLS and a real HTTPS app. A
+          # launch was lost because it waited for a diagnostic field that is
+          # hard-coded false, then reported success anyway.
+          python3 -m unittest infra.tests.test_supervisor_contract -v
 
       - name: Render the real payload with the same TLS shape the launcher uses
         run: |
