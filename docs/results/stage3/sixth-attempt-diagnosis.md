@@ -85,3 +85,56 @@ the instance. No such data was exported because no snapshot was ever produced.
 Alternate launches that reached AWS `RunInstances` and created an instance: 6.
 Instances that reached application readiness: **0**.
 No acceptable Stage 3 result has ever been produced.
+
+---
+
+# Corrections and verification (offline, no launch)
+
+## Supervisor defects proven and fixed
+
+| # | Defect | Fix | Test that would have caught it |
+|---|---|---|---|
+| 1 | Waited for `application_ready`, hard-coded `false` — an unbreakable deadlock | Readiness taken only from `/api/health/ready`, probed **inside** the loop | `test_diagnostic_ready_false_does_not_block_a_healthy_app` |
+| 2 | `exit 0` regardless of outcome; job green on a wasted launch | Exit 0/1/3/4/5 by cause; workflow captures and re-fails the job | `test_app_never_ready_fails_nonzero`, `test_complete_contract_exits_zero` |
+| 3 | Renamed the newest snapshot inside the directory it then re-sorted | Basename ledger, poller files never modified | `test_poller_files_are_never_renamed` |
+| 4 | P3 refusal and watchdog death recorded then ignored | Both stop the run with a nonzero status | `test_p3_refusal_stops_the_run`, watchdog tests |
+| 5 | Readiness probed once, after the loop | Probed every pass while observing | `test_readiness_is_probed_inside_the_loop_not_after_it` |
+| 6 | A reported `fixture_users: 0` fell through to a friendlier number elsewhere | A reported count is authoritative, including zero | `test_missing_fixtures_is_not_a_stage3_pass` |
+| 7 | Malformed snapshots could be read as progress | Validated with `jq -e`; skipped and named | `test_malformed_snapshot_is_skipped_not_trusted` |
+
+## End-to-end evidence (executed, not asserted from unit counts)
+
+The real `supervise-run.sh` was run as a subprocess against a real ECDSA P-256 CA,
+a real HTTPS server, and a simulated AWS control plane:
+
+| Case | Exit | Verdict |
+|---|---|---|
+| diagnostics `application_ready=false`, app becomes healthy | **0** | complete, full contract ok |
+| application never healthy | **3** | readiness not reached |
+| wrong CA | **3** | no false success |
+| instance terminates before readiness | **4** | terminated before confirmation |
+| P3 denied | **1** | cleanup could not be guaranteed |
+| watchdog dies | **1** | watchdog did not report alive |
+| healthy route, zero fixtures | **5** | contract check failed: fixtures |
+| complete contract | **0** | complete |
+
+Snapshot behaviour, same real supervisor: pre-existing poller files **not**
+renamed or deleted, **zero** `received-*` artefacts, malformed snapshots
+**skipped and named**, run still failed honestly (rc 3).
+
+## Stage 4 handoff
+
+The job now holds the **runner**, not just the instance: retaining the instance
+alone leaves it unreachable, because the runner's `/32` is the only permitted
+source and its private CA, token and state are what can verify the run. The hold
+is bounded by `STAGE4_HOLD_MINUTES` (default 45, capped at 120) and by the guest
+deadline, exits early if the instance dies, and adds no AWS service or permission.
+
+## Remaining uncertainties
+
+1. **Why port 8443 never answered on the guest.** Not determinable from the
+   retained evidence; the root volume was deleted. Missing: guest
+   `bootstrap-status`, `stage-current`, bootstrap log tail.
+2. The corrected supervisor has **never run against real EC2**. Everything above
+   is offline with a simulated control plane.
+3. Digest-pinned image readiness remains unproven on hardware.
