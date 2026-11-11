@@ -1,25 +1,40 @@
-name: Capacity run (single launch)
+name: Capacity run (single launch, gated)
 
 # One bounded measurement run, driven from a GitHub-hosted runner because that
 # runner is the only authorized client: its public address is discovered inside
 # the job and is the single /32 allowed to reach the instance.
 #
-# Manual only. A human starts it and types LAUNCH-ONE. Nothing here creates more
-# than one instance.
+# THE GATE
+# This workflow must never launch on an ordinary push. GitHub does not offer a
+# "run on push but only when a human approved it" trigger, so the approval is a
+# repository variable that names the exact commit to run:
 #
-# NOTE ON AVAILABILITY: GitHub only shows a "Run workflow" button for workflows
-# that exist on the DEFAULT branch. While this file lives only on a feature
-# branch, the button is absent even though the file is valid. See
-# docs/results/stage3/execution-path.md for the supported way to run it without
-# merging.
+#   CAPACITY_APPROVED_SHA = <full 40-character commit sha>
+#
+# The launch job runs only when ALL of these hold:
+#   * the event is a push
+#   * to exactly refs/heads/arena/595baf83-assetflow
+#   * CAPACITY_APPROVED_SHA is non-empty
+#   * CAPACITY_APPROVED_SHA equals the pushed commit in full
+#   * github.run_attempt is 1 - a re-run must not launch a second instance
+#
+# Anything else SKIPS before any AWS call, before ingress, before rendering.
+# Skipping is the default: the variable being absent fails closed.
+#
+# WHY NOT A CONFIRMATION INPUT
+# A hardcoded environment value such as LAUNCH-ONE is not an approval: it is a
+# constant, so every push carries it. A workflow_dispatch input is a real manual
+# action but is unavailable while this file is absent from the default branch.
+# Naming the exact commit is the approval: it is a specific, single-use value
+# that only a human can set, and it cannot be satisfied by a later push.
 
 on:
+  push:
+    branches:
+      - arena/595baf83-assetflow
+  # Declared for the day this file reaches the default branch. The gate above
+  # applies to it identically: a dispatch still needs the exact approved sha.
   workflow_dispatch:
-    inputs:
-      confirmation:
-        description: 'Type LAUNCH-ONE to create exactly one t3.micro'
-        required: true
-        type: string
 
 concurrency:
   group: capacity-run
@@ -40,23 +55,105 @@ env:
   INSTANCE_TYPE: t3.micro
   CAPACITY_HOSTNAME: capacity-run.test
   EXPECTED_ACCOUNT: '459252806274'
+  APPROVED_BRANCH: arena/595baf83-assetflow
 
 jobs:
+  gate:
+    name: Approval gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      approved: ${{ steps.check.outputs.approved }}
+      reason: ${{ steps.check.outputs.reason }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - name: Decide whether this run is approved
+        id: check
+        # Expression-derived values arrive as environment variables. Event text
+        # (a branch name, a commit message) is never interpolated into a shell
+        # command, so it cannot be executed by the runner.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
+          APPROVED_SHA: ${{ vars.CAPACITY_APPROVED_SHA }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_BRANCH: ${{ env.APPROVED_BRANCH }}
+        run: |
+          set -euo pipefail
+          approved=false
+          reason=""
+
+          if [ "$EVENT_NAME" != "push" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            reason="event is $EVENT_NAME, not a push dispatch"
+          elif [ "$REF_NAME" != "$EXPECTED_BRANCH" ]; then
+            reason="branch is '$REF_NAME', not '$EXPECTED_BRANCH'"
+          elif [ -z "$APPROVED_SHA" ]; then
+            reason="CAPACITY_APPROVED_SHA is unset: no approval, so nothing runs"
+          elif [ "$APPROVED_SHA" != "$HEAD_SHA" ]; then
+            reason="CAPACITY_APPROVED_SHA does not equal this commit"
+          elif [ "$RUN_ATTEMPT" != "1" ]; then
+            reason="run attempt is $RUN_ATTEMPT: a re-run must not launch again"
+          else
+            approved=true
+            reason="approved: $APPROVED_SHA on $REF_NAME, attempt 1"
+          fi
+
+          # Also require the approved value to look like a full commit sha. A short
+          # or malformed value must not match a real commit by prefix, or root-commits
+          # could be approved accidentally.
+          if [ "$approved" = "true" ]; then
+            case "$APPROVED_SHA" in
+              *[!0-9a-f]*|'') approved=false; reason="approved value is not a hex sha" ;;
+            esac
+            if [ "${#APPROVED_SHA}" -ne 40 ]; then
+              approved=false
+              reason="approved value is ${#APPROVED_SHA} chars, not a full 40-character sha"
+            fi
+          fi
+
+          echo "approved=$approved" >> "$GITHUB_OUTPUT"
+          printf 'reason=%s\n' "$reason" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "$approved" = "true" ]; then
+            echo "## Capacity run: APPROVED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Capacity run: SKIPPED" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- $reason" >> "$GITHUB_STEP_SUMMARY"
+          echo "gate: $approved ($reason)"
+
   run:
     name: Launch, observe, clean up
+    needs: [gate]
+    # Skipped runs cost nothing and touch nothing: this is the only job that
+    # reaches AWS, and it does not start at all unless the gate approved.
+    if: needs.gate.outputs.approved == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
 
-      - name: Refuse to run without explicit confirmation
+      - name: Re-verify the gate inside the job that spends money
+        # Defence in depth: a job-level `if` is evaluated once. Re-check here so a
+        # misconfigured gate cannot silently become a launch.
+        env:
+          APPROVED_SHA: ${{ vars.CAPACITY_APPROVED_SHA }}
+          HEAD_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REF_NAME: ${{ github.ref_name }}
+          EXPECTED_BRANCH: ${{ env.APPROVED_BRANCH }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.confirmation }}" != "LAUNCH-ONE" ]; then
-            echo "::error title=confirmation::type LAUNCH-ONE to create an instance"
-            exit 1
-          fi
-          echo "confirmation accepted"
+          [ "$RUN_ATTEMPT" = "1" ] || { echo "::error title=gate::not the first attempt"; exit 1; }
+          [ "$REF_NAME" = "$EXPECTED_BRANCH" ] || { echo "::error title=gate::wrong branch"; exit 1; }
+          [ -n "$APPROVED_SHA" ] || { echo "::error title=gate::no approved sha"; exit 1; }
+          [ "$APPROVED_SHA" = "$HEAD_SHA" ] || { echo "::error title=gate::approved sha is not this commit"; exit 1; }
+          [ "${#APPROVED_SHA}" -eq 40 ] || { echo "::error title=gate::approved sha is not full length"; exit 1; }
+          echo "gate re-verified for $HEAD_SHA"
 
       - name: Write the AWS profile once, for the whole job
         env:
@@ -90,7 +187,6 @@ jobs:
           mkdir -p "$DIR"; chmod 700 "$DIR"
           umask 077
 
-          # Application secrets: random, per run, never reused.
           gen() { openssl rand -base64 36 | tr -d '\n'; }
           {
             printf 'POSTGRES_PASSWORD=%s\n' "$(gen)"
@@ -101,10 +197,11 @@ jobs:
             printf 'EVIDENCE_TOKEN=%s\n' "$(openssl rand -hex 32)"
           } > "$DIR/secrets.env"
           chmod 600 "$DIR/secrets.env"
-          while IFS='=' read -r k v; do echo "::add-mask::$v"; done < "$DIR/secrets.env"
+          while IFS='=' read -r _k v; do echo "::add-mask::$v"; done < "$DIR/secrets.env"
 
           # TLS material for capacity-run.test, so the client can verify the
-          # certificate against a CA it holds.
+          # certificate against a CA it holds. The trust is retained for the whole
+          # job, which is what lets this same runner serve a later Stage 4 test.
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
             -keyout "$DIR/tls.key" -out "$DIR/tls.crt" \
             -subj "/CN=$CAPACITY_HOSTNAME" \
@@ -174,7 +271,6 @@ jobs:
         run: |
           set -euo pipefail
           # The renderer emits RAW shell and enforces the 16 KiB raw limit itself.
-          # Base64 here would install a script that is not a script.
           set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
           export LAUNCH_EPOCH="$(date +%s)" \
                  EXPECTED_COMMIT="$(git rev-parse HEAD)" \
@@ -208,8 +304,6 @@ jobs:
           set -euo pipefail
           source infra/capacity-run/aws-context.sh
           ID=$(cat "$RUNNER_TEMP/state/instance-id")
-          # Against the instance that exists now. There is no dry-run for an
-          # instance that has not been created.
           if cap_aws ec2 terminate-instances --instance-ids "$ID" --dry-run 2>/tmp/p3.err \
              || grep -q DryRunOperation /tmp/p3.err; then
             echo "P3 accepted: terminate dry-run returned DryRunOperation for $ID"
@@ -221,19 +315,18 @@ jobs:
 
       - name: Observe the run - watchdog, status polling, readiness
         id: observe
-        timeout-minutes: 250
-        env:
-          EVIDENCE_TOKEN: ''
+        # Bounded by the run's own deadline. A Stage 4 test may follow on the same
+        # runner; nothing here terminates the instance on success.
+        timeout-minutes: 240
         run: |
           set -euo pipefail
-          # The token the poller needs is read from the generated file, not from a
-          # copy of the secret.
           set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
           bash infra/capacity-run/supervise-run.sh \
             --instance "$(cat "$RUNNER_TEMP/state/instance-id")" \
             --host "$CAPACITY_HOSTNAME" \
             --trust-dir "$RUNNER_TEMP/trust" \
-            --state-dir "$RUNNER_TEMP/state"
+            --state-dir "$RUNNER_TEMP/state" \
+            --max-minutes 230
 
       - name: Record the outcome
         if: always()
@@ -246,13 +339,9 @@ jobs:
           done
           COUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
           echo "- retained snapshots: $COUNT" >> "$GITHUB_STEP_SUMMARY"
-          # The window matters: only a small, NON-SECRET selection is kept. The
-          # run directory on the instance holds credentials and is never copied.
           mkdir -p "$RUNNER_TEMP/retained"
-          cp "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err 2>/dev/null || true
-          mv "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err "$RUNNER_TEMP/retained/" 2>/dev/null || true
+          cp "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err "$RUNNER_TEMP/retained/" 2>/dev/null || true
           cp -r "$S/snapshots" "$RUNNER_TEMP/retained/snapshots" 2>/dev/null || true
-          echo "retained $(ls -1 "$RUNNER_TEMP/retained" 2>/dev/null | wc -l) evidence files"
 
       - name: Keep the retained evidence (non-secret only)
         if: always()
@@ -263,8 +352,18 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Terminate the exact instance this run created
+      # ---------------------------------------------------------------------
+      # Stage 3 ends here. The instance is NOT terminated on success: the guest
+      # keeps running under its own 4-hour deadline, and this runner keeps its
+      # trust material, so a separately approved Stage 4 test can use the same
+      # client. Termination and ingress removal below happen on failure, or when
+      # the deadline is reached - never merely because readiness passed.
+      # ---------------------------------------------------------------------
+
+      - name: Terminate only if this run did not reach readiness
         if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outcome }}
         run: |
           set -euo pipefail
           source infra/capacity-run/aws-context.sh
@@ -281,37 +380,57 @@ jobs:
                 printf '%s\n' "$FOUND" | awk '{print $1}' | head -1 > "$S/instance-id"
               else
                 echo "token reconciles to no instance"
+                exit 0
               fi
+            else
+              exit 0
             fi
-          fi
-          if [ -f "$S/instance-id" ]; then
-            ID=$(cat "$S/instance-id")
-            STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
-              --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
-            echo "instance $ID is $STATE"
-            if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
-              cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
-            fi
-            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
-            VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
-              --query 'Volumes[].[VolumeId,State]' --output text)
-            [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
           fi
 
-      - name: Remove only the ingress rule this run added
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          echo "instance $ID is $STATE"
+
+          READY=""
+          [ -f "$S/ready-code" ] && READY=$(cat "$S/ready-code")
+          if [ "$STAGE3_OK" = "success" ] && [ "$READY" = "200" ]; then
+            echo "Stage 3 reached readiness; NOT terminating. The guest deadline terminates it."
+            echo "- instance retained for a possibly approved Stage 4: $ID" >> "$GITHUB_STEP_SUMMARY"
+            echo "retain" > "$S/retain-instance"
+            exit 0
+          fi
+
+          echo "Stage 3 did not reach readiness; terminating $ID"
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+          fi
+          cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+
+      - name: Remove the ingress rule unless the instance was retained
         if: always()
         run: |
           set -euo pipefail
           source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          if [ -f "$S/retain-instance" ]; then
+            echo "instance retained for Stage 4: leaving tcp/8443 open for this runner"
+            echo "- ingress retained for the approved client" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           # Fails loudly if a tcp/8443 rule survives, rather than assuming every
           # revoke error means "already absent".
-          bash infra/capacity-run/ingress.sh close --state-dir "$RUNNER_TEMP/state"
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
 
-      - name: Confirm the account is clean
+      - name: Confirm the account state
         if: always()
         run: |
           set -euo pipefail
           source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
           echo "run instances:"
           cap_aws ec2 describe-instances --filters "Name=tag:RunId,Values=$RUN_ID" \
             --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text
@@ -321,3 +440,7 @@ jobs:
           echo "sg inbound:"
           cap_aws ec2 describe-security-groups --group-ids "$SG_ID" \
             --query 'SecurityGroups[0].IpPermissions' --output json
+          if [ -f "$S/retain-instance" ]; then
+            echo "NOTE: the instance and its ingress were retained for Stage 4."
+            echo "The guest terminates itself at the 4-hour deadline."
+          fi

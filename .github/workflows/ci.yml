@@ -1139,6 +1139,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest infra.tests.test_capacity_orchestration -v
+          # The approval gate is tested by running its real script with every
+          # input combination that must SKIP, because a gate that opens on the
+          # wrong event would launch an instance on an ordinary push.
+          python3 -m unittest infra.tests.test_capacity_gate -v
 
       - name: Prove the launcher never falls back to a default profile
         run: |
