@@ -1223,6 +1223,64 @@ jobs:
           # step depended on ec2:DescribeSecurityGroupRules, which this identity
           # is not granted. These tests pin the granted-only design.
           python3 -m unittest infra.tests.test_ingress_helpers -v
+          # A launch was spent on a payload that rendered to 17991 bytes against a
+          # 16384 limit. These pin the TLS shape that keeps it inside the budget.
+          python3 -m unittest infra.tests.test_payload_budget -v
+
+      - name: Render the real payload with the same TLS shape the launcher uses
+        run: |
+          set -euo pipefail
+          # The payload has a hard 16 KiB limit and the launcher refuses to start
+          # an instance when it is exceeded. An ECDSA pair was chosen precisely so
+          # it fits. Render here, with full-length generated secrets, so a payload
+          # that will not fit fails in CI instead of on the launch runner after
+          # ingress has already been opened.
+          W="$RUNNER_TEMP/udcheck"
+          rm -rf "$W"; mkdir -p "$W"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -nodes -days 1 -keyout "$W/tls.key" -out "$W/tls.crt" \
+            -subj "/CN=capacity-run.test" \
+            -addext "subjectAltName=DNS:capacity-run.test" >/dev/null 2>&1
+
+          gen() { openssl rand -base64 36 | tr -d '\n'; }
+          set -a
+          . infra/capacity-run/image-digests.env
+          LAUNCH_EPOCH=$(date +%s)
+          EXPECTED_COMMIT=$(git rev-parse HEAD)
+          RUN_ID=cap-ci-render
+          CAPACITY_HOSTNAME=capacity-run.test
+          EVIDENCE_TOKEN=$(openssl rand -hex 32)
+          TLS_CRT_B64=$(base64 -w0 < "$W/tls.crt")
+          TLS_KEY_B64=$(base64 -w0 < "$W/tls.key")
+          POSTGRES_PASSWORD=$(gen); REDIS_PASSWORD=$(gen)
+          GRAFANA_ADMIN_PASSWORD=$(gen); JWT_SECRET=$(openssl rand -hex 32)
+          LOADTEST_PASSWORD=$(gen)
+          set +a
+
+          bash infra/capacity-run/render-user-data.sh > "$W/ud.sh"
+          bytes=$(wc -c < "$W/ud.sh")
+          echo "rendered payload: $bytes bytes (limit 16384)"
+          head -1 "$W/ud.sh" | grep -qx '#!/bin/bash' \
+            || { echo "::error title=payload::not raw shell"; exit 1; }
+          # The real digest pins must be carried by the committed file, not the
+          # user-data block, which is what keeps the payload inside the limit.
+          for d in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            grep -q "${d##*@}" infra/capacity-run/image-digests.env \
+              || { echo "::error title=payload::pin missing"; exit 1; }
+            if grep -q "${d##*@}" "$W/ud.sh"; then
+              echo "::error title=payload::a 64-char digest is inlined in user-data: $d"
+              exit 1
+            fi
+          done
+          echo "pins are carried by image-digests.env, not by the payload"
+
+      - name: Confirm the launcher generates an ECDSA key that fits
+        run: |
+          set -euo pipefail
+          # Guards against a future edit reintroducing RSA into the payload.
+          grep -q 'prime256v1' .github/workflows/capacity-run.yml || {
+            echo "::error title=tls::the launcher no longer uses ECDSA P-256"; exit 1; }
+          echo "launcher uses ECDSA P-256"
 
       - name: Prove the launcher never falls back to a default profile
         run: |

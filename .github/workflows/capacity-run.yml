@@ -202,7 +202,13 @@ jobs:
           # TLS material for capacity-run.test, so the client can verify the
           # certificate against a CA it holds. The trust is retained for the whole
           # job, which is what lets this same runner serve a later Stage 4 test.
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+          # ECDSA P-256, not RSA-2048: the key and certificate are carried
+          # inside the 16 KiB user-data limit, and an RSA pair consumed ~3 KB of
+          # it on its own. P-256 gives the same TLS guarantees in a third of the
+          # space. With RSA the payload rendered to 17991 bytes and the launcher
+          # correctly refused to start an instance with it.
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -nodes -days 1 \
             -keyout "$DIR/tls.key" -out "$DIR/tls.crt" \
             -subj "/CN=$CAPACITY_HOSTNAME" \
             -addext "subjectAltName=DNS:$CAPACITY_HOSTNAME" >/dev/null 2>&1
