@@ -47,7 +47,11 @@ check "subnet" "$SUBNET_ID" "$(get '.Reservations[0].Instances[0].SubnetId')"
 check "image" "$AMI_ID" "$(get '.Reservations[0].Instances[0].ImageId')"
 check "public ip assigned" "yes" "$(get 'if (.Reservations[0].Instances[0].PublicIpAddress // "") == "" then "no" else "yes" end')"
 check "no key pair" "" "$(get '.Reservations[0].Instances[0].KeyName // ""')"
-check "no instance profile" "null" "$(get '.Reservations[0].Instances[0].IamInstanceProfile // "null" | if . == null then "null" else "set" end')"
+# Absent means no profile. The previous form compared the STRING "null"
+# produced by the // alternative against JSON null, which can never be equal,
+# so it reported "set" for a correctly profile-less instance and aborted a
+# good run.
+check "no instance profile" "absent" "$(get 'if (.Reservations[0].Instances[0] | has("IamInstanceProfile")) then "present" else "absent" end')"
 check "Project tag" "assetflow-capacity" "$(get '.Reservations[0].Instances[0].Tags[] | select(.Key=="Project") | .Value')"
 check "RunId tag" "$RUN_ID" "$(get '.Reservations[0].Instances[0].Tags[] | select(.Key=="RunId") | .Value')"
 check "security group" "$SG_ID" "$(get '.Reservations[0].Instances[0].SecurityGroups[0].GroupId')"
