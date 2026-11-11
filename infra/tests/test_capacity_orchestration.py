@@ -44,12 +44,22 @@ class FakeCli:
         # f-string would try to interpret.
         lines = [
             "#!/usr/bin/env bash",
+            'emit_filtered() {',
+            '  local f="$1"; shift',
+            '  python3 "$CAPACITY_FAKE_FILTER" "$f" "$@"',
+            '}',
             'printf "%s\\n" "' + name + ' $*" >> "' + str(self.calls) + '"',
             "op=$(printf '%s' \"$*\" | grep -oE 'ec2 [a-z-]+' | head -1 | tr ' ' '_')",
             '[ -n "$op" ] || op=generic',
             'key="' + name + '_${op}"',
             'f="' + str(self.responses) + '/$key"',
-            'if [ -f "$f.out" ]; then cat "$f.out"; fi',
+            # Emulate the ONE --query this code depends on, so the fake behaves
+            # like the real CLI instead of returning a whole document where a
+            # filtered answer was requested. Any other --query returns the raw
+            # document, which is what a caller that did not filter would get.
+            'if [ -f "$f.out" ]; then',
+            '  emit_filtered "$f.out" "$*"',
+            'fi',
             'if [ -f "$f.err" ]; then cat "$f.err" >&2; fi',
             'if [ -f "$f.rc" ]; then exit "$(cat "$f.rc")"; fi',
             "exit 0",
@@ -58,6 +68,51 @@ class FakeCli:
         p = self.bin / name
         p.write_text(script, encoding="utf-8")
         p.chmod(p.stat().st_mode | stat.S_IEXEC)
+        self._install_filter()
+
+    FILTER = r"""
+import json, re, sys
+
+path = sys.argv[1]
+argv = " ".join(sys.argv[2:])
+
+# The ingress helper asks for an ingress-array projection. Emulate just that,
+# so the fake returns a filtered answer the way the real CLI does; anything else
+# gets the whole document.
+if "IpPermissions[?FromPort" not in argv:
+    sys.stdout.write(open(path).read())
+    sys.exit(0)
+
+m = re.search(r"FromPort<=\s*[`]?(\d+)", argv)
+port = int(m.group(1)) if m else 8443
+
+try:
+    d = json.load(open(path))
+except Exception:
+    sys.exit(0)
+
+perms = []
+for g in d.get("SecurityGroups", []):
+    for x in g.get("IpPermissions", []):
+        lo = x.get("FromPort")
+        hi = x.get("ToPort")
+        lo = 0 if lo is None else lo
+        hi = 65535 if hi is None else hi
+        if lo <= port <= hi:
+            perms.append(x)
+
+if "length(" in argv:
+    print(len(perms))
+else:
+    for x in perms:
+        for r in x.get("IpRanges", []):
+            print(r["CidrIp"])
+"""
+
+    def _install_filter(self):
+        f = self.bin / "filter_query.py"
+        if not f.exists():
+            f.write_text(self.FILTER, encoding="utf-8")
 
     def respond(self, key, out="", err="", rc=0):
         (self.responses / f"{key}.out").write_text(out, encoding="utf-8")
@@ -86,6 +141,7 @@ class FakeCli:
             "SUBNET_ID": "subnet-01f25dc99e013aa6a",
             "SG_ID": "sg-012a0191f4e4a9a8c",
             "INSTANCE_TYPE": "t3.micro",
+            "CAPACITY_FAKE_FILTER": str(self.bin / "filter_query.py"),
         }
         (self.tmp / "home").mkdir(exist_ok=True)
         env.update(extra)
@@ -336,7 +392,7 @@ class IngressRuleTests(unittest.TestCase):
         self.cli.respond(
             "aws_ec2_authorize-security-group-ingress",
             out='{"SecurityGroupRules":[{"SecurityGroupRuleId":"sgr-0123"}]}')
-        self.cli.respond("aws_ec2_describe-security-group-rules", out="")
+        self.cli.respond("aws_ec2_describe-security-groups", out='{"SecurityGroups":[{"IpPermissions":[]}]}')
         r = subprocess.run(
             ["bash", str(CAP / "ingress.sh"), "open", "--cidr", "203.0.113.7/32",
              "--state-dir", str(self.state)],
@@ -349,7 +405,7 @@ class IngressRuleTests(unittest.TestCase):
         self.state.mkdir(parents=True, exist_ok=True)
         (self.state / "ingress-rule-id").write_text("sgr-0123", encoding="utf-8")
         self.cli.respond("aws_ec2_revoke-security-group-ingress", out="")
-        self.cli.respond("aws_ec2_describe-security-group-rules", out="")
+        self.cli.respond("aws_ec2_describe-security-groups", out='{"SecurityGroups":[{"IpPermissions":[]}]}')
         r = subprocess.run(
             ["bash", str(CAP / "ingress.sh"), "close", "--state-dir", str(self.state)],
             capture_output=True, text=True, timeout=60, env=self.cli.env(),
@@ -364,9 +420,9 @@ class IngressRuleTests(unittest.TestCase):
         (self.state / "ingress-rule-id").write_text("sgr-0123", encoding="utf-8")
         self.cli.respond("aws_ec2_revoke-security-group-ingress", err="Throttling", rc=2)
         self.cli.respond(
-            "aws_ec2_describe-security-group-rules",
-            out='{"SecurityGroupRules":[{"SecurityGroupRuleId":"sgr-0123","FromPort":8443,'
-                '"IsEgress":false,"CidrIpv4":"203.0.113.7/32"}]}')
+            "aws_ec2_describe-security-groups",
+            out='{"SecurityGroups":[{"IpPermissions":[{"FromPort":8443,"ToPort":8443,'
+                '"IpRanges":[{"CidrIp":"203.0.113.7/32"}]}]}]}')
         r = subprocess.run(
             ["bash", str(CAP / "ingress.sh"), "close", "--state-dir", str(self.state)],
             capture_output=True, text=True, timeout=60, env=self.cli.env(),
@@ -378,7 +434,7 @@ class IngressRuleTests(unittest.TestCase):
         self.state.mkdir(parents=True, exist_ok=True)
         (self.state / "ingress-rule-id").write_text("sgr-0123", encoding="utf-8")
         self.cli.respond("aws_ec2_revoke-security-group-ingress", err="NotFound", rc=2)
-        self.cli.respond("aws_ec2_describe-security-group-rules", out='{"SecurityGroupRules":[]}')
+        self.cli.respond("aws_ec2_describe-security-groups", out='{"SecurityGroups":[{"IpPermissions":[]}]}')
         r = subprocess.run(
             ["bash", str(CAP / "ingress.sh"), "close", "--state-dir", str(self.state)],
             capture_output=True, text=True, timeout=60, env=self.cli.env(),
@@ -388,9 +444,9 @@ class IngressRuleTests(unittest.TestCase):
 
     def test_refuses_a_second_open_rule(self):
         self.cli.respond(
-            "aws_ec2_describe-security-group-rules",
-            out='{"SecurityGroupRules":[{"SecurityGroupRuleId":"sgr-old","FromPort":8443,'
-                '"IsEgress":false,"CidrIpv4":"198.51.100.1/32"}]}')
+            "aws_ec2_describe-security-groups",
+            out='{"SecurityGroups":[{"IpPermissions":[{"FromPort":8443,"ToPort":8443,'
+                '"IpRanges":[{"CidrIp":"198.51.100.1/32"}]}]}]}')
         r = subprocess.run(
             ["bash", str(CAP / "ingress.sh"), "open", "--cidr", "203.0.113.7/32",
              "--state-dir", str(self.state)],

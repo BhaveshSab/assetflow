@@ -1219,6 +1219,10 @@ jobs:
           # input combination that must SKIP, because a gate that opens on the
           # wrong event would launch an instance on an ordinary push.
           python3 -m unittest infra.tests.test_capacity_gate -v
+          # A launch once aborted before the instance existed because the ingress
+          # step depended on ec2:DescribeSecurityGroupRules, which this identity
+          # is not granted. These tests pin the granted-only design.
+          python3 -m unittest infra.tests.test_ingress_helpers -v
 
       - name: Prove the launcher never falls back to a default profile
         run: |
