@@ -801,12 +801,17 @@ jobs:
           fi
           echo "pinned migration produced $TABLES tables"
 
-          # Seed through the same entry point the instance uses.
-          $C run --rm --no-deps api \
-            npx ts-node --transpile-only prisma/seed-loadtest.ts \
-              --run-id cap-ci-pinned --users 4 > "$E/seed.out" 2>&1 || {
-                echo "::error title=rehearsal::seeding failed against the pinned images"
-                tail -20 "$E/seed.out"; exit 1; }
+          # Seed through the SAME helper the instance bootstrap runs. An earlier
+          # inline copy drifted from it, so this rehearsal must not carry its own.
+          # The helper seeds via the migrate service, which has the toolchain; the
+          # api image runs unprivileged and cannot write its npm cache.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          test -n "$LT_PW" || { echo "::error title=rehearsal::LOADTEST_PASSWORD missing"; exit 1; }
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
+            --run-id cap-ci-pinned --users 4 --evidence-dir "$E/fixtures" \
+            > "$E/seed.out" 2>&1 || {
+              echo "::error title=rehearsal::seeding failed against the pinned images"
+              tail -20 "$E/seed.out"; exit 1; }
           echo "seeding succeeded against the pinned images"
       - name: Record the pinned rehearsal in the job summary
         if: always()
