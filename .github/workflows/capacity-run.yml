@@ -2,11 +2,16 @@ name: Capacity run (single launch)
 
 # One bounded measurement run, driven from a GitHub-hosted runner because that
 # runner is the only authorized client: its public address is discovered inside
-# the job and is the single /32 allowed to reach the instance. The same job stays
-# alive for the whole run so the ingress rule can be removed when it ends.
+# the job and is the single /32 allowed to reach the instance.
 #
-# Deliberately manual: no push, no schedule. A human starts it, and only one
-# instance is ever created.
+# Manual only. A human starts it and types LAUNCH-ONE. Nothing here creates more
+# than one instance.
+#
+# NOTE ON AVAILABILITY: GitHub only shows a "Run workflow" button for workflows
+# that exist on the DEFAULT branch. While this file lives only on a feature
+# branch, the button is absent even though the file is valid. See
+# docs/results/stage3/execution-path.md for the supported way to run it without
+# merging.
 
 on:
   workflow_dispatch:
@@ -14,10 +19,6 @@ on:
       confirmation:
         description: 'Type LAUNCH-ONE to create exactly one t3.micro'
         required: true
-        type: string
-      launch_epoch:
-        description: 'Unix timestamp to use as the run start (blank = now)'
-        required: false
         type: string
 
 concurrency:
@@ -28,52 +29,97 @@ permissions:
   contents: read
 
 env:
+  # One credential mechanism. Every AWS call goes through cap_aws, which passes
+  # these explicitly, so an ambient default profile can never be used.
+  AWS_PROFILE: capacity
   AWS_REGION: ap-southeast-2
   RUN_ID: cap-20261109t0800z-a7f3
   SG_ID: sg-012a0191f4e4a9a8c
   SUBNET_ID: subnet-01f25dc99e013aa6a
   AMI_ID: ami-01e91e94accc42eec
   INSTANCE_TYPE: t3.micro
+  CAPACITY_HOSTNAME: capacity-run.test
+  EXPECTED_ACCOUNT: '459252806274'
 
 jobs:
   run:
     name: Launch, observe, clean up
     runs-on: ubuntu-latest
-    timeout-minutes: 290
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
 
-      - name: Refuse to run without an explicit confirmation
+      - name: Refuse to run without explicit confirmation
         run: |
           set -euo pipefail
           if [ "${{ inputs.confirmation }}" != "LAUNCH-ONE" ]; then
             echo "::error title=confirmation::type LAUNCH-ONE to create an instance"
             exit 1
           fi
+          echo "confirmation accepted"
 
-      - name: Configure AWS credentials
+      - name: Write the AWS profile once, for the whole job
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          echo "::add-mask::${{ secrets.AWS_ACCESS_KEY_ID }}"
-          mkdir -p ~/.aws
-          printf '[capacity]\naws_access_key_id=%s\naws_secret_access_key=%s\n' \
-            "${{ secrets.AWS_ACCESS_KEY_ID }}" "${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            > ~/.aws/credentials
-          chmod 600 ~/.aws/credentials
+          # Secrets go in through the environment, never argv, so they cannot
+          # appear in a process listing.
+          echo "::add-mask::$AWS_ACCESS_KEY_ID"
+          source infra/capacity-run/aws-context.sh
+          write_profile
+          source infra/capacity-run/aws-context.sh
+          ACCOUNT=$(require_profile)
+          echo "authenticated as account $ACCOUNT"
+          if [ "$ACCOUNT" != "$EXPECTED_ACCOUNT" ]; then
+            echo "::error title=account::profile authenticated as $ACCOUNT, expected $EXPECTED_ACCOUNT"
+            exit 1
+          fi
 
       - name: Install tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq jq curl
+
+      - name: Generate run-scoped secrets and TLS trust on this runner
+        id: trust
+        run: |
+          set -euo pipefail
+          # Generated here and masked, so eight generated values do not have to be
+          # copied by hand. They live only for this job and are never uploaded.
+          DIR="$RUNNER_TEMP/trust"
+          mkdir -p "$DIR"; chmod 700 "$DIR"
+          umask 077
+
+          # Application secrets: random, per run, never reused.
+          gen() { openssl rand -base64 36 | tr -d '\n'; }
+          {
+            printf 'POSTGRES_PASSWORD=%s\n' "$(gen)"
+            printf 'REDIS_PASSWORD=%s\n' "$(gen)"
+            printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(gen)"
+            printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'LOADTEST_PASSWORD=%s\n' "$(gen)"
+            printf 'EVIDENCE_TOKEN=%s\n' "$(openssl rand -hex 32)"
+          } > "$DIR/secrets.env"
+          chmod 600 "$DIR/secrets.env"
+          while IFS='=' read -r k v; do echo "::add-mask::$v"; done < "$DIR/secrets.env"
+
+          # TLS material for capacity-run.test, so the client can verify the
+          # certificate against a CA it holds.
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$DIR/tls.key" -out "$DIR/tls.crt" \
+            -subj "/CN=$CAPACITY_HOSTNAME" \
+            -addext "subjectAltName=DNS:$CAPACITY_HOSTNAME" >/dev/null 2>&1
+          cp "$DIR/tls.crt" "$DIR/ca.crt"
+          chmod 600 "$DIR/tls.key" "$DIR/tls.crt" "$DIR/ca.crt"
+          openssl x509 -in "$DIR/tls.crt" -noout -checkend 3600
 
       - name: Discover this runner's public address
         id: ip
         run: |
           set -euo pipefail
-          # The only client authorized to reach the instance. Discovered here, in
-          # this job, and never substituted with an operator address: the whole
-          # point is that the allowance follows the actual client.
           IP="$(curl -fsS --max-time 20 https://api.ipify.org)"
           case "$IP" in
-            *[!0-9.]*|'') echo "::error title=ip::could not determine a public IPv4"; exit 1 ;;
+            *[!0-9.]*|'') echo "::error title=ip::no public IPv4"; exit 1 ;;
           esac
           echo "runner public IPv4: $IP"
           echo "addr=$IP" >> "$GITHUB_OUTPUT"
@@ -82,145 +128,196 @@ jobs:
         id: preflight
         run: |
           set -euo pipefail
-          aws ec2 describe-instances --region "$AWS_REGION" \
+          source infra/capacity-run/aws-context.sh
+          LIVE=$(cap_aws ec2 describe-instances \
             --filters "Name=tag:RunId,Values=$RUN_ID" \
                       "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text \
-            > /tmp/live.txt || { echo "::error title=preflight::describe-instances failed"; exit 1; }
-          if [ -s /tmp/live.txt ]; then
-            echo "::error title=preflight::a run instance is still active:"; cat /tmp/live.txt; exit 1
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text) || {
+            echo "::error title=preflight::describe-instances failed"; exit 1; }
+          if [ -n "$LIVE" ]; then
+            echo "::error title=preflight::a run instance is still active"; printf '%s\n' "$LIVE"; exit 1
           fi
-          aws ec2 describe-volumes --region "$AWS_REGION" \
-            --filters "Name=tag:RunId,Values=$RUN_ID" \
-            --query 'Volumes[].[VolumeId,State]' --output text > /tmp/vols.txt 2>&1 \
-            || { echo "::error title=preflight::describe-volumes failed"; exit 1; }
-          if [ -s /tmp/vols.txt ]; then
-            echo "::error title=preflight::a run volume still exists:"; cat /tmp/vols.txt; exit 1
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text) || {
+            echo "::error title=preflight::describe-volumes failed"; exit 1; }
+          if [ -n "$VOLS" ]; then
+            echo "::error title=preflight::a run volume still exists"; printf '%s\n' "$VOLS"; exit 1
           fi
           echo "zero active run instances and zero run volumes"
 
-      - name: Allow tcp/8443 from this runner only
+      - name: Verify the AMI's real root device name
+        id: rootdev
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          ROOT=$(cap_aws ec2 describe-images --image-ids "$AMI_ID" \
+            --query 'Images[0].RootDeviceName' --output text)
+          [ -n "$ROOT" ] && [ "$ROOT" != "None" ] || {
+            echo "::error title=root-device::cannot read RootDeviceName for $AMI_ID"; exit 1; }
+          echo "ami root device: $ROOT"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Open tcp/8443 for this runner only, recording the rule id
         id: ingress
         run: |
           set -euo pipefail
-          RULE=$(aws ec2 authorize-security-group-ingress --region "$AWS_REGION" \
-            --group-id "$SG_ID" \
-            --ip-permissions "IpProtocol=tcp,FromPort=8443,ToPort=8443,IpRanges=[{CidrIp=${{ steps.ip.outputs.addr }}/32,Description=capacity-run-$RUN_ID}]" \
-            --output json) || { echo "::error title=ingress::authorize failed"; exit 1; }
-          echo "ingress opened for ${{ steps.ip.outputs.addr }}/32 on tcp/8443"
-          echo "$RULE"
+          source infra/capacity-run/aws-context.sh
+          bash infra/capacity-run/ingress.sh open \
+            --cidr "${{ steps.ip.outputs.addr }}/32" \
+            --state-dir "$RUNNER_TEMP/state"
+
+      - name: Render the payload as raw shell
+        id: render
+        env:
+          AWS_ACCESS_KEY_ID: ''
+          AWS_SECRET_ACCESS_KEY: ''
+        run: |
+          set -euo pipefail
+          # The renderer emits RAW shell and enforces the 16 KiB raw limit itself.
+          # Base64 here would install a script that is not a script.
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          export LAUNCH_EPOCH="$(date +%s)" \
+                 EXPECTED_COMMIT="$(git rev-parse HEAD)" \
+                 RUN_ID CAPACITY_HOSTNAME \
+                 TLS_CRT_B64="$(base64 -w0 < "$RUNNER_TEMP/trust/tls.crt")" \
+                 TLS_KEY_B64="$(base64 -w0 < "$RUNNER_TEMP/trust/tls.key")"
+          bash infra/capacity-run/render-user-data.sh > "$RUNNER_TEMP/user-data.sh"
+          head -1 "$RUNNER_TEMP/user-data.sh" | grep -qx '#!/bin/bash' \
+            || { echo "::error title=payload::not raw shell"; exit 1; }
+          echo "rendered $(wc -c < "$RUNNER_TEMP/user-data.sh") bytes of raw shell"
 
       - name: Launch exactly one instance
         id: launch
+        env:
+          ROOT_DEVICE: ${{ steps.rootdev.outputs.root }}
         run: |
           set -euo pipefail
-          # A fresh idempotency token per attempt. Reusing one would let a retried
-          # call return the FIRST instance rather than reporting a conflict.
-          TOKEN="cap-$(date -u +%Y%m%dT%H%M%SZ)-$(openssl rand -hex 8)"
-          echo "idempotency token: $TOKEN"
+          bash infra/capacity-run/launch-once.sh \
+            --user-data "$RUNNER_TEMP/user-data.sh" \
+            --token-file "$RUNNER_TEMP/state/client-token" \
+            --out "$RUNNER_TEMP/state/instance-id"
+          echo "id=$(cat "$RUNNER_TEMP/state/instance-id")" >> "$GITHUB_OUTPUT"
 
-          LAUNCH_EPOCH="${{ inputs.launch_epoch }}"
-          [ -n "$LAUNCH_EPOCH" ] || LAUNCH_EPOCH="$(date +%s)"
+      - name: Read back the configuration that was actually created
+        run: |
+          set -euo pipefail
+          bash infra/capacity-run/verify-instance.sh "$(cat "$RUNNER_TEMP/state/instance-id")"
 
-          # Render the payload from this checkout, with the operator's values and
-          # the digests CI published. The renderer refuses to emit plaintext.
-          export LAUNCH_EPOCH EXPECTED_COMMIT="$(git rev-parse HEAD)" \
-                 RUN_ID CAPACITY_HOSTNAME=capacity-run.test \
-                 EVIDENCE_TOKEN='${{ secrets.EVIDENCE_TOKEN }}' \
-                 TLS_CRT_B64='${{ secrets.TLS_CRT_B64 }}' \
-                 TLS_KEY_B64='${{ secrets.TLS_KEY_B64 }}' \
-                 POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
-                 REDIS_PASSWORD='${{ secrets.REDIS_PASSWORD }}' \
-                 GRAFANA_ADMIN_PASSWORD='${{ secrets.GRAFANA_ADMIN_PASSWORD }}' \
-                 JWT_SECRET='${{ secrets.JWT_SECRET }}' \
-                 LOADTEST_PASSWORD='${{ secrets.LOADTEST_PASSWORD }}'
-          bash infra/capacity-run/render-user-data.sh > /tmp/user-data.b64
-          RAW=$(base64 -d /tmp/user-data.b64 | wc -c)
-          echo "raw user-data: $RAW bytes (AWS limit 16384)"
-          if [ "$RAW" -gt 16384 ]; then
-            echo "::error title=payload::too large"; exit 1
+      - name: P3 - prove terminating this instance would be permitted
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          ID=$(cat "$RUNNER_TEMP/state/instance-id")
+          # Against the instance that exists now. There is no dry-run for an
+          # instance that has not been created.
+          if cap_aws ec2 terminate-instances --instance-ids "$ID" --dry-run 2>/tmp/p3.err \
+             || grep -q DryRunOperation /tmp/p3.err; then
+            echo "P3 accepted: terminate dry-run returned DryRunOperation for $ID"
+          else
+            echo "::error title=P3::terminate dry-run refused"
+            sed 's/Encoded authorization.*//' /tmp/p3.err
+            exit 1
           fi
 
-          # The digests must be present, or the guest compiles for an hour.
-          grep -q 'assetflow-capacity-api@sha256:' infra/capacity-run/image-digests.env \
-            || { echo "::error title=digest::no image digests pinned"; exit 1; }
-
-          ID=$(aws ec2 run-instances --region "$AWS_REGION" \
-            --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" \
-            --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
-            --no-key-name \
-            --credit-specification CpuCredits=standard \
-            --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}' \
-            --instance-initiated-shutdown-behavior terminate \
-            --client-token "$TOKEN" \
-            --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
-                         "ResourceType=volume,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
-                         "ResourceType=network-interface,Tags=[{Key=Project,Value=assetflow-capacity},{Key=RunId,Value=$RUN_ID}]" \
-            --user-data "file:///tmp/user-data.b64" \
-            --query 'Instances[0].InstanceId' --output text)
-          echo "instance: $ID"
-          echo "id=$ID" >> "$GITHUB_OUTPUT"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-          echo "$ID" > /tmp/instance-id
-
-      - name: Verify the configuration that was actually created
-        run: |
-          set -euo pipefail
-          ID=$(cat /tmp/instance-id)
-          aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" --output json > /tmp/desc.json
-          jq -e '.Reservations[0].Instances[0] | .InstanceType=="t3.micro"' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0] | .Placement.AvailabilityZone=="ap-southeast-2b"' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0] | (.KeyName // "")==""' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0] | (.IamInstanceProfile // null)==null' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0] | .InstanceInitiatedShutdownBehavior=="terminate"' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0] | .CreditSpecification.CpuCredits=="standard"' /tmp/desc.json >/dev/null
-          jq -e '.Reservations[0].Instances[0].BlockDeviceMappings[0] | .DeviceName=="/dev/sda1" and .Ebs.VolumeSize==30 and .Ebs.VolumeType=="gp3" and .Ebs.DeleteOnTermination==true' /tmp/desc.json >/dev/null
-          echo "configuration verified: t3.micro ap-southeast-2b, 30 GB gp3 /dev/sda1 DeleteOnTermination, standard credits, shutdown=terminate, no key, no role"
-
-      - name: Observe until the deadline
+      - name: Observe the run - watchdog, status polling, readiness
+        id: observe
+        timeout-minutes: 250
         env:
-          AWS_PROFILE: capacity
-          WATCHDOG_POLL: '60'
-          WATCHDOG_STATE_DIR: ${{ runner.temp }}/watchdog
+          EVIDENCE_TOKEN: ''
         run: |
           set -euo pipefail
-          ID=$(cat /tmp/instance-id)
-          # Positional: <instance-id> [lifetime-seconds]. It re-derives the deadline
-          # from the instance's own LaunchTime every cycle and terminates by that
-          # exact ID, so a missed cycle cannot extend the run.
-          bash infra/capacity-run/operator-watchdog.sh "$ID" 14400 || {
-            echo "::warning title=watchdog::watchdog exited non-zero"; }
-        continue-on-error: true
+          # The token the poller needs is read from the generated file, not from a
+          # copy of the secret.
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          bash infra/capacity-run/supervise-run.sh \
+            --instance "$(cat "$RUNNER_TEMP/state/instance-id")" \
+            --host "$CAPACITY_HOSTNAME" \
+            --trust-dir "$RUNNER_TEMP/trust" \
+            --state-dir "$RUNNER_TEMP/state"
 
-      - name: Keep the run alive while it is observed
+      - name: Record the outcome
+        if: always()
         run: |
           set -euo pipefail
-          echo "the watchdog step holds this job; the job ending is what closes the ingress"
+          S="$RUNNER_TEMP/state"
+          echo "## Capacity run outcome" >> "$GITHUB_STEP_SUMMARY"
+          for f in instance-id p3 watchdog-status ready-code; do
+            [ -f "$S/$f" ] && echo "- $f: \`$(cat "$S/$f")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+          COUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
+          echo "- retained snapshots: $COUNT" >> "$GITHUB_STEP_SUMMARY"
+          # The window matters: only a small, NON-SECRET selection is kept. The
+          # run directory on the instance holds credentials and is never copied.
+          mkdir -p "$RUNNER_TEMP/retained"
+          cp "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err 2>/dev/null || true
+          mv "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err "$RUNNER_TEMP/retained/" 2>/dev/null || true
+          cp -r "$S/snapshots" "$RUNNER_TEMP/retained/snapshots" 2>/dev/null || true
+          echo "retained $(ls -1 "$RUNNER_TEMP/retained" 2>/dev/null | wc -l) evidence files"
+
+      - name: Keep the retained evidence (non-secret only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-run-evidence
+          path: ${{ runner.temp }}/retained
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Terminate the exact instance this run created
+        if: always()
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          if [ ! -f "$S/instance-id" ]; then
+            echo "no instance-id recorded; reconciling by client token before concluding anything"
+            if [ -s "$S/client-token" ]; then
+              FOUND=$(cap_aws ec2 describe-instances \
+                --filters "Name=client-token,Values=$(cat "$S/client-token")" \
+                --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text)
+              # An absent file is not proof that no resource exists.
+              if [ -n "$FOUND" ]; then
+                echo "::warning title=reconcile::an instance exists for this token"; printf '%s\n' "$FOUND"
+                printf '%s\n' "$FOUND" | awk '{print $1}' | head -1 > "$S/instance-id"
+              else
+                echo "token reconciles to no instance"
+              fi
+            fi
+          fi
+          if [ -f "$S/instance-id" ]; then
+            ID=$(cat "$S/instance-id")
+            STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+              --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+            echo "instance $ID is $STATE"
+            if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+              cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+            fi
+            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+            VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+              --query 'Volumes[].[VolumeId,State]' --output text)
+            [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+          fi
 
       - name: Remove only the ingress rule this run added
         if: always()
         run: |
           set -euo pipefail
-          aws ec2 revoke-security-group-ingress --region "$AWS_REGION" \
-            --group-id "$SG_ID" \
-            --ip-permissions "IpProtocol=tcp,FromPort=8443,ToPort=8443,IpRanges=[{CidrIp=${{ steps.ip.outputs.addr }}/32}]" \
-            && echo "ingress rule for ${{ steps.ip.outputs.addr }}/32 removed" \
-            || echo "::warning title=ingress::rule was already absent"
-          aws ec2 describe-security-groups --region "$AWS_REGION" --group-ids "$SG_ID" \
-            --query 'SecurityGroups[0].IpPermissions' --output json
+          source infra/capacity-run/aws-context.sh
+          # Fails loudly if a tcp/8443 rule survives, rather than assuming every
+          # revoke error means "already absent".
+          bash infra/capacity-run/ingress.sh close --state-dir "$RUNNER_TEMP/state"
 
-      - name: Report and terminate if the instance outlived its window
+      - name: Confirm the account is clean
         if: always()
         run: |
           set -euo pipefail
-          ID=$(cat /tmp/instance-id 2>/dev/null || true)
-          [ -n "$ID" ] || { echo "no instance was created"; exit 0; }
-          STATE=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" \
-            --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
-          echo "instance $ID ended in state: $STATE"
-          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
-            echo "::warning title=lifetime::instance still up after the job; terminating the verified ID only"
-            aws ec2 terminate-instances --region "$AWS_REGION" --instance-ids "$ID" >/dev/null
-          fi
-          aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$ID" \
-            --query 'Reservations[0].Instances[0].[InstanceId,State.Name,CreditSpecification.CpuCredits,LaunchTime]' --output text || true
+          source infra/capacity-run/aws-context.sh
+          echo "run instances:"
+          cap_aws ec2 describe-instances --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text
+          echo "run volumes:"
+          cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text
+          echo "sg inbound:"
+          cap_aws ec2 describe-security-groups --group-ids "$SG_ID" \
+            --query 'SecurityGroups[0].IpPermissions' --output json

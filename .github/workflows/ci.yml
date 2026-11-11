@@ -1105,6 +1105,90 @@ jobs:
           rm -f infra/.env
           rm -rf infra/certs
 
+  orchestration:
+    name: Capacity orchestration (offline, fake AWS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq shellcheck
+
+      - name: Lint the new orchestration scripts
+        run: |
+          for f in infra/capacity-run/aws-context.sh \
+                   infra/capacity-run/launch-once.sh \
+                   infra/capacity-run/verify-instance.sh \
+                   infra/capacity-run/ingress.sh \
+                   infra/capacity-run/supervise-run.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Run the orchestration tests with no AWS credentials present
+        env:
+          # Explicitly empty: every test must pass with no ambient credentials,
+          # which is the property the previous workflow lacked.
+          AWS_ACCESS_KEY_ID: ''
+          AWS_SECRET_ACCESS_KEY: ''
+          AWS_PROFILE: ''
+          AWS_DEFAULT_PROFILE: ''
+          AWS_SHARED_CREDENTIALS_FILE: ''
+        run: |
+          set -euo pipefail
+          python3 -m unittest infra.tests.test_capacity_orchestration -v
+
+      - name: Prove the launcher never falls back to a default profile
+        run: |
+          set -euo pipefail
+          # With no credentials configured at all, every AWS call must still be
+          # spelled with --profile, so it fails loudly rather than silently
+          # using an ambient default.
+          grep -n 'cap_aws() {' -A2 infra/capacity-run/aws-context.sh
+          if grep -nE '^\s*aws\s+ec2' .github/workflows/capacity-run.yml; then
+            echo "::error title=profile::a bare aws call bypasses the profile"
+            exit 1
+          fi
+          echo "no bare aws calls in the launch workflow"
+
+      - name: Prove the rendered payload is raw executable shell
+        run: |
+          set -euo pipefail
+          base64 -w0 < README.md > "$RUNNER_TEMP/fake-crt" 2>/dev/null || true
+          export LAUNCH_EPOCH=1700000000 EXPECTED_COMMIT="$(git rev-parse HEAD)" \
+                 EVIDENCE_TOKEN="$(printf 't%.0s' $(seq 40))" \
+                 TLS_CRT_B64="$(printf 'crt' | base64 -w0)" \
+                 TLS_KEY_B64="$(printf 'key' | base64 -w0)" \
+                 RUN_ID=cap-20261109t0800z-a7f3 \
+                 POSTGRES_PASSWORD=p REDIS_PASSWORD=r GRAFANA_ADMIN_PASSWORD=g \
+                 JWT_SECRET="$(printf 'j%.0s' $(seq 40))" LOADTEST_PASSWORD=l
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          bash infra/capacity-run/render-user-data.sh > "$RUNNER_TEMP/ud.sh"
+          head -1 "$RUNNER_TEMP/ud.sh" | grep -qx '#!/bin/bash'
+          SIZE=$(wc -c < "$RUNNER_TEMP/ud.sh")
+          echo "raw payload: $SIZE bytes"
+          test "$SIZE" -le 16384
+          # What the CLI does: base64-encode those bytes. Decoding must give the
+          # script back, not base64 text.
+          python3 -c 'import base64,sys,pathlib; raw=pathlib.Path(sys.argv[1]).read_bytes(); assert base64.b64decode(base64.b64encode(raw))==raw, "roundtrip changed bytes"; assert raw.startswith(b"#!/bin/bash"), raw[:40]; print("CLI roundtrip returns executable shell")' "$RUNNER_TEMP/ud.sh"
+
+      - name: Prove the readback uses the APIs that report those fields
+        run: |
+          set -euo pipefail
+          grep -q 'describe-instance-credit-specifications' infra/capacity-run/verify-instance.sh
+          grep -q 'describe-instance-attribute' infra/capacity-run/verify-instance.sh
+          grep -q 'describe-volumes' infra/capacity-run/verify-instance.sh
+          # describe-instances does not return these two, so asserting them from
+          # it would fail on a correctly configured instance.
+          if grep -qE '\.(CreditSpecification|InstanceInitiatedShutdownBehavior)' \
+               infra/capacity-run/verify-instance.sh; then
+            echo "::error title=readback::a field describe-instances does not report is being asserted"
+            exit 1
+          fi
+          echo "readback uses the correct APIs"
+
   capacity-images:
     name: Publish capacity-test images (digest-pinned)
     runs-on: ubuntu-latest

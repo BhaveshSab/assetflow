@@ -11,7 +11,7 @@
 # TLS trust and bearer token, and it verifies the hostname. No -k, ever.
 #
 # Usage
-#   poll-status.sh --host HOST --token TOKEN --ca CA [--port 8443]
+#   poll-status.sh --host HOST --token TOKEN --ca CA [--address IP] [--port 8443]
 #                  [--outdir DIR] [--interval 30] [--duration 7200]
 #
 # Exit status: 0 if at least one snapshot was retained, 1 otherwise. A run that
@@ -25,6 +25,9 @@ PORT=8443
 OUTDIR=""
 INTERVAL=30
 DURATION=7200
+# The address the hostname should resolve to. Without this, --resolve maps the
+# name to the name and the pull goes nowhere.
+ADDRESS=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -32,6 +35,7 @@ while [ "$#" -gt 0 ]; do
         --token) TOKEN="$2"; shift 2 ;;
         --ca) CA="$2"; shift 2 ;;
         --port) PORT="$2"; shift 2 ;;
+        --address) ADDRESS="$2"; shift 2 ;;
         --outdir) OUTDIR="$2"; shift 2 ;;
         --interval) INTERVAL="$2"; shift 2 ;;
         --duration) DURATION="$2"; shift 2 ;;
@@ -57,7 +61,7 @@ fetch() {
     local target="$OUTDIR/${ts}-${name}.json"
     code=$(curl --silent --show-error --max-time 10 \
         --cacert "$CA" \
-        --resolve "${HOST}:${PORT}:${HOST}" \
+        --resolve "${HOST}:${PORT}:${ADDRESS:-$HOST}" \
         --header "Authorization: Bearer ${TOKEN}" \
         --output "$target" --write-out '%{http_code}' \
         "https://${HOST}:${PORT}${endpoint}" 2>/dev/null) || code=000

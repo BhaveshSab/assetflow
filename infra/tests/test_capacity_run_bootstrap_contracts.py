@@ -231,7 +231,7 @@ class PayloadSizeTests(unittest.TestCase):
                 if k not in ('POSTGRES_USER', 'POSTGRES_DB'):
                     env.setdefault(k, v)
         env.update(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40, RUN_ID='cap-test')
-        proc = subprocess.run(['bash', str(RENDER)], capture_output=True, text=True, env=env)
+        proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True, text=True, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         raw = base64.b64decode(proc.stdout)
         self.assertLessEqual(len(raw), EC2_USERDATA_LIMIT,

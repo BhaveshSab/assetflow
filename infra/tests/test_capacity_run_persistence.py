@@ -151,7 +151,7 @@ class ProvisioningTests(unittest.TestCase):
         for missing in required:
             env = self.render_env()
             env.pop(missing, None)
-            proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
+            proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True,
                                   text=True, timeout=30, env=env)
             self.assertNotEqual(proc.returncode, 0,
                                 f'{missing} absent must be a hard error')
@@ -159,7 +159,7 @@ class ProvisioningTests(unittest.TestCase):
     def test_render_refuses_short_tokens(self):
         env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
                               RUN_ID='r', EVIDENCE_TOKEN='short')
-        proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
+        proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('at least 32', proc.stderr)
@@ -168,7 +168,7 @@ class ProvisioningTests(unittest.TestCase):
         env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='a' * 40,
                               EVIDENCE_TOKEN='t' * 48, RUN_ID='r',
                               AWS_SECRET_ACCESS_KEY='secret')
-        proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
+        proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('refusing to embed', proc.stderr)
@@ -176,7 +176,7 @@ class ProvisioningTests(unittest.TestCase):
     def test_render_refuses_a_non_numeric_launch_epoch(self):
         env = self.render_env(LAUNCH_EPOCH='yesterday', EXPECTED_COMMIT='a' * 40,
                               EVIDENCE_TOKEN='t' * 48, RUN_ID='r')
-        proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
+        proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertNotEqual(proc.returncode, 0)
 
@@ -184,7 +184,7 @@ class ProvisioningTests(unittest.TestCase):
         import base64
         env = self.render_env(LAUNCH_EPOCH='1700000000', EXPECTED_COMMIT='c' * 40,
                               EVIDENCE_TOKEN='t' * 48, RUN_ID='cap-x')
-        proc = subprocess.run(['bash', str(RENDER)], capture_output=True,
+        proc = subprocess.run(['bash', str(RENDER), '--base64'], capture_output=True,
                               text=True, timeout=30, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         decoded = base64.b64decode(proc.stdout).decode('utf-8')

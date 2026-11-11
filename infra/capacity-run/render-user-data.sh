@@ -61,6 +61,23 @@ case "$LAUNCH_EPOCH" in
     ''|*[!0-9]*) echo "LAUNCH_EPOCH must be a unix timestamp" >&2; exit 2 ;;
 esac
 
+# Output encoding. The AWS CLI's --user-data file:// takes the RAW bytes of the
+# file and base64-encodes them itself. So this script must emit raw shell, not
+# base64: passing base64 text through file:// installs the base64 characters as
+# the user-data, and cloud-init then runs a script that is not a script. That
+# failure is silent - the instance boots, does nothing, and reports no error.
+#
+# Raw is therefore the default. --base64 exists for transports that want the
+# encoded form, and is never used for --user-data file://.
+RENDER_ENCODING=raw
+for arg in "$@"; do
+    case "$arg" in
+        --raw) RENDER_ENCODING=raw ;;
+        --base64) RENDER_ENCODING=base64 ;;
+        *) echo "render-user-data: unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Remove whole-line comments and blank lines from a shell script. Single-quoted
     # heredoc bodies inside the script are preserved verbatim, because those are
@@ -138,4 +155,29 @@ PROLOGUE
     # raw and the annotated sources exceed that; the explanations live in the
     # repo, not on the instance.
     strip_comments "$HERE/user-data.sh"
-} | base64
+} > "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+
+# The limit is on the RAW bytes, because that is what the CLI encodes. Checking
+# the base64 length instead would let a payload through that EC2 rejects.
+RAW_BYTES=$(wc -c < "${TMPDIR:-/tmp}/capacity-user-data.raw.$$")
+if [ "$RAW_BYTES" -gt 16384 ]; then
+    echo "render-user-data: payload is $RAW_BYTES bytes, over the 16384 limit" >&2
+    rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+    exit 4
+fi
+
+# A payload with no shebang would be executed by cloud-init as a shell fragment
+# and fail on the first non-shell line. This is the check that would have caught
+# a stripped shebang.
+head -1 "${TMPDIR:-/tmp}/capacity-user-data.raw.$$" | grep -qx '#!/bin/bash' || {
+    echo "render-user-data: payload does not start with #!/bin/bash" >&2
+    rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+    exit 5
+}
+
+if [ "$RENDER_ENCODING" = base64 ]; then
+    base64 < "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+else
+    cat "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+fi
+rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"

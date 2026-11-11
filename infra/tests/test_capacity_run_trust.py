@@ -138,7 +138,7 @@ class RenderedBootstrapTests(unittest.TestCase):
         env.update({'LAUNCH_EPOCH': '1700000000',
                     'EXPECTED_COMMIT': 'd' * 40, 'RUN_ID': 'cap-test'})
         env.update(overrides)
-        return run(['bash', str(RENDER)], env=env)
+        return run(['bash', str(RENDER), '--base64'], env=env)
 
     def test_rendered_payload_installs_the_trust_material(self):
         proc = self.render()
