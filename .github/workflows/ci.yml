@@ -1507,7 +1507,7 @@ jobs:
             # repository name there, which no client can pull.
             push_out=$(docker push "$remote:$SHA") || { echo "push of $remote:$SHA failed"; exit 1; }
             printf '%s\n' "$push_out" | tail -2
-            digest=$(printf '%s\n' "$push_out" | sed -n 's/.*digest: //p' | tr -d ' \r')
+            digest=$(printf '%s\n' "$push_out" | grep -o 'sha256:[a-f0-9]\{64\}' | tail -1)
             case "$digest" in
               sha256:*) ;;
               *) echo "::error title=digest::push did not report a digest for $remote:$SHA"; exit 1 ;;
