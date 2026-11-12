@@ -141,12 +141,34 @@ cleanup() {
     local status=$?
     [ "$CLEANUP_DONE" = false ] || return "$status"
     CLEANUP_DONE=true
-    # Only remove resources successfully created by this invocation. Each step is
-    # independent: a failure is reported but never prevents the remaining ones.
-    if [ "$MIGRATOR_CREATED" = true ]; then retry docker rm -f "$MIGRATOR" || { warn "migration container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$DB_CREATED" = true ]; then retry docker rm -f "$CONTAINER" || { warn "restore container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_VOLUME" = true ]; then retry docker volume rm "$VOLUME" || { warn "restore volume cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
-    if [ "$ADDED_NETWORK" = true ]; then retry docker network rm "$NETWORK" || { warn "restore network cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; fi
+    # Remove only resources this run created, gated on the per-resource flags.
+    #
+    # Each flag is assigned IMMEDIATELY BEFORE its create command, not after:
+    # bash defers a signal trap until the foreground command it interrupted has
+    # finished, so a SIGTERM arriving DURING `docker network create` runs
+    # cleanup only after that create has completed. With the flag set before
+    # the create, cleanup then removes the resource it knows exists. The old
+    # order (create, then flag) leaked exactly one network this way: the trap
+    # fired with the flag still false, the removal was skipped, and "interrupted
+    # run cleans up" failed with containers=0 volumes=0 networks=1 and no
+    # cleanup-failed message. The names carry the unique run id, so removal
+    # cannot touch anything this run did not create. After a failed removal the
+    # resource is re-checked before warning: a resource that vanished between
+    # the check and the rm is gone, which is success for cleanup, and a run
+    # that created nothing calls docker not at all.
+    # Each step is independent: a failure is reported but never prevents the rest.
+    if [ "$MIGRATOR_CREATED" = true ]; then
+        retry docker rm -f "$MIGRATOR" || { docker inspect "$MIGRATOR" >/dev/null 2>&1 && { warn "migration container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
+    fi
+    if [ "$DB_CREATED" = true ]; then
+        retry docker rm -f "$CONTAINER" || { docker inspect "$CONTAINER" >/dev/null 2>&1 && { warn "restore container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
+    fi
+    if [ "$ADDED_VOLUME" = true ]; then
+        retry docker volume rm "$VOLUME" || { docker volume inspect "$VOLUME" >/dev/null 2>&1 && { warn "restore volume cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
+    fi
+    if [ "$ADDED_NETWORK" = true ]; then
+        retry docker network rm "$NETWORK" || { docker network inspect "$NETWORK" >/dev/null 2>&1 && { warn "restore network cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
+    fi
     if [ -n "$WORK_DIR" ]; then rm -rf -- "$WORK_DIR"; fi
     return "$status"
 }
@@ -200,17 +222,30 @@ say "  checksum matches"
 
 # ------------------------------------------------- 2. the throwaway database --
 say "+ creating an owned internal network, volume and database (no published port)"
-docker network create --internal "$NETWORK" >/dev/null
+# Each flag goes up BEFORE its create: a signal arriving during the create is
+# deferred by bash until the create finishes, and cleanup must then remove what
+# that create made. On a create that FAILS the flag goes back down, so cleanup
+# never attempts to remove a resource that does not exist.
 ADDED_NETWORK=true
-docker volume create --label "assetflow.restore.run=${RUN_ID}" "$VOLUME" >/dev/null
+if ! docker network create --internal "$NETWORK" >/dev/null; then
+    ADDED_NETWORK=false
+    die "cannot create the isolated restore network"
+fi
 ADDED_VOLUME=true
-docker create --name "$CONTAINER" --pull never --network "$NETWORK" --network-alias restored-db \
+if ! docker volume create --label "assetflow.restore.run=${RUN_ID}" "$VOLUME" >/dev/null; then
+    ADDED_VOLUME=false
+    die "cannot create the isolated restore volume"
+fi
+DB_CREATED=true
+if ! docker create --name "$CONTAINER" --pull never --network "$NETWORK" --network-alias restored-db \
     -e POSTGRES_USER="$RESTORE_USER" \
     -e POSTGRES_PASSWORD="$RESTORE_PASSWORD" \
     -e POSTGRES_DB="$RESTORE_DB" \
     -v "${VOLUME}:/var/lib/postgresql/data" \
-    "$POSTGRES_IMAGE_ID" >/dev/null
-DB_CREATED=true
+    "$POSTGRES_IMAGE_ID" >/dev/null; then
+    DB_CREATED=false
+    die "cannot create the throwaway restore database container"
+fi
 docker start "$CONTAINER" >/dev/null
 
 # Wait for the database to accept a real TCP connection, not merely for
@@ -248,10 +283,13 @@ docker exec "$CONTAINER" pg_restore \
 # the DB nor the migrator publishes a port or uses host credentials/env files.
 say "+ applying this release's migrations with prisma migrate deploy"
 RESTORE_URL="postgresql://${RESTORE_USER}:${RESTORE_PASSWORD}@restored-db:5432/${RESTORE_DB}"
-docker create --name "$MIGRATOR" --pull never --network "$NETWORK" \
-    -e DATABASE_URL="$RESTORE_URL" --entrypoint node \
-    "$MIGRATE_IMAGE_ID" node_modules/prisma/build/index.js migrate deploy >/dev/null
 MIGRATOR_CREATED=true
+if ! docker create --name "$MIGRATOR" --pull never --network "$NETWORK" \
+    -e DATABASE_URL="$RESTORE_URL" --entrypoint node \
+    "$MIGRATE_IMAGE_ID" node_modules/prisma/build/index.js migrate deploy >/dev/null; then
+    MIGRATOR_CREATED=false
+    die "cannot create the isolated migration container"
+fi
 docker start "$MIGRATOR" >/dev/null
 migration_exit="$(timeout --kill-after=5s 180s docker wait "$MIGRATOR")" || die "cannot wait for isolated migrations"
 # Do not dump migration logs automatically: database errors may include data.
