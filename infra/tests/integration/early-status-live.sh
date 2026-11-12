@@ -86,6 +86,21 @@ sleep 1
 BASE="https://capacity-run.test:$START_PORT"
 
 # ---------------------------------------------------------------- assertion set
+# Wait for the listener: a cold runner can take several seconds to start
+# Python and load the certificate. Probing once after a fixed sleep would turn
+# slow startup into a false failure of the code under test.
+READY=0
+for _ in $(seq 1 15); do
+    if curl -sS --max-time 2 --cacert "$GLOBAL_CA" --resolve capacity-run.test:8443:127.0.0.1 \
+        -H "Authorization: Bearer $TOKEN" -o /dev/null "$BASE/status" 2>/dev/null; then
+        READY=1
+        break
+    fi
+    sleep 1
+done
+[ "$READY" = "1" ] || { printf 'FAIL  the status service never answered on %s\n' "$START_PORT"; cat "$W/status.log"; exit 1; }
+ok "the status service answered on $START_PORT"
+
 # 1. Authenticated GET with the right CA and hostname.
 BODY=$(curl -sS --max-time 5 --cacert "$GLOBAL_CA" --resolve capacity-run.test:8443:127.0.0.1 \
     -H "Authorization: Bearer $TOKEN" "$BASE/status" 2>"$W/e1.err" || true)
