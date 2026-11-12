@@ -45,7 +45,10 @@ EDGE_SRC="${EDGE_SRC:-https://raw.githubusercontent.com/BhaveshSab/assetflow/$EX
 # The trust anchor every probe verifies against. The guest mounts the run's own
 # certificate at /etc/capacity-run/tls.crt; the integration test overrides this
 # to its hermetic copy instead of writing to /etc.
-TRUST="${CAPACITY_TRUST:-/etc/capacity-run/tls.crt}"
+TRUST_DIR_SRC="${CAPACITY_TRUST_DIR:-/etc/capacity-run}"
+PROXY_DIR_SRC="${CAPACITY_PROXY_DIR:-/etc/capacity-run-proxy}"
+LOG_DIR_SRC="${CAPACITY_NGINX_LOG_DIR:-/var/log/nginx}"
+TRUST="${CAPACITY_TRUST:-$TRUST_DIR_SRC/tls.crt}"
 
 # Reachable means reachable over verified TLS from the port the client uses,
 # with the token the operator will actually send - not merely "the container is
@@ -68,14 +71,16 @@ wait_status() {
 
 run_edge_container() {
     # The certificate in /etc/capacity-run is already written. It is mounted
-    # read-only, and no other host path is exposed to the container.
+    # read-only, and no other host path is exposed to the container. The host
+    # paths are overridable so the hermetic integration test can exercise this
+    # exact code against its own temporary layout.
     docker rm -f capacity-edge >/dev/null 2>&1 || true
     docker run -d --name capacity-edge --restart unless-stopped --network host \
-        -v /etc/capacity-run:/etc/capacity-run:ro \
-        -v /etc/capacity-run-proxy:/etc/capacity-edge:ro \
-        -v /var/log/nginx:/var/log/nginx \
+        -v "$TRUST_DIR_SRC:/etc/capacity-run:ro" \
+        -v "$PROXY_DIR_SRC:/etc/capacity-edge:ro" \
+        -v "$LOG_DIR_SRC:/var/log/nginx" \
         nginx:1.27-alpine \
-        nginx -c /etc/capacity-edge/nginx.conf -g 'daemon off;' \
+        nginx -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null 2>&1 \
         || die "the early diagnostics edge failed to start"
 }
 
@@ -86,11 +91,15 @@ if [ "$MODE" = "switch" ]; then
     # is unbound and no second listener to collide with. A recreate is only a
     # fallback for a container that cannot reload.
     wait_status
-    if docker exec capacity-edge nginx -t -c /etc/capacity-edge/nginx.conf >/dev/null 2>&1 \
-       && docker exec capacity-edge nginx -s reload >/dev/null 2>&1; then
+    # -c is mandatory on BOTH calls: without it, `nginx -s reload` reads the
+    # compiled-default pid path instead of this config's, fails to signal the
+    # running master, and the handoff silently degrades to a recreate.
+    if TEST_OUT=$(docker exec capacity-edge nginx -t -c /etc/capacity-edge/nginx.conf 2>&1) \
+       && docker exec capacity-edge nginx -s reload -c /etc/capacity-edge/nginx.conf >/dev/null 2>&1; then
         say "edge: reloaded the running container onto full routing"
     else
         say "edge: reload unavailable, recreating the container on the same port"
+        say "edge: config test said: ${TEST_OUT:-<no output>}"
         run_edge_container
     fi
 

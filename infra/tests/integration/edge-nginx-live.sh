@@ -250,7 +250,8 @@ cp infra/capacity-run/edge/edge.conf "$W/proxy/edge.conf"
 cp infra/capacity-run/edge/nginx.conf "$W/proxy/nginx.conf"
 SWITCH_OUT=$(EXPECTED_COMMIT=0123456789abcdef0123456789abcdef01234567 \
     CAPACITY_HOSTNAME="$HOST" EVIDENCE_TOKEN="$TOKEN" EVIDENCE_DIR="$EVIDENCE_DIR" \
-    CAPACITY_TRUST="$W/guest/capacity-run/tls.crt" \
+    CAPACITY_TRUST_DIR="$W/guest/capacity-run" CAPACITY_PROXY_DIR="$W/proxy" \
+    CAPACITY_NGINX_LOG_DIR="$W/nginxlog" \
     EDGE_SRC="file://$REPO/infra/capacity-run/edge" \
     bash infra/capacity-run/early-edge.sh switch 2>&1 || true)
 if printf '%s' "$SWITCH_OUT" | grep -q 'reloaded the running container onto full routing'; then

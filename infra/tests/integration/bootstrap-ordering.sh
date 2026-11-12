@@ -131,8 +131,14 @@ for p in 9443 9444 8080; do
 done
 
 # ---- no new cloud surface ---------------------------------------------------
+# The TLS material travels as random base64, and a three-letter substring of
+# random base64 can accidentally spell a tool name - a real CI render matched
+# 'ssm' inside a key. The check is about the payload's code, so strip long
+# base64 runs (nothing legitimate carries a 40-character alphanumeric run)
+# before grepping.
+sed -E 's/[A-Za-z0-9+/]{40,}//g' "$W/ud.sh" > "$W/ud-code.sh"
 for tool in "aws s3" "ssm" "aws ec2-instance-connect"; do
-    if grep -qi "$tool" "$W/ud.sh"; then
+    if grep -qi "$tool" "$W/ud-code.sh"; then
         bad "payload references '$tool'; this change must not add cloud surface"
     else
         ok "payload does not use $tool"
