@@ -1181,6 +1181,47 @@ jobs:
           rm -f infra/.env
           rm -rf infra/certs
 
+  edge-live:
+    name: Early edge and handoff (real nginx, real TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Lint the scripts this job runs
+        run: |
+          for f in infra/capacity-run/early-edge.sh \
+                   infra/capacity-run/hold-runner.sh \
+                   infra/tests/integration/edge-nginx-live.sh \
+                   infra/tests/integration/stage4-hold.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Prove the early edge for real - nginx container, real TLS, real handoff
+        # The sixth attempt died during bootstrap with the guest unreachable from
+        # outside, and nothing could retrieve why. This runs the REAL edge the
+        # way the guest runs it: the nginx container on 8443, the real status
+        # service behind it, wrong-token/wrong-CA/wrong-hostname refusals, a held
+        # stage retained off-host across a kill, then the REAL handoff to full
+        # routing on the same listener, and the supervisor's own contract checks
+        # against the document served through the edge.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/early-status-live.sh
+
+      - name: Prove the Stage 4 runner hold is bounded
+        # The hold must never outlive the instance: a non-number is an error, a
+        # huge value is capped, a past guest deadline ends it, a terminated
+        # instance ends it, and a zero-minute hold closes immediately.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-hold.sh
+
   orchestration:
     name: Capacity orchestration (offline, fake AWS)
     runs-on: ubuntu-latest
@@ -1199,7 +1240,9 @@ jobs:
                    infra/capacity-run/launch-once.sh \
                    infra/capacity-run/verify-instance.sh \
                    infra/capacity-run/ingress.sh \
-                   infra/capacity-run/supervise-run.sh; do
+                   infra/capacity-run/supervise-run.sh \
+                   infra/capacity-run/early-edge.sh \
+                   infra/capacity-run/hold-runner.sh; do
             shellcheck --severity=warning --external-sources "$f"
           done
 

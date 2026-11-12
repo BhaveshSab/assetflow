@@ -551,40 +551,16 @@ jobs:
         # outlive the 4-hour instance lifetime. No AWS service or permission is
         # involved: this is a wait inside the job that is already running.
         if: always() && steps.observe.outputs.stage3 == 'pass'
-        env:
-          HOLD_MINUTES: ${{ vars.STAGE4_HOLD_MINUTES || '45' }}
         run: |
           set -euo pipefail
           S="$RUNNER_TEMP/state"
           echo "Stage 3 passed. Holding this runner so a Stage 4 approval can run
           against the SAME runner: same source /32, same private CA, same token,
           same state directory and the same retained instance."
-          echo "Hold is $HOLD_MINUTES minutes (max 120), bounded by the guest deadline."
-          echo "Retained instance: $(cat "$S/instance-id" 2>/dev/null || echo unknown)"
-          echo "Runner /32: $(cat "$S/ingress-cidr" 2>/dev/null || echo unknown)"
-          [[ "$HOLD_MINUTES" =~ ^[0-9]+$ ]] || { echo "::error title=hold::STAGE4_HOLD_MINUTES is not a number"; exit 1; }
-          [ "$HOLD_MINUTES" -le 120 ] || HOLD_MINUTES=120
-
-          # Resolve the absolute guest deadline and never run past it.
-          DEADLINE=$(cat "$S/deadline-epoch" 2>/dev/null || echo 0)
-          END=$(( $(date +%s) + HOLD_MINUTES * 60 ))
-          if [ "$DEADLINE" -gt 0 ] && [ "$END" -gt "$DEADLINE" ]; then
-            END=$(( DEADLINE - 300 ))
-          fi
-
-          echo "hold-until-epoch=$END" > "$S/hold-window"
-          echo "The runner stays alive until $END. Start Stage 4 within this window;"
-          echo "afterwards the guest terminates itself at its deadline."
-          while [ "$(date +%s)" -lt "$END" ]; do
-            ST=$(cap_aws ec2 describe-instances --instance-ids "$(cat "$S/instance-id")" \
-                   --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
-            if [ "$ST" = "terminated" ] || [ "$ST" = "shutting-down" ]; then
-              echo "instance is $ST; the hold ends here"
-              exit 0
-            fi
-            sleep 60
-          done
-          echo "hold window closed"
+          STATE_DIR="$S" HOLD_MINUTES="${{ vars.STAGE4_HOLD_MINUTES || '45' }}" \
+            CAP_PROFILE="${{ env.AWS_PROFILE || 'capacity' }}" \
+            CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \
+            bash infra/capacity-run/hold-runner.sh
 
       - name: Fail the job when Stage 3 did not meet its contract
         # Cleanup and retention above always run first. This step is what makes

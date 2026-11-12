@@ -28,8 +28,15 @@ for need in openssl curl python3; do
     command -v "$need" >/dev/null 2>&1 || { printf 'SKIP  %s missing; cannot run live TLS assertions\n' "$need"; exit 0; }
 done
 
+# On a Docker-capable host (CI), the reverse proxy itself is exercised for real:
+# the nginx container, the real handoff, and all three routes. The direct mode
+# below is only for hosts without Docker, and it says so plainly.
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/edge-nginx-live.sh" "$REPO"
+fi
+
 MODE=direct-bootstrap-status-and-structural-nginx
-printf 'MODE  %s (no docker/nginx here; proxy routing asserted structurally)\n' "$MODE"
+printf 'MODE  %s (no docker here; proxy routing asserted structurally)\n' "$MODE"
 
 W=$(mktemp -d)
 PIDS=()
