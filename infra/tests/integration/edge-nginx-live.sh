@@ -214,7 +214,7 @@ fi
 # The real evidence server on loopback 9443 and a fake application on 8080, in
 # the roles the real run gives them, then the REAL early-edge.sh switch.
 tar -czf "$EVIDENCE_DIR/snapshot-latest.tar.gz" -C "$EVIDENCE_DIR" evidence.env 2>/dev/null
-EVIDENCE_TOKEN="$TOKEN" python3 infra/scripts/evidence_server.py \
+EVIDENCE_TOKEN="$TOKEN" EVIDENCE_DIR="$EVIDENCE_DIR" python3 infra/scripts/evidence_server.py \
     --cert "$LEAF" --key "$LEAF_KEY" --port 9443 --host 127.0.0.1 > "$W/evidence.log" 2>&1 &
 PIDS+=("$!")
 printf 'ready\n' > "$W/app-state"
