@@ -304,6 +304,17 @@ contract_check() {
     fi
 }
 
+# The poller was started moments ago and fetches immediately, but on a fast
+# runner the readiness verdict can arrive before its first snapshot is written.
+# The contract is that a fresh sample EXISTS, not that it exists instantly, so
+# wait for the first one - bounded to a bit over one poll interval - instead of
+# failing an instantaneous check. On a real run dozens of snapshots already
+# exist by readiness and this returns on its first look.
+for _ in $(seq 1 35); do
+    ls -1 "$STATE_DIR"/snapshots/*.json >/dev/null 2>&1 && break
+    sleep 2
+done
+
 DOC="$STATE_DIR/ready.body"
 contract_check "readiness body present" "$([ -s "$DOC" ] && echo 1 || echo 0)"
 contract_check "status == ready" \
