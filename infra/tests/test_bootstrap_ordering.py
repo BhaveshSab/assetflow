@@ -60,7 +60,7 @@ class BootstrapOrdering(unittest.TestCase):
         # request - the failure the real-nginx test caught.
         self.assertIn("proxy_pass https://127.0.0.1:9444", early)
         self.assertIn("proxy_ssl_verify on", early)
-        self.assertIn("proxy_ssl_trusted_certificate /etc/capacity-run/proxy-ca.crt", early)
+        self.assertIn("proxy_ssl_trusted_certificate /etc/capacity-run/tls.crt", early)
         # The application and the evidence server do not exist yet when this
         # config runs. Routing to them would answer 502 and look like an app
         # fault, so the early edge must not route to them at all.

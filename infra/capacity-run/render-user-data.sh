@@ -123,9 +123,6 @@ chmod 700 /etc/capacity-run
 echo '${TLS_CRT_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.crt
 echo '${TLS_KEY_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
-# Trust anchor for the edge's verified-TLS upstream hops (9444 status, 9443
-# evidence). The certificate is self-signed, so the same bytes anchor it.
-cp /etc/capacity-run/tls.crt /etc/capacity-run/proxy-ca.crt
 
 mkdir -p /usr/local/lib/capacity-run-src
 cat > /usr/local/lib/capacity-run-src/deadline-guard.sh <<'GUARDEMBED'

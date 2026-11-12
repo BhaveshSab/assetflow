@@ -42,16 +42,15 @@ cleanup() {
 trap cleanup EXIT
 
 # ------------------------------------------------------------------ TLS material
-CA="$W/ca.pem"
+# The guest's certificate is SELF-SIGNED (generate-trust.sh): the same file is
+# the edge's server cert, the upstream trust anchor for the verified-TLS hops
+# to 9444/9443, and the client CA an operator trusts. Mirror that exactly.
 LEAF="$W/leaf.pem"
 LEAF_KEY="$W/leaf.key"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
-    -keyout "$W/ca.key" -out "$CA" -subj "/CN=capacity-run.test CA" >/dev/null 2>&1
-openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
-    -keyout "$LEAF_KEY" -out "$W/leaf.csr" -subj "/CN=capacity-run.test" >/dev/null 2>&1
-printf 'subjectAltName=DNS:capacity-run.test\n' > "$W/leaf.ext"
-openssl x509 -req -in "$W/leaf.csr" -CA "$CA" -CAkey "$W/ca.key" -CAcreateserial \
-    -out "$LEAF" -days 1 -extfile "$W/leaf.ext" >/dev/null 2>&1
+    -keyout "$LEAF_KEY" -out "$LEAF" -subj "/CN=capacity-run.test" \
+    -addext "subjectAltName=DNS:capacity-run.test" >/dev/null 2>&1
+CA="$LEAF"
 WRONG_CA="$W/wrong-ca.pem"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
     -keyout "$W/wrong.key" -out "$WRONG_CA" -subj "/CN=other CA" >/dev/null 2>&1
@@ -67,10 +66,6 @@ EVIDENCE_DIR="$RUN_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR" "$W/guest/capacity-run" "$W/proxy" "$W/nginxlog"
 cp "$LEAF" "$W/guest/capacity-run/tls.crt"
 cp "$LEAF_KEY" "$W/guest/capacity-run/tls.key"
-# The trust file the edge's upstream hops verify against. The real guest
-# copies its self-signed cert here (see render-user-data.sh); this test signs
-# the leaf with a real CA, so the CA is what the trust file must hold.
-cp "$CA" "$W/guest/capacity-run/proxy-ca.crt"
 chmod 600 "$W/guest/capacity-run/tls.key"
 # Realistic guest state the diagnostic body must never echo back.
 printf 'POSTGRES_PASSWORD=super-secret-pw\nJWT_SECRET=super-secret-jwt\n' > "$EVIDENCE_DIR/evidence.env"

@@ -1212,7 +1212,18 @@ jobs:
         # against the document served through the edge.
         run: |
           set -euo pipefail
-          bash infra/tests/integration/early-status-live.sh
+          # Job logs are admin-only; a bare exit code carries no diagnosis. Echo
+          # the failing lines back as workflow-command annotations, which the
+          # check-runs API does expose.
+          set +e
+          bash infra/tests/integration/early-status-live.sh 2>&1 | tee /tmp/edge-live.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            tail -40 /tmp/edge-live.log | sed 's/%/%25/g; s/\r/%0D/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+            exit "$rc"
+          fi
 
       - name: Prove the Stage 4 runner hold is bounded
         # The hold must never outlive the instance: a non-number is an error, a
