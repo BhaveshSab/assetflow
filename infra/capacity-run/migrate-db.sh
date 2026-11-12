@@ -91,10 +91,27 @@ if [ -n "${FIXTURE_MIGRATE_DIGEST:-}${FIXTURE_API_DIGEST:-}${FIXTURE_WEB_DIGEST:
     export WEB_IMAGE="$FIXTURE_WEB_DIGEST"
     say "pulling the pinned images by digest (no build)"
     # By digest only. There is deliberately no tag here to fall back to.
+    # The pull is BOUNDED and RETRIED: on a credit-throttled t3.micro the
+    # whole bootstrap runs at the 10% baseline, so a pull takes tens of
+    # minutes and docker's own layer timeouts can fail an attempt that a
+    # retry would survive. The ninth attempt died here: one failed pull
+    # meant an instant die() and a terminated instance.
+    PULL_ATTEMPTS="${PULL_ATTEMPTS:-2}"
+    PULL_TIMEOUT="${PULL_TIMEOUT:-1200}"
     for image in "$API_IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"; do
         echo "pull $image" >> "$EVIDENCE_DIR/pull.log"
-        if ! docker pull "$image" >> "$EVIDENCE_DIR/pull.log" 2>&1; then
-            echo "migrate-db: cannot pull $image"
+        pulled=0
+        for attempt in $(seq 1 "$PULL_ATTEMPTS"); do
+            echo "pull attempt $attempt/$PULL_ATTEMPTS (bounded ${PULL_TIMEOUT}s)" >> "$EVIDENCE_DIR/pull.log"
+            if timeout "$PULL_TIMEOUT" docker pull "$image" >> "$EVIDENCE_DIR/pull.log" 2>&1; then
+                pulled=1
+                break
+            fi
+            echo "pull attempt $attempt failed rc=$?" >> "$EVIDENCE_DIR/pull.log"
+            [ "$attempt" -lt "$PULL_ATTEMPTS" ] && sleep 30
+        done
+        if [ "$pulled" -ne 1 ]; then
+            echo "migrate-db: cannot pull $image after $PULL_ATTEMPTS attempts"
             tail -15 "$EVIDENCE_DIR/pull.log" 2>/dev/null
             exit 1
         fi
@@ -135,7 +152,7 @@ $COMPOSE up -d postgres redis || { echo "migrate-db: dependency services failed"
 # binds its port before it can authenticate, so a migration started in that gap
 # fails with P1001 "Can't reach database server" - which is exactly what a run
 # recorded. Wait for a real query, bounded, and say so if it never arrives.
-DB_WAIT="${DB_WAIT:-180}"
+DB_WAIT="${DB_WAIT:-600}"
 say "waiting for postgres to accept queries (bounded ${DB_WAIT}s)"
 db_ready=0
 for _ in $(seq 1 "$DB_WAIT"); do

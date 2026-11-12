@@ -310,7 +310,7 @@ if [ -r "$DIGEST_FILE" ]; then . "$DIGEST_FILE"; fi
 RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" \
 FIXTURE_API_DIGEST="${FIXTURE_API_DIGEST:-}" FIXTURE_MIGRATE_DIGEST="${FIXTURE_MIGRATE_DIGEST:-}" FIXTURE_WEB_DIGEST="${FIXTURE_WEB_DIGEST:-}" \
     bash "$APP_DIR/infra/capacity-run/migrate-db.sh" \
-        --evidence-dir "$EVIDENCE_DIR" --timeout 900 \
+        --evidence-dir "$EVIDENCE_DIR" --timeout 2400 \
     || die "database migration did not complete (see $EVIDENCE_DIR/migrate.log)"
 say "migration verified against the database"
 stage_done "deploy"

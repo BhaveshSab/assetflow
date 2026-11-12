@@ -231,8 +231,36 @@ DEADLINE=$(( START + MAX_MINUTES * 60 ))
 : > "$STATE_DIR/consumed"
 LAST_STAGE=""
 SAW_READY_CODE=""
+PASS=0
+
+# The t3.micro runs in Standard credit mode: once its small initial balance is
+# spent, the instance is capped at the 10% baseline for the rest of the run and
+# every phase crawls. The ninth attempt died exactly there, invisibly - the
+# credit balance was already ~0 at the first datapoint and nobody was watching
+# it. Report the balance from CloudWatch every ~5 minutes so the envelope is
+# visible live and in the retained evidence. Read-only; if the caller's
+# credentials cannot read it, say so and move on - never a gate.
+report_credits() {
+    local C
+    C=$(cap_aws cloudwatch get-metric-statistics --namespace AWS/EC2 \
+        --metric-name CPUCreditBalance \
+        --dimensions Name=InstanceId,Value="$INSTANCE_ID" \
+        --start-time "$(date -u -d '6 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
+        --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --period 300 --statistics Average \
+        --query 'Datapoints[0].Average' --output text 2>/dev/null || echo unavailable)
+    if [ -n "$C" ] && [ "$C" != "None" ] && [ "$C" != "unavailable" ]; then
+        say "cpu credit balance: $C"
+    else
+        say "cpu credit balance: unavailable (read-only metric not permitted or no datapoint yet)"
+    fi
+}
 
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    PASS=$(( PASS + 1 ))
+    if [ $(( PASS % 20 )) -eq 1 ]; then
+        report_credits
+    fi
     S=$(state)
     case "$S" in
         terminated|shutting-down)

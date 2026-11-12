@@ -546,6 +546,16 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_workflow_dispatch_is_declared(self):
         self.assertIn("workflow_dispatch", self.text)
 
+    def test_the_supervisor_reports_the_credit_balance(self):
+        # The ninth attempt was throttled to the 10% baseline from launch with
+        # a ~0 credit balance and nothing observed it. The supervisor must
+        # report CPUCreditBalance periodically - read-only, never a gate.
+        sup = (ROOT / "infra" / "capacity-run" / "supervise-run.sh").read_text(encoding="utf-8")
+        self.assertIn("CPUCreditBalance", sup)
+        self.assertIn("report_credits", sup)
+        self.assertIn("cpu credit balance", sup)
+        self.assertIn("never a gate", sup)
+
 
 class RetentionEvidenceTests(unittest.TestCase):
     """The artifact must carry the whole diagnostic record - and nothing secret.

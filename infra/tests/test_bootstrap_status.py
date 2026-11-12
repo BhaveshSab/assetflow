@@ -561,6 +561,28 @@ class PollerTests(unittest.TestCase):
     def test_no_snapshot_means_failure_not_success(self):
         self.assertIn('[ "$kept" -gt 0 ] || exit 1', self.script)
 
+    def test_the_pull_is_bounded_and_retried(self):
+        # On a credit-throttled t3.micro a pull takes tens of minutes and can
+        # fail on docker's own layer timeouts; the ninth attempt died because
+        # one failed pull meant an instant die(). The pull must be bounded and
+        # retried, and the bounds must fit the throttled envelope.
+        migrate = (ROOT / "infra" / "capacity-run" / "migrate-db.sh").read_text(encoding="utf-8")
+        self.assertIn('PULL_ATTEMPTS="${PULL_ATTEMPTS:-2}"', migrate)
+        self.assertIn('PULL_TIMEOUT="${PULL_TIMEOUT:-1200}"', migrate)
+        self.assertIn('timeout "$PULL_TIMEOUT" docker pull', migrate)
+        self.assertIn('sleep 30', migrate)
+        self.assertNotIn('if ! docker pull', migrate)
+
+    def test_the_throttled_envelope_bounds_are_generous(self):
+        # The ninth attempt's metrics: CPUCreditBalance ~0 and CPUUtilization
+        # pinned at 10.0% from the first datapoint - the whole run executes at
+        # the baseline. Every bound must be sized for that, not for a burst.
+        migrate = (ROOT / "infra" / "capacity-run" / "migrate-db.sh").read_text(encoding="utf-8")
+        self.assertIn('DB_WAIT="${DB_WAIT:-600}"', migrate)
+        user_data = USER_DATA.read_text(encoding="utf-8")
+        self.assertIn('--timeout 2400', user_data)
+        self.assertNotIn('--timeout 900', user_data)
+
     def test_bounded_by_a_duration(self):
         self.assertIn("--duration", self.script)
         self.assertIn("DURATION", self.script)
