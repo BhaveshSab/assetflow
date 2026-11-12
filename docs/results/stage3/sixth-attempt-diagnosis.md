@@ -56,7 +56,15 @@ no successful connection.
 
 ## Why port 8443 never answered
 
-The evidence does not establish this, and I will not guess. `curl (28)` at 11:11:05
+**Port reconciliation.** The capacity run uses exactly one externally reachable
+port: **8443**, the single-port TLS edge. Nothing in this run used 443, and any
+earlier reference to 443 was an error. Every client probe and every ingress rule
+in this report is 8443. The guest's own services are loopback-only by design:
+9444 for bootstrap status, 9443 for evidence, 8080 for the application behind
+the edge.
+
+**The guest-side cause is UNKNOWN, not merely unstated.** The evidence does not
+establish it, and I will not guess. `curl (28)` at 11:11:05
 is a probe of a dead instance. What *is* established: **no status snapshot was ever
 retained**, so the poller's own connects never succeeded either, from 10:55:43 onward.
 That means the edge was not serving `/status` for ~15 minutes while the instance was

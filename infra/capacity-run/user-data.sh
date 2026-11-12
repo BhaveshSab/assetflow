@@ -209,6 +209,22 @@ https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_C
     bounded 900 apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
 fi
 stage_done "packages"
+
+# ---------------------------------------- 2c. external diagnostics on 8443
+# The status service above is loopback-only and the full edge arrives only at
+# the end, so the guest was unreachable from outside for the whole of the build,
+# migration and seeding work - exactly the window in which a failure happens.
+# The diagnostic channel is published on the one approved port NOW, and nothing
+# else is. Reachability begins once packages (docker + the nginx image) are
+# available: it is NOT pre-package observability. Body fetched from the pinned
+# commit; user-data is capped at 16 KiB.
+stage_begin "early status edge"
+curl -fsSL "https://raw.githubusercontent.com/BhaveshSab/assetflow/$EXPECTED_COMMIT/infra/capacity-run/early-edge.sh" \
+    -o "$RUN_DIR_SRC/early-edge.sh" || die "cannot fetch early-edge.sh"
+EXPECTED_COMMIT="$EXPECTED_COMMIT" CAPACITY_HOSTNAME="$CAPACITY_HOSTNAME" \
+EVIDENCE_TOKEN="$EVIDENCE_TOKEN" EVIDENCE_DIR="$EVIDENCE_DIR" \
+    bash "$RUN_DIR_SRC/early-edge.sh"
+stage_done "early status edge"
 # 1 GB of RAM cannot build the image; swap is required, not optional.
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -376,26 +392,12 @@ mkdir -p /etc/capacity-run-proxy
 install -m 0644 "$APP_DIR/infra/capacity-run/edge/nginx.conf" /etc/capacity-run-proxy/nginx.conf
 install -m 0644 "$APP_DIR/infra/capacity-run/edge/edge.conf" /etc/capacity-run-proxy/edge.conf
 
-# No host nginx: run the edge as a host-network container.
-docker rm -f capacity-edge >/dev/null 2>&1 || true
-docker run -d --name capacity-edge --restart unless-stopped --network host \
-    -v /etc/capacity-run-proxy:/etc/capacity-edge:ro \
-    -v /etc/capacity-run:/etc/capacity-run:ro \
-    -v /var/log/nginx:/var/log/nginx \
-    nginx:1.27-alpine \
-    nginx -c /etc/capacity-edge/nginx.conf -g 'daemon off;' \
-    || die "single-port edge failed to start"
-
-# Verify the proxy actually reaches both destinations before declaring ready.
-for i in $(seq 1 30); do
-    A=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/health/ready || echo 0)
-    E=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $EVIDENCE_TOKEN" https://127.0.0.1:8443/evidence/snapshot-latest.tar.gz || echo 0)
-    [ "$A" = "200" ] && [ "$E" = "200" ] && break
-    [ "$i" -eq 30 ] && die "edge cannot reach app ($A) or evidence ($E)"
-    sleep 2
-done
-printf 'app=%s evidence=%s\n' "$A" "$E" > "$EVIDENCE_DIR/edge-routing"
-say "edge: app /api -> 8080, evidence /evidence -> 9443 (both 200)"
+# Hand the running early edge over to the full routing config. Same single 8443
+# listener for the whole run; see early-edge.sh switch for why there is no port
+# conflict and why a reload is preferred to a recreate.
+EXPECTED_COMMIT="$EXPECTED_COMMIT" CAPACITY_HOSTNAME="$CAPACITY_HOSTNAME" \
+EVIDENCE_TOKEN="$EVIDENCE_TOKEN" EVIDENCE_DIR="$EVIDENCE_DIR" \
+    bash "$RUN_DIR_SRC/early-edge.sh" switch
 
 # ------------------------------------------------- 6. persistent units
 # These are real installed units, not transient ones, so a reboot keeps them.

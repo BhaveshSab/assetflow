@@ -1230,6 +1230,11 @@ jobs:
           # launch was lost because it waited for a diagnostic field that is
           # hard-coded false, then reported success anyway.
           python3 -m unittest infra.tests.test_supervisor_contract -v
+          # The sixth attempt died during bootstrap with the guest unreachable
+          # from outside, so the failure left no retrievable cause. These pin the
+          # ordering fix: /status externally reachable BEFORE deploy, migration,
+          # seeding and app health, and reachable only after packages.
+          python3 -m unittest infra.tests.test_bootstrap_ordering -v
 
       - name: Render the real payload with the same TLS shape the launcher uses
         run: |
