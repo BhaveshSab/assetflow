@@ -404,12 +404,15 @@ jobs:
           # retention must always run, and the verdict is published so the job
           # can fail afterwards. A green job must never mean "cleanup succeeded".
           set +e
+          # The supervisor's own output is evidence: tee it into the state dir
+          # so retention keeps it even if the step log becomes unreadable.
+          # pipefail keeps RC = the supervisor's exit code, not tee's.
           bash infra/capacity-run/supervise-run.sh \
             --instance "$(cat "$RUNNER_TEMP/state/instance-id")" \
             --host "$CAPACITY_HOSTNAME" \
             --trust-dir "$RUNNER_TEMP/trust" \
             --state-dir "$RUNNER_TEMP/state" \
-            --max-minutes 230
+            --max-minutes 230 2>&1 | tee "$RUNNER_TEMP/state/supervisor.out"
           RC=$?
           set -e
           echo "supervisor rc=$RC"
@@ -433,9 +436,53 @@ jobs:
           done
           COUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
           echo "- retained snapshots: $COUNT" >> "$GITHUB_STEP_SUMMARY"
-          mkdir -p "$RUNNER_TEMP/retained"
-          cp "$S"/*.txt "$S"/*.log "$S"/*.body "$S"/*.err "$RUNNER_TEMP/retained/" 2>/dev/null || true
-          cp -r "$S/snapshots" "$RUNNER_TEMP/retained/snapshots" 2>/dev/null || true
+      - name: Retain the run evidence (named files, non-secret only)
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          R="$RUNNER_TEMP/retained"
+          mkdir -p "$R/snapshots"
+          # Every retained file is NAMED, never globbed: a glob is how a secret
+          # rides along. The set is the full diagnostic record of the run -
+          # supervisor output, watchdog state, poller output, readiness and the
+          # guest-export verification - so a post-mortem does not depend on the
+          # step log still being readable.
+          for f in supervisor.out verdict ready-code app-ready                    watchdog-status watchdog.log watchdog-pid heartbeat                    poll.log last-ready.body last-ready.err                    p3 p3.err instance-id                    guest-export.txt guest-export.log evidence.sha256; do
+            if [ -f "$S/$f" ]; then
+              cp "$S/$f" "$R/$f"
+            else
+              echo "::warning title=retention::expected evidence '$f' is absent"
+            fi
+          done
+          # Redacted status snapshots, including the per-poll failure records.
+          SCOUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
+          if [ "$SCOUNT" -gt 0 ]; then
+            cp "$S"/snapshots/*.json "$R/snapshots/"
+          else
+            echo "::warning title=retention::no status snapshots were retained"
+          fi
+          # The exported guest archive itself, when it exists and is small
+          # enough to keep; its verification result and log are always kept.
+          if [ -f "$S/guest-evidence.tar.gz" ]; then
+            SIZE=$(stat -c%s "$S/guest-evidence.tar.gz")
+            if [ "$SIZE" -le 10485760 ]; then
+              cp "$S/guest-evidence.tar.gz" "$R/"
+            else
+              echo "::warning title=retention::guest archive is $SIZE bytes; keeping checksum and log only"
+            fi
+          else
+            echo "::warning title=retention::no guest evidence archive was exported"
+          fi
+          # Deliberately NOT retained, wherever they live: client-token, every
+          # *.env (secrets.env included), the trust directory (private keys),
+          # the rendered user-data payload, and anything named *.key. The
+          # bearer token never appears in any retained log: no script in this
+          # run echoes its commands and every /status body is redacted.
+          if ls "$R" | grep -Eq 'client-token|\.env$|\.key$|user-data'; then
+            echo "::error title=retention::a forbidden filename reached the retained set"
+            exit 1
+          fi
 
       - name: Keep the retained evidence (non-secret only)
         if: always()

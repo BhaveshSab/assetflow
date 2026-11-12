@@ -565,6 +565,14 @@ class PollerTests(unittest.TestCase):
         self.assertIn("--duration", self.script)
         self.assertIn("DURATION", self.script)
 
+    def test_failure_records_are_kept_not_deleted(self):
+        # A rejected pull is evidence. The eighth attempt retained zero
+        # snapshots because fetch() wrote the failure record and immediately
+        # removed it, so the artifact could not show what the guest answered.
+        self.assertNotIn('rm -f "$target"', self.script)
+        failure_block = self.script[self.script.index('!= "200"') : self.script.index("return 1")]
+        self.assertIn('chmod 600 "$target"', failure_block)
+
 
 class EdgeRoutingTests(unittest.TestCase):
     """/status must be routable on the one approved port, and not shadowed."""
@@ -618,6 +626,12 @@ class StatusUnitExecStartTests(unittest.TestCase):
     every start. This test extracts the ExecStart line from user-data.sh and
     executes that argv, so argument drift between the script and the unit is
     a test failure instead of a dead instance.
+
+    Scope of the secrecy claim, deliberately narrow: the unit FILE carries the
+    variable reference, not a literal token, and no retained artifact or log
+    carries the token. The token IS expanded into the process arguments by
+    systemd, so it is visible to privileged process inspection on the guest -
+    that is accepted and asserted nowhere as absent.
     """
 
     def test_the_rendered_execstart_actually_serves_status(self):
@@ -627,10 +641,16 @@ class StatusUnitExecStartTests(unittest.TestCase):
         argv_line = BootstrapOrderingTests._status_execstart()
         # In the unit file the token is the VARIABLE (systemd expands it from
         # EnvironmentFile); substitute it here the way the manager would.
-        argv_line = argv_line.replace("\$", "$")
+        argv_line = argv_line.replace(r"\$", "$")
         self.assertIn("--token $EVIDENCE_TOKEN", argv_line)
 
+        # Render the run config the way the renderer does - bash expansion of
+        # the same heredoc template - and expand the unit's token variable from
+        # the PARSED config file, not from a test literal. If the config ever
+        # stops carrying EVIDENCE_TOKEN, or the unit stops referencing it, this
+        # test fails instead of the guest.
         token = os.urandom(16).hex()
+        env_file = self._render_run_config(token)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run_dir = tmp_path / "run"
@@ -654,7 +674,7 @@ class StatusUnitExecStartTests(unittest.TestCase):
                 argv_line
                 .replace("$BS", str(SERVICE))
                 .replace("$RUN_DIR", str(run_dir))
-                .replace("$EVIDENCE_TOKEN", token)
+                .replace("$EVIDENCE_TOKEN", env_file["EVIDENCE_TOKEN"])
                 .replace("--port 9444", f"--port {port}")
                 # The unit hardcodes the guest paths; the sandbox mounts its
                 # own certificate at the same role.
@@ -674,6 +694,47 @@ class StatusUnitExecStartTests(unittest.TestCase):
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+
+    @staticmethod
+    def _render_run_config(token: str) -> dict:
+        """Produce /etc/capacity-run/run-config.env exactly as the renderer does.
+
+        The renderer expands its heredoc template with bash variable
+        expansion; this reproduces that with the same shell semantics, then
+        parses the result the way systemd's EnvironmentFile does (KEY=value).
+        """
+        renderer = (ROOT / "infra" / "capacity-run" / "render-user-data.sh").read_text(encoding="utf-8")
+        begin = renderer.index("<<'CAPCONFIG'") + len("<<'CAPCONFIG'") + 1
+        end = renderer.index("\nCAPCONFIG", begin)
+        template = renderer[begin:end]
+        values = {
+            "LAUNCH_EPOCH": "1794500000",
+            "EXPECTED_COMMIT": "0" * 40,
+            "EVIDENCE_TOKEN": token,
+            "CAPACITY_HOSTNAME": "capacity-run.test",
+            "RUN_ID": "test-run",
+            "POSTGRES_PASSWORD": "pg-test",
+            "REDIS_PASSWORD": "redis-test",
+            "GRAFANA_ADMIN_PASSWORD": "grafana-test",
+            "JWT_SECRET": "jwt-test",
+            "LOADTEST_PASSWORD": "load-test",
+        }
+        rendered = subprocess.run(
+            ["bash", "-c", "cat <<EOF\n" + template + "\nEOF"],
+            env={**os.environ, **values},
+            capture_output=True, text=True, check=True,
+        ).stdout
+        config = {}
+        for line in rendered.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            config[key] = value
+        assert config.get("EVIDENCE_TOKEN") == token, (
+            "the rendered run config does not carry EVIDENCE_TOKEN as the unit expects"
+        )
+        return config
 
     def _assert_status_200(self, cert: Path, token: str, port: int, proc) -> None:
         ctx = ssl.create_default_context(cafile=str(cert))

@@ -67,9 +67,12 @@ fetch() {
         "https://${HOST}:${PORT}${endpoint}" 2>/dev/null) || code=000
     if [ "$code" != "200" ]; then
         # Keep the failure as evidence too; a rejected pull is information.
+        # The record STAYS: deleting it here is why the eighth attempt's
+        # artifact had an empty snapshots directory - every 502 poll wrote a
+        # record and immediately removed it, leaving nothing to retain.
         printf '{"error":"http_%s","endpoint":"%s","at":"%s"}\n' \
             "$code" "$endpoint" "$ts" > "$target" 2>/dev/null || true
-        rm -f "$target"
+        chmod 600 "$target" 2>/dev/null || true
         return 1
     fi
     chmod 600 "$target"

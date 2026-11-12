@@ -547,5 +547,57 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("workflow_dispatch", self.text)
 
 
+class RetentionEvidenceTests(unittest.TestCase):
+    """The artifact must carry the whole diagnostic record - and nothing secret.
+
+    The eighth attempt's artifact had no supervisor output, no watchdog state,
+    no heartbeat, no readiness result and an empty snapshots directory, which
+    is what forced the console-only diagnosis. Retention is now a named-file
+    contract, asserted here so it cannot quietly shrink again.
+    """
+
+    def setUp(self):
+        self.text = (ROOT / ".github" / "workflows" / "capacity-run.yml").read_text(encoding="utf-8")
+        start = self.text.index("Retain the run evidence")
+        self.step = self.text[start : self.text.index("Keep the retained evidence", start)]
+
+    def test_every_diagnostic_file_is_retained_by_name(self):
+        for name in (
+            "supervisor.out", "verdict", "ready-code", "app-ready",
+            "watchdog-status", "watchdog.log", "watchdog-pid", "heartbeat",
+            "poll.log", "last-ready.body", "last-ready.err",
+            "p3", "p3.err", "instance-id",
+            "guest-export.txt", "guest-export.log", "evidence.sha256",
+        ):
+            self.assertIn(name, self.step, f"{name} is not in the retained set")
+
+    def test_absent_evidence_warns_instead_of_passing_silently(self):
+        self.assertIn("::warning title=retention::expected evidence", self.step)
+        self.assertIn("no status snapshots were retained", self.step)
+        self.assertIn("no guest evidence archive was exported", self.step)
+
+    def test_snapshots_and_guest_archive_are_retained(self):
+        self.assertIn('snapshots/*.json', self.step)
+        self.assertIn("guest-evidence.tar.gz", self.step)
+
+    def test_secrets_are_excluded_by_name(self):
+        self.assertIn("client-token", self.step)
+        self.assertIn(".env", self.step)
+        self.assertIn(".key", self.step)
+        self.assertIn("user-data", self.step)
+        self.assertIn("forbidden filename reached the retained set", self.step)
+        # The retention step copies from the state dir only - never the trust
+        # directory, which holds the private key.
+        self.assertNotIn("trust", self.step.split("for f in")[1].split("done")[0])
+
+    def test_the_upload_covers_only_the_retained_directory(self):
+        upload = self.text[self.text.index("Keep the retained evidence"):]
+        self.assertIn("runner.temp }}/retained", upload[:400])
+        self.assertNotIn("runner.temp }}/state", upload[:400])
+
+    def test_the_supervisors_output_is_captured_for_retention(self):
+        self.assertIn('tee "$RUNNER_TEMP/state/supervisor.out"', self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
