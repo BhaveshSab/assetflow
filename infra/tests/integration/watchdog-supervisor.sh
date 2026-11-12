@@ -37,6 +37,18 @@ bad() { FAIL=$((FAIL+1)); printf 'FAIL  %s\n' "$*"; }
 want() { # want <description> <expected> <actual>
     if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want $2, got $3)"; fi
 }
+# Optional scenario filter (second arg): run only matching scenarios, for
+# reproducing a flake without paying for the whole suite every iteration.
+ONLY="${2:-}"
+scenario_selected() { [ -z "$ONLY" ] || case "$1" in *"$ONLY"*) return 0;; *) return 1;; esac; }
+dump_state() { # dump_state <state-dir> - diagnostics when a scenario fails
+    printf '%s\n' '--- supervisor.out tail ---'
+    tail -8 "$1/supervisor.out" 2>/dev/null
+    printf '%s\n' '--- guest-export.log tail ---'
+    tail -4 "$1/guest-export.log" 2>/dev/null
+    printf '%s\n' '--- watchdog.log tail ---'
+    tail -4 "$1/watchdog.log" 2>/dev/null
+}
 
 command -v python3 >/dev/null || { printf 'SKIP  python3 missing\n'; exit 0; }
 command -v openssl >/dev/null || { printf 'SKIP  openssl missing\n'; exit 0; }
@@ -178,6 +190,7 @@ heartbeat_value() { cat "$1/heartbeat" 2>/dev/null || echo ""; }
 # The app is ready immediately, so the supervisor completes on its first pass.
 # Run it with --max-minutes 1: the observation timeout must not touch the
 # watchdog's own lifetime.
+if scenario_selected happy; then
 SD="$W/happy"; mkdir -p "$SD/snapshots"
 APP_PID=$(python3 "$W/guest.py" "$PORT" "$W/trust/tls.crt" "$W/trust/tls.key" 0 > "$W/app.log" 2>&1 & echo $!)
 sleep 1
@@ -208,11 +221,13 @@ sleep 1
 # The detached watchdog outlives the supervisor; do not leave it running.
 WD=$(cat "$SD/watchdog-pid" 2>/dev/null || true); [ -n "$WD" ] && kill -9 "$WD" 2>/dev/null
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; APP_PID=""
+fi
 
 # ================================================= 2. deadline termination ==
 # A launch time in the past plus a one-second lifetime: the watchdog must
 # terminate EXACTLY this instance, once, and the supervisor must fail with the
 # verdict and its diagnostics preserved.
+if scenario_selected deadline; then
 SD="$W/deadline"; mkdir -p "$SD/snapshots"
 printf '{"State": "running", "Launch": "2020-01-01T00:00:00+00:00", "RunId": "%s"}\n' "$RUNID" > "$FAKE_DESCRIBE"
 echo 'running' > "$FAKE_STATE_FILE"; : > "$FAKE_TERM"
@@ -230,10 +245,12 @@ grep -q -- "--instance-ids $INSTANCE" "$FAKE_TERM" \
     || bad "no verdict after the deadline termination"
 [ -s "$SD/watchdog.log" ] && ok "the watchdog's own log was preserved" || bad "watchdog.log lost"
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; APP_PID=""
+fi
 
 # ==================================================== 3. wrong tag refusal ==
 # A RunId that is not this run's: the watchdog must refuse to act even with the
 # deadline long past.
+if scenario_selected wrongtag; then
 SD="$W/wrongtag"; mkdir -p "$SD/snapshots"
 printf '{"State": "running", "Launch": "2020-01-01T00:00:00+00:00", "RunId": "someone-elses-run"}\n' > "$FAKE_DESCRIBE"
 echo 'running' > "$FAKE_STATE_FILE"; : > "$FAKE_TERM"
@@ -246,11 +263,13 @@ grep -q "refusing to act" "$SD/status" \
     || bad "no refusal recorded: $(tail -2 "$SD/status" 2>/dev/null | tr '\n' ';')"
 WD=$(cat "$SD/watchdog-pid" 2>/dev/null || true); [ -n "$WD" ] && kill -9 "$WD" 2>/dev/null
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; APP_PID=""
+fi
 
 # ================================== 4. AWS read failure is not fake liveness =
 # After the first reads succeed, describe-instances starts failing. The
 # watchdog must keep heartbeating (its log shows the WARN), and the supervisor
 # must not confuse that failure with either liveness or death.
+if scenario_selected awsfail; then
 SD="$W/awsfail"; mkdir -p "$SD/snapshots"
 printf '{"State": "running", "Launch": "%s", "RunId": "%s"}\n' "$FAKE_LAUNCH" "$RUNID" > "$FAKE_DESCRIBE"
 echo 'running' > "$FAKE_STATE_FILE"
@@ -290,6 +309,7 @@ H2=$(heartbeat_value "$SD"); sleep 3; H3=$(heartbeat_value "$SD")
     || bad "heartbeat did not advance through the AWS failure ($H2 -> $H3)"
 WD=$(cat "$SD/watchdog-pid" 2>/dev/null || true); [ -n "$WD" ] && kill -9 "$WD" 2>/dev/null
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; APP_PID=""
+fi
 
 # Restore the plain fake for the remaining scenarios.
 cat > "$FAKE_BIN/aws" <<'AWSEOF'
@@ -318,6 +338,7 @@ echo 'running' > "$FAKE_STATE_FILE"
 
 fault_case() { # fault_case <name> <inject-function-name>
     local name="$1" inject="$2" sd rc pid
+    scenario_selected "$name" || return 0
     sd="$W/$name"; mkdir -p "$sd/snapshots"
     APP_PID=$(python3 "$W/guest.py" "$PORT" "$W/trust/tls.crt" "$W/trust/tls.key" 40 > "$W/app.log" 2>&1 & echo $!)
     sleep 1
@@ -356,21 +377,36 @@ inject_garbage() { kill -STOP "$2" 2>/dev/null; echo not-a-number > "$1/heartbea
 inject_future()  { kill -STOP "$2" 2>/dev/null; echo $(( $(date -u +%s) + 10000 )) > "$1/heartbeat"; }
 
 fault_case "wd-death" inject_death
+if scenario_selected wd-death; then
 grep -q "watchdog process .* is gone" "$W/wd-death/watchdog-status" \
     && ok "process death is named as the reason" || bad "death reason not recorded: $(cat "$W/wd-death/watchdog-status" 2>/dev/null)"
+fi
 
 fault_case "wd-stall" inject_stall
+if scenario_selected wd-stall; then
 grep -q "stale" "$W/wd-stall/watchdog-status" \
     && ok "a stalled heartbeat is named as the reason" || bad "stall reason not recorded: $(cat "$W/wd-stall/watchdog-status" 2>/dev/null)"
+fi
 
 fault_case "wd-garbage" inject_garbage
+if scenario_selected wd-garbage; then
 grep -q "not numeric" "$W/wd-garbage/watchdog-status" \
     && ok "a malformed heartbeat is named as the reason" || bad "malformed reason not recorded: $(cat "$W/wd-garbage/watchdog-status" 2>/dev/null)"
+fi
 
 fault_case "wd-future" inject_future
+if scenario_selected wd-future; then
 grep -q "in the future" "$W/wd-future/watchdog-status" \
     && ok "a future heartbeat is named as the reason" || bad "future reason not recorded: $(cat "$W/wd-future/watchdog-status" 2>/dev/null)"
+fi
 
+if [ "$FAIL" -gt 0 ]; then
+    for sd in "$W"/*/; do
+        [ -f "$sd/supervisor.out" ] || continue
+        printf '%s\n' "=== $(basename "$sd")"
+        dump_state "$sd"
+    done
+fi
 printf '\n---- watchdog-supervisor: %s (%d pass, %d fail) ----\n' \
     "$([ "$FAIL" -eq 0 ] && echo PASS || echo FAIL)" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

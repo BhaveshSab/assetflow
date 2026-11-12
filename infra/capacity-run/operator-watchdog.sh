@@ -54,7 +54,13 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$STATE_
 aws_() { aws --profile "$PROFILE" --region "$REGION" "$@"; }
 
 while true; do
-    date -u +%s > "$STATE_DIR/heartbeat"
+    # Atomic write: a reader (the supervisor's liveness check) must never see
+    # the truncated instant of a plain ">" redirect, which it would read as a
+    # missing or non-numeric heartbeat and treat as a dead watchdog. Write to a
+    # private temp file and rename - rename within the same directory is
+    # atomic, so the heartbeat is either the previous value or the new one.
+    HB_TMP="$STATE_DIR/.heartbeat.$$"
+    date -u +%s > "$HB_TMP" && mv -f "$HB_TMP" "$STATE_DIR/heartbeat"
 
     # Re-read the instance every cycle. Stop if it is gone, so the watchdog does
     # not outlive its purpose.
