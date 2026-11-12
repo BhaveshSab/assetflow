@@ -55,7 +55,12 @@ class BootstrapOrdering(unittest.TestCase):
 
     def test_early_edge_is_diagnostics_only(self) -> None:
         early = (REPO / "infra/capacity-run/edge/edge-early.conf").read_text(encoding="utf-8")
-        self.assertIn("proxy_pass http://127.0.0.1:9444", early)
+        # The status service is TLS-only, so the upstream hop must be verified
+        # TLS. A plain-HTTP proxy_pass to a TLS socket answers 502 on every
+        # request - the failure the real-nginx test caught.
+        self.assertIn("proxy_pass https://127.0.0.1:9444", early)
+        self.assertIn("proxy_ssl_verify on", early)
+        self.assertIn("proxy_ssl_trusted_certificate /etc/capacity-run/proxy-ca.crt", early)
         # The application and the evidence server do not exist yet when this
         # config runs. Routing to them would answer 502 and look like an app
         # fault, so the early edge must not route to them at all.
@@ -65,10 +70,13 @@ class BootstrapOrdering(unittest.TestCase):
 
     def test_full_edge_keeps_all_three_routes(self) -> None:
         full = (REPO / "infra/capacity-run/edge/edge.conf").read_text(encoding="utf-8")
+        # The application is plain HTTP on loopback; the diagnostic services
+        # are TLS-only and must be proxied over verified TLS.
         self.assertIn("proxy_pass http://127.0.0.1:8080", full)
-        self.assertIn("proxy_pass http://127.0.0.1:9443", full)
+        self.assertIn("proxy_pass https://127.0.0.1:9443", full)
+        self.assertIn("proxy_pass https://127.0.0.1:9444", full)
+        self.assertIn("proxy_ssl_verify on", full)
         self.assertIn("location /status", full)
-        self.assertIn("127.0.0.1:9444", full)
 
     def test_one_externally_reachable_port(self) -> None:
         # Exactly one port is opened in the security group. If a config ever

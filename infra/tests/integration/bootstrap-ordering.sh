@@ -90,14 +90,15 @@ before "$EARLY" "$EDGE"   "early status edge"  "single-port edge"
 EARLY_CONF=infra/capacity-run/edge/edge-early.conf
 [ -f "$EARLY_CONF" ] || bad "$EARLY_CONF is missing"
 
-if grep -q 'proxy_pass http://127.0.0.1:9444' "$EARLY_CONF"; then
-    ok "early edge proxies /status to the loopback status service"
+if grep -q 'proxy_pass https://127.0.0.1:9444' "$EARLY_CONF" \
+   && grep -q 'proxy_ssl_verify on' "$EARLY_CONF"; then
+    ok "early edge proxies /status to the status service over verified TLS"
 else
-    bad "early edge does not route /status to 9444"
+    bad "early edge must proxy /status to 9444 over verified TLS (plain http to a TLS socket answers 502 forever)"
 fi
 
 for forbidden in 8080 9443; do
-    if grep -q "proxy_pass http://127.0.0.1:$forbidden" "$EARLY_CONF"; then
+    if grep -qE "proxy_pass https?://127.0.0.1:$forbidden" "$EARLY_CONF"; then
         bad "early edge routes to $forbidden; it must serve diagnostics only"
     else
         ok "early edge does not route to $forbidden"
@@ -109,8 +110,12 @@ grep -q 'return 503' "$EARLY_CONF" && ok "early edge refuses everything else wit
 
 grep -q 'proxy_pass http://127.0.0.1:8080' infra/capacity-run/edge/edge.conf \
     && ok "the full edge routes the application" || bad "full edge does not route the application"
-grep -q 'proxy_pass http://127.0.0.1:9443' infra/capacity-run/edge/edge.conf \
-    && ok "the full edge routes evidence" || bad "full edge does not route evidence"
+if grep -q 'proxy_pass https://127.0.0.1:9443' infra/capacity-run/edge/edge.conf \
+   && grep -q 'proxy_ssl_verify on' infra/capacity-run/edge/edge.conf; then
+    ok "the full edge routes evidence over verified TLS"
+else
+    bad "full edge must proxy /evidence to 9443 over verified TLS"
+fi
 grep -q 'location /status' infra/capacity-run/edge/edge.conf \
     && ok "the full edge keeps the diagnostic route" || bad "full edge drops /status"
 

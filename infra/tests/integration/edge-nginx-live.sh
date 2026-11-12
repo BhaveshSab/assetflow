@@ -67,6 +67,10 @@ EVIDENCE_DIR="$RUN_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR" "$W/guest/capacity-run" "$W/proxy" "$W/nginxlog"
 cp "$LEAF" "$W/guest/capacity-run/tls.crt"
 cp "$LEAF_KEY" "$W/guest/capacity-run/tls.key"
+# The trust file the edge's upstream hops verify against. The real guest
+# copies its self-signed cert here (see render-user-data.sh); this test signs
+# the leaf with a real CA, so the CA is what the trust file must hold.
+cp "$CA" "$W/guest/capacity-run/proxy-ca.crt"
 chmod 600 "$W/guest/capacity-run/tls.key"
 # Realistic guest state the diagnostic body must never echo back.
 printf 'POSTGRES_PASSWORD=super-secret-pw\nJWT_SECRET=super-secret-jwt\n' > "$EVIDENCE_DIR/evidence.env"
@@ -100,9 +104,9 @@ for _ in $(seq 1 20); do
 done
 if [ "$READY" != "1" ]; then
     bad "the early edge never served /status on 8443"
-    printf '--- status service log ---\n'; cat "$W/status.log" 2>/dev/null
-    printf '--- nginx container log ---\n'; docker logs "$CONTAINER" 2>&1 | tail -15
-    printf '--- listeners on the host ---\n'; ss -ltn 2>/dev/null | grep -E '8443|9444' || true
+    printf '%s\n' '--- status service log ---'; cat "$W/status.log" 2>/dev/null
+    printf '%s\n' '--- nginx container log ---'; docker logs "$CONTAINER" 2>&1 | tail -15
+    printf '%s\n' '--- listeners on the host ---'; ss -ltn 2>/dev/null | grep -E '8443|9444' || true
     exit 1
 fi
 
@@ -126,8 +130,8 @@ BODY=$(curl -sS --max-time 5 --cacert "$CA" $RES -H "Authorization: Bearer $TOKE
 if printf '%s' "$BODY" | grep -q '"stage"'; then ok "/status served through nginx (authenticated, verified TLS)"
 else
     bad "/status did not return the status document: $(printf '%s' "$BODY" | head -c 120)"
-    printf '--- status service log ---\n'; cat "$W/status.log" 2>/dev/null
-    printf '--- nginx error log ---\n'; tail -8 "$W/nginxlog/capacity-edge-error.log" 2>/dev/null || docker logs "$CONTAINER" 2>&1 | tail -8
+    printf '%s\n' '--- status service log ---'; cat "$W/status.log" 2>/dev/null
+    printf '%s\n' '--- nginx error log ---'; tail -8 "$W/nginxlog/capacity-edge-error.log" 2>/dev/null || docker logs "$CONTAINER" 2>&1 | tail -8
 fi
 
 # 2. Everything else is refused while bootstrap runs.
