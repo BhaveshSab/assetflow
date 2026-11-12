@@ -184,7 +184,7 @@ curl -fsSL --max-time 30 "https://raw.githubusercontent.com/BhaveshSab/assetflow
 unit() { printf '[Unit]\nDescription=%s\nAfter=network-online.target\n[Service]\n%s\nRestart=always\n[Install]\nWantedBy=multi-user.target\n' "$2" "$3" > "/etc/systemd/system/$1.service"; }
 
 unit capacity-status "cap status" "EnvironmentFile=$CONFIG
-ExecStart=/usr/bin/python3 $BS --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --run-dir $RUN_DIR --port 9444"
+ExecStart=/usr/bin/python3 $BS --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --run-dir $RUN_DIR --port 9444 --token \$EVIDENCE_TOKEN"
 systemctl enable --now capacity-status.service || die "status endpoint failed"
 # ------------------------------------------------------------- 2. packages
 stage_begin "packages"

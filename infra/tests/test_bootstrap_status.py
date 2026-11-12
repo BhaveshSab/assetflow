@@ -15,6 +15,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
+import shutil
+import socket
 import ssl
 import subprocess
 import sys
@@ -477,6 +480,27 @@ class BootstrapOrderingTests(unittest.TestCase):
         self.assertIn("unit capacity-status", self.text)
         self.assertNotIn("EVIDENCE_TOKEN=" , self.text.split("unit capacity-status")[1].split("\n")[0])
 
+    def test_status_unit_passes_the_token_to_the_script(self):
+        # bootstrap-status.py requires --token; a unit that omits it crashes on
+        # every start (argparse exit 2), systemd restarts it into a start-rate
+        # limit, nothing listens on 9444, and the early edge answers 502 until
+        # the bootstrap dies. The eighth attempt failed exactly this way. The
+        # token must reach the script while still coming from the run config:
+        # the unit file carries the VARIABLE, which systemd expands from
+        # EnvironmentFile, so no secret is written into the unit.
+        line = self._status_execstart()
+        self.assertIn("--token $EVIDENCE_TOKEN", line)
+
+    @staticmethod
+    def _status_execstart() -> str:
+        text = USER_DATA.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.startswith("ExecStart=/usr/bin/python3"):
+                # The unit file is emitted by bash, where the token variable is
+                # escaped as \$; systemd receives and expands plain $NAME.
+                return line.rstrip('"').replace(r"\$", "$")
+        raise AssertionError("no ExecStart for the status service found in user-data.sh")
+
     def test_stage_is_recorded_for_the_endpoint(self):
         self.assertIn('"$EVIDENCE_DIR/stage-current"', self.text)
 
@@ -583,3 +607,101 @@ class SeedDiagnosabilityTests(unittest.TestCase):
     def test_raw_log_is_not_written_to_console(self):
         # A bounded summary may go to console; the raw log must not.
         self.assertIn("seed.log", self.helper)
+
+
+class StatusUnitExecStartTests(unittest.TestCase):
+    """Run the status service EXACTLY as the rendered systemd unit does.
+
+    The eighth attempt failed because the unit's ExecStart omitted --token:
+    every structural test passed, the integration test passed because it
+    invoked the script correctly by hand, and the real unit still crashed on
+    every start. This test extracts the ExecStart line from user-data.sh and
+    executes that argv, so argument drift between the script and the unit is
+    a test failure instead of a dead instance.
+    """
+
+    def test_the_rendered_execstart_actually_serves_status(self):
+        exe = shutil.which("openssl")
+        if exe is None:
+            self.skipTest("openssl not available; cannot exercise the real TLS argv")
+        argv_line = BootstrapOrderingTests._status_execstart()
+        # In the unit file the token is the VARIABLE (systemd expands it from
+        # EnvironmentFile); substitute it here the way the manager would.
+        argv_line = argv_line.replace("\$", "$")
+        self.assertIn("--token $EVIDENCE_TOKEN", argv_line)
+
+        token = os.urandom(16).hex()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_dir = tmp_path / "run"
+            run_dir.mkdir()
+            cert = tmp_path / "tls.crt"
+            key = tmp_path / "tls.key"
+            subprocess.run(
+                [exe, "req", "-x509", "-newkey", "ec", "-pkeyopt",
+                 "ec_paramgen_curve:prime256v1", "-keyout", str(key),
+                 "-out", str(cert), "-days", "2", "-nodes",
+                 "-subj", "/CN=capacity-run.test",
+                 "-addext", "subjectAltName=DNS:capacity-run.test"],
+                check=True, capture_output=True,
+            )
+            # A free port replaces the literal 9444; the port does not change
+            # which arguments the script requires.
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = probe.getsockname()[1]
+            argv = (
+                argv_line
+                .replace("$BS", str(SERVICE))
+                .replace("$RUN_DIR", str(run_dir))
+                .replace("$EVIDENCE_TOKEN", token)
+                .replace("--port 9444", f"--port {port}")
+                # The unit hardcodes the guest paths; the sandbox mounts its
+                # own certificate at the same role.
+                .replace("--cert /etc/capacity-run/tls.crt", f"--cert {cert}")
+                .replace("--key /etc/capacity-run/tls.key", f"--key {key}")
+            )
+            argv = argv.split("=", 1)[1]  # drop the "ExecStart=" prefix
+            proc = subprocess.Popen(
+                shlex.split(argv),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            try:
+                self._assert_status_200(cert, token, port, proc)
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+    def _assert_status_200(self, cert: Path, token: str, port: int, proc) -> None:
+        ctx = ssl.create_default_context(cafile=str(cert))
+        last_error: Exception | None = None
+        for _ in range(50):
+            if proc.poll() is not None:
+                self.fail(f"the unit argv exited immediately rc={proc.returncode}")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=2) as raw:
+                    with ctx.wrap_socket(raw, server_hostname="capacity-run.test") as tls:
+                        request = (
+                            f"GET /status HTTP/1.1\r\nHost: capacity-run.test\r\n"
+                            f"Authorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+                        )
+                        tls.sendall(request.encode())
+                        chunks = []
+                        while True:
+                            part = tls.recv(65536)
+                            if not part:
+                                break
+                            chunks.append(part)
+                        payload = b"".join(chunks).decode(errors="replace")
+                self.assertTrue(payload.startswith("HTTP/1.1 200"), payload[:120])
+                body = payload.split("\r\n\r\n", 1)[1]
+                fields = json.loads(body)
+                self.assertIn("stage", fields)
+                return
+            except (OSError, ValueError) as exc:
+                last_error = exc
+                time.sleep(0.2)
+        self.fail(f"the unit argv never answered /status: {last_error}")
