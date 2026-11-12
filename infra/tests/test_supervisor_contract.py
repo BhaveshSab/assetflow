@@ -160,14 +160,16 @@ class SupervisorContract(unittest.TestCase):
 
         # The stub emulates the REAL operator-watchdog.sh interface: positional
         # <instance-id> [lifetime-seconds], state in WATCHDOG_STATE_DIR, and a
-        # numeric heartbeat written every cycle. It is deliberately NOT the
-        # "echo alive" fiction the supervisor once expected - that mismatch
-        # killed the seventh attempt (run 43224628030).
+        # numeric heartbeat written every cycle - atomically, like the real
+        # watchdog, so the supervisor's liveness check can never observe the
+        # truncated instant of a plain ">" redirect (a torn read reads as a
+        # missing or non-numeric heartbeat and fails the run; on a fast runner
+        # with a 2s poll this actually happened in CI).
         (state.parent / "operator-watchdog.sh").write_text(
             "#!/usr/bin/env bash\n"
             'SD="${WATCHDOG_STATE_DIR:?}"\n'
             'mkdir -p "$SD"; echo $$ > "$SD/pid"\n'
-            'while :; do date -u +%s > "$SD/heartbeat"; sleep 2; done\n')
+            'while :; do date -u +%s > "$SD/.hb.$$" && mv -f "$SD/.hb.$$" "$SD/heartbeat"; sleep 2; done\n')
         (state.parent / "operator-watchdog.sh").chmod(0o755)
         stub = ROOT / "infra" / "tests" / "fixtures" / "poller_stub.sh"
         shutil.copy(stub, state.parent / "poll-status.sh")
