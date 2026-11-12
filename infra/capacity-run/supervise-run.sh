@@ -375,7 +375,7 @@ if [ -z "$EXPORTER" ]; then
     GUEST_EXPORT_NOTE="export client not found"
 elif [ -z "$GUEST_NAME" ] || [ -z "$GUEST_SHA" ]; then
     contract_check "guest evidence exported and checksum-verified" "0"
-    GUEST_EXPORT_NOTE="no guest-supplied digest in any retained snapshot"
+    GUEST_EXPORT_NOTE="no guest-supplied digest in any retained snapshot (scanned $(ls -1 "$STATE_DIR"/snapshots/*.json 2>/dev/null | wc -l) snapshots)"
 else
     GUEST_OUT="$STATE_DIR/guest-evidence.tar.gz"
     : > "$STATE_DIR/guest-export.log"
@@ -390,11 +390,13 @@ else
         printf 'guest-verified archive=%s sha256=%s bytes=%s\n' \
             "$GUEST_NAME" "$GUEST_SHA" "$(wc -c < "$GUEST_OUT")" > "$STATE_DIR/guest-export.txt"
     else
+        # A failure must name its reason: the export log is the evidence, and a
+        # bounded tail of it reaches the supervisor output the workflow records.
         contract_check "guest evidence exported and checksum-verified" "0"
-        GUEST_EXPORT_NOTE="export failed or unverified (see guest-export.log)"
+        GUEST_EXPORT_NOTE="export failed or unverified: $(tail -c 300 "$STATE_DIR/guest-export.log" 2>/dev/null | tr '\n' ';')"
     fi
 fi
-[ -n "$GUEST_EXPORT_NOTE" ] && printf '%s\n' "$GUEST_EXPORT_NOTE" > "$STATE_DIR/guest-export.txt"
+[ -n "$GUEST_EXPORT_NOTE" ] && { printf '%s\n' "$GUEST_EXPORT_NOTE" > "$STATE_DIR/guest-export.txt"; warn "guest export: $GUEST_EXPORT_NOTE"; }
 
 say "stage last seen: ${LAST_STAGE:-none}"
 printf 'ready' > "$STATE_DIR/app-ready"

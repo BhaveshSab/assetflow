@@ -108,15 +108,40 @@ find_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",
 PORT="$(find_port)"
 
 cat > "$W/guest.py" <<'PYEOF'
-import http.server, ssl, sys, json, time
+import http.server, ssl, sys, json, time, tarfile, io, hashlib
 port, crt, key, delay = int(sys.argv[1]), sys.argv[2], sys.argv[3], float(sys.argv[4])
 start = time.time()
+# The guest publishes an evidence archive and records its digest the way
+# snapshot-evidence.sh does; the status document carries that digest to the
+# runner, and the evidence endpoint serves the bytes. The supervisor's export
+# contract needs both.
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+    data = json.dumps({'bootstrap-status': 'ready', 'fixture_users': 200}).encode()
+    info = tarfile.TarInfo('bootstrap-status'); info.size = len(data)
+    tar.addfile(info, io.BytesIO(data))
+archive = buf.getvalue()
+GUEST_NAME = 'snapshot-20260101T090000Z.tar.gz'
+GUEST_SHA = hashlib.sha256(archive).hexdigest()
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+    def _send(self, code, body, ctype='application/json'):
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers(); self.wfile.write(body)
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path.startswith("/evidence/"):
+            if path == "/evidence/" + GUEST_NAME:
+                self._send(200, archive, 'application/gzip')
+            else:
+                self._send(404, b'not found')
+            return
         if path == "/status":
-            body = json.dumps({"stage": "application health", "application_ready": False}).encode()
+            body = json.dumps({"stage": "application health", "application_ready": False,
+                               "evidence_snapshot": {"name": GUEST_NAME, "sha256": GUEST_SHA,
+                                                     "bytes": len(archive)}}).encode()
             code = 200
         elif path == "/api/health/ready":
             if (time.time() - start) < delay:
@@ -128,10 +153,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 code = 200
         else:
             body = b"{}"; code = 404
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers(); self.wfile.write(body)
+        self._send(code, body)
 s = http.server.HTTPServer(("127.0.0.1", port), H)
 c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain(crt, key)
 s.socket = c.wrap_socket(s.socket, server_side=True)
@@ -183,6 +205,8 @@ sleep 1
 [ "$(ls -1 "$SD/snapshots"/*.json 2>/dev/null | wc -l)" -ge 1 ] \
     && ok "status snapshots were retained off-host" || bad "no snapshots retained"
 [ -s "$SD/evidence.sha256" ] && ok "the evidence checksum was produced" || bad "no evidence checksum"
+# The detached watchdog outlives the supervisor; do not leave it running.
+WD=$(cat "$SD/watchdog-pid" 2>/dev/null || true); [ -n "$WD" ] && kill -9 "$WD" 2>/dev/null
 kill "$APP_PID" 2>/dev/null; wait "$APP_PID" 2>/dev/null; APP_PID=""
 
 # ================================================= 2. deadline termination ==
@@ -303,8 +327,7 @@ fault_case() { # fault_case <name> <inject-function-name>
       bash "$SUP" --instance "$INSTANCE" --host "$HOST" \
           --trust-dir "$W/trust" --state-dir "$sd" --port "$PORT" --max-minutes 1 \
       > "$sd/supervisor.out" 2>&1; echo $? > "$RCFILE" ) &
-    SUP_PID=$!
-    # Wait for the watchdog heartbeat, then inject the fault.
+    SUP_PID=$!    # Wait for the watchdog heartbeat, then inject the fault.
     for _ in $(seq 1 20); do
         [ -s "$sd/heartbeat" ] && break; sleep 1
     done
