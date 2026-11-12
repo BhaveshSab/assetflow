@@ -26,7 +26,9 @@ MODE=real-nginx-edge
 printf 'MODE  %s\n' "$MODE"
 
 W=$(mktemp -d)
-CONTAINER=capacity-edge-itest
+# The guest's exact container name: early-edge.sh addresses capacity-edge by
+# name when it hands the running container over to full routing.
+CONTAINER=capacity-edge
 PIDS=()
 FAIL=0
 ok()  { printf 'PASS  %s\n' "$*"; }
@@ -89,17 +91,44 @@ docker run -d --name "$CONTAINER" --network host \
 
 READY=0
 for _ in $(seq 1 20); do
-    if curl -sS --max-time 2 --cacert "$CA" $RES -H "Authorization: Bearer $TOKEN" \
+    # -f: an HTTP error response is NOT the edge being ready. curl exits 0 on a
+    # 502 from nginx, which would make a dead upstream look like a listening
+    # edge and turn one failure into thirteen.
+    if curl -fsS --max-time 2 --cacert "$CA" $RES -H "Authorization: Bearer $TOKEN" \
         -o /dev/null "$BASE/status" 2>/dev/null; then READY=1; break; fi
     sleep 1
 done
-[ "$READY" = "1" ] || { bad "the early edge never answered on 8443"; cat "$W/nginxlog"/* 2>/dev/null; exit 1; }
+if [ "$READY" != "1" ]; then
+    bad "the early edge never served /status on 8443"
+    printf '--- status service log ---\n'; cat "$W/status.log" 2>/dev/null
+    printf '--- nginx container log ---\n'; docker logs "$CONTAINER" 2>&1 | tail -15
+    printf '--- listeners on the host ---\n'; ss -ltn 2>/dev/null | grep -E '8443|9444' || true
+    exit 1
+fi
+
+# Pre-flight: the upstream must be reachable DIRECTLY, so a 502 from the edge
+# can only mean a proxying problem, never a silently dead status service.
+UP=$(curl -fsS --max-time 3 --insecure -H "Authorization: Bearer $TOKEN" \
+    -o /dev/null -w '%{http_code}' "https://127.0.0.1:9444/status" 2>/dev/null || echo dead)
+if [ "$UP" = "200" ]; then
+    ok "the status service is up on 9444 before the edge is involved"
+elif [ "$UP" = "dead" ]; then
+    bad "the status service is NOT listening on 9444; its log:"
+    cat "$W/status.log" 2>/dev/null
+    exit 1
+else
+    bad "the status service answered $UP directly on 9444"
+fi
 ok "the early edge answers on 8443 through real nginx"
 
 # 1. Authenticated /status through the edge.
 BODY=$(curl -sS --max-time 5 --cacert "$CA" $RES -H "Authorization: Bearer $TOKEN" "$BASE/status" 2>/dev/null || true)
 if printf '%s' "$BODY" | grep -q '"stage"'; then ok "/status served through nginx (authenticated, verified TLS)"
-else bad "/status did not return the status document: $(printf '%s' "$BODY" | head -c 120)"; fi
+else
+    bad "/status did not return the status document: $(printf '%s' "$BODY" | head -c 120)"
+    printf '--- status service log ---\n'; cat "$W/status.log" 2>/dev/null
+    printf '--- nginx error log ---\n'; tail -8 "$W/nginxlog/capacity-edge-error.log" 2>/dev/null || docker logs "$CONTAINER" 2>&1 | tail -8
+fi
 
 # 2. Everything else is refused while bootstrap runs.
 CODE=$(curl -sS --max-time 5 --cacert "$CA" $RES -o /dev/null -w '%{http_code}' "$BASE/" 2>/dev/null || echo 000)

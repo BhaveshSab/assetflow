@@ -141,32 +141,46 @@ cleanup() {
     local status=$?
     [ "$CLEANUP_DONE" = false ] || return "$status"
     CLEANUP_DONE=true
-    # Remove only resources this run created, gated on the per-resource flags.
+    # Two regimes, so that cleanup is both airtight and silent when idle.
     #
-    # Each flag is assigned IMMEDIATELY BEFORE its create command, not after:
-    # bash defers a signal trap until the foreground command it interrupted has
-    # finished, so a SIGTERM arriving DURING `docker network create` runs
-    # cleanup only after that create has completed. With the flag set before
-    # the create, cleanup then removes the resource it knows exists. The old
-    # order (create, then flag) leaked exactly one network this way: the trap
-    # fired with the flag still false, the removal was skipped, and "interrupted
-    # run cleans up" failed with containers=0 volumes=0 networks=1 and no
-    # cleanup-failed message. The names carry the unique run id, so removal
-    # cannot touch anything this run did not create. After a failed removal the
-    # resource is re-checked before warning: a resource that vanished between
-    # the check and the rm is gone, which is success for cleanup, and a run
-    # that created nothing calls docker not at all.
+    # A run that created NOTHING must not touch docker at all: a failed
+    # checksum download, for example, exits before any resource exists, and
+    # probing docker there would make a stub test see calls that create
+    # nothing. So when every per-resource flag is still false, only the
+    # working directory is removed.
+    #
+    # The moment ANY resource was created, the flags can no longer be trusted
+    # individually: bash defers a signal trap until the foreground command it
+    # interrupted has finished, so a SIGTERM arriving DURING `docker volume
+    # create` runs cleanup after that create completed, and the flag for the
+    # NEXT resource is already up while the one being created may or may not
+    # exist. So this regime sweeps EVERY run-owned name by existence, not by
+    # flag. The names carry the unique run id, so the sweep cannot touch
+    # anything this run did not create, and a resource that was never created
+    # is simply absent, which is skipped without a docker call. After a failed
+    # removal the resource is re-checked before warning: one that vanished
+    # between the check and the rm is gone, which is success for cleanup.
     # Each step is independent: a failure is reported but never prevents the rest.
-    if [ "$MIGRATOR_CREATED" = true ]; then
+    if [ "$MIGRATOR_CREATED" = false ] && [ "$DB_CREATED" = false ] \
+       && [ "$ADDED_VOLUME" = false ] && [ "$ADDED_NETWORK" = false ]; then
+        # Recorded so a retained log can always answer two questions: did the
+        # trap run at all, and with what regime. A leak with NEITHER line in the
+        # retained log means the trap never ran.
+        warn "cleanup invoked: regime=nothing-created status=$status"
+        if [ -n "$WORK_DIR" ]; then rm -rf -- "$WORK_DIR"; fi
+        return "$status"
+    fi
+    warn "cleanup invoked: regime=sweep migrator=$MIGRATOR_CREATED db=$DB_CREATED volume=$ADDED_VOLUME network=$ADDED_NETWORK status=$status"
+    if docker inspect "$MIGRATOR" >/dev/null 2>&1; then
         retry docker rm -f "$MIGRATOR" || { docker inspect "$MIGRATOR" >/dev/null 2>&1 && { warn "migration container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
     fi
-    if [ "$DB_CREATED" = true ]; then
+    if docker inspect "$CONTAINER" >/dev/null 2>&1; then
         retry docker rm -f "$CONTAINER" || { docker inspect "$CONTAINER" >/dev/null 2>&1 && { warn "restore container cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
     fi
-    if [ "$ADDED_VOLUME" = true ]; then
+    if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
         retry docker volume rm "$VOLUME" || { docker volume inspect "$VOLUME" >/dev/null 2>&1 && { warn "restore volume cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
     fi
-    if [ "$ADDED_NETWORK" = true ]; then
+    if docker network inspect "$NETWORK" >/dev/null 2>&1; then
         retry docker network rm "$NETWORK" || { docker network inspect "$NETWORK" >/dev/null 2>&1 && { warn "restore network cleanup failed: ${RETRY_ERROR}"; [ "$status" -ne 0 ] || status=1; }; }
     fi
     if [ -n "$WORK_DIR" ]; then rm -rf -- "$WORK_DIR"; fi

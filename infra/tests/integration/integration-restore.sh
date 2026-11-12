@@ -394,8 +394,21 @@ if [ -s "$CURRENT_DUMP" ]; then
         else
             # Surface why cleanup failed, not merely that something remains.
             why=$(grep -i "cleanup failed" "${WORK}/interrupt.log" 2>/dev/null | tail -1 || true)
-            record "interrupted run cleans up" FAIL \
-                "containers=${leaked} volumes=${leaked_v} networks=${leaked_n} after 60s${why:+ - ${why}}"
+            # And identify WHAT remains, so the next run cannot be a guess: the
+            # network's creation timestamp says which invocation leaked it.
+            detail="containers=${leaked} volumes=${leaked_v} networks=${leaked_n} after 60s${why:+ - ${why}}"
+            if [ "$leaked_n" -gt 0 ]; then
+                NETINFO=$(docker network ls --filter "name=assetflow-restore-verify-" \
+                    --format '{{.Name}} created={{.CreatedAt}}' 2>/dev/null | head -3 || true)
+                detail="${detail} leaked: ${NETINFO}"
+            fi
+            # The interrupted run's own log shows whether its cleanup trap ran
+            # and with which regime ("cleanup invoked: regime=..."). No such
+            # line means the trap never ran; a sweep line with a success means
+            # the removals themselves failed.
+            LOGLAST=$(tail -12 "${WORK}/interrupt.log" 2>/dev/null | tr '\n' '|' || true)
+            detail="${detail} log[${#LOGLAST}]: ${LOGLAST:0:400}"
+            record "interrupted run cleans up" FAIL "$detail"
         fi
     fi
 fi
@@ -415,7 +428,13 @@ done
 if [ "$leftover_containers" -eq 0 ] && [ "$leftover_volumes" -eq 0 ] && [ "$leftover_networks" -eq 0 ]; then
     record "no restore resources leaked" PASS "containers=0 volumes=0 networks=0"
 else
-    record "no restore resources leaked" FAIL "containers=${leftover_containers} volumes=${leftover_volumes} networks=${leftover_networks}"
+    detail="containers=${leftover_containers} volumes=${leftover_volumes} networks=${leftover_networks}"
+    if [ "$leftover_networks" -gt 0 ]; then
+        NETINFO=$(docker network ls --filter "name=assetflow-restore-verify-" \
+            --format '{{.Name}} created-{{.CreatedAt}}' 2>/dev/null | head -3 || true)
+        detail="${detail} leaked: ${NETINFO}"
+    fi
+    record "no restore resources leaked" FAIL "$detail"
 fi
 
 # -------------------------------------------------------------- verdict ------
