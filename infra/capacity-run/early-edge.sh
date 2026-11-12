@@ -42,6 +42,10 @@ MODE="${1:-start}"
 # The config source is overridable so the integration test can run hermetically
 # against the repo checkout instead of a remote commit.
 EDGE_SRC="${EDGE_SRC:-https://raw.githubusercontent.com/BhaveshSab/assetflow/$EXPECTED_COMMIT/infra/capacity-run/edge}"
+# The trust anchor every probe verifies against. The guest mounts the run's own
+# certificate at /etc/capacity-run/tls.crt; the integration test overrides this
+# to its hermetic copy instead of writing to /etc.
+TRUST="${CAPACITY_TRUST:-/etc/capacity-run/tls.crt}"
 
 # Reachable means reachable over verified TLS from the port the client uses,
 # with the token the operator will actually send - not merely "the container is
@@ -49,7 +53,7 @@ EDGE_SRC="${EDGE_SRC:-https://raw.githubusercontent.com/BhaveshSab/assetflow/$EX
 wait_status() {
     local CODE=000
     for _ in $(seq 1 30); do
-        CODE=$(curl -sS --max-time 5 --cacert /etc/capacity-run/tls.crt \
+        CODE=$(curl -sS --max-time 5 --cacert "$TRUST" \
             --resolve "$CAPACITY_HOSTNAME:8443:127.0.0.1" \
             -H "Authorization: Bearer $EVIDENCE_TOKEN" \
             -o /dev/null -w '%{http_code}' \
@@ -97,16 +101,16 @@ if [ "$MODE" = "switch" ]; then
     # verifies the certificate against the run's own CA.
     for i in $(seq 1 30); do
         A=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-            --cacert /etc/capacity-run/tls.crt \
+            --cacert "$TRUST" \
             --resolve "$CAPACITY_HOSTNAME:8443:127.0.0.1" \
             "https://$CAPACITY_HOSTNAME:8443/api/health/ready" 2>/dev/null || echo 0)
         E=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-            --cacert /etc/capacity-run/tls.crt \
+            --cacert "$TRUST" \
             --resolve "$CAPACITY_HOSTNAME:8443:127.0.0.1" \
             -H "Authorization: Bearer $EVIDENCE_TOKEN" \
             "https://$CAPACITY_HOSTNAME:8443/evidence/snapshot-latest.tar.gz" 2>/dev/null || echo 0)
         D=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-            --cacert /etc/capacity-run/tls.crt \
+            --cacert "$TRUST" \
             --resolve "$CAPACITY_HOSTNAME:8443:127.0.0.1" \
             -H "Authorization: Bearer $EVIDENCE_TOKEN" \
             "https://$CAPACITY_HOSTNAME:8443/status" 2>/dev/null || echo 0)
