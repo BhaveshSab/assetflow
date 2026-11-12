@@ -89,18 +89,84 @@ say "instance $INSTANCE_ID at $IP"
 # ---- the detached watchdog ----------------------------------------------
 # Mandatory. If it is not alive, nothing bounds the run at the deadline, so the
 # supervisor must not sit here pretending everything is fine.
+#
+# The invocation and the liveness checks follow the watchdog's REAL contract:
+# positional <instance-id> [lifetime-seconds] and WATCHDOG_STATE_DIR for its
+# state directory. Liveness is proven, not assumed: the recorded pid must exist
+# and the heartbeat must be numeric, recent and advancing. The seventh attempt
+# died here because the supervisor invented flags the watchdog has never
+# parsed (--instance/--state-dir/--max-minutes) and then waited 30 seconds for
+# a file (watchdog-status containing "alive") the watchdog has never written.
+#
+# The lifetime is the instance's own four-hour lifetime, measured by the
+# watchdog from the actual AWS LaunchTime. It is deliberately NOT derived from
+# --max-minutes: the supervisor's observation timeout and the instance's
+# lifetime are different controls.
+WATCHDOG_LIFETIME="${WATCHDOG_LIFETIME:-14400}"
+WATCHDOG_MAX_AGE="${WATCHDOG_MAX_AGE:-150}"
+WATCHDOG_PID_FILE="$STATE_DIR/watchdog-pid"
+WATCHDOG_HEARTBEAT="$STATE_DIR/heartbeat"
+WATCHDOG_LOG="$STATE_DIR/watchdog.log"
 WATCHDOG_STATE="$STATE_DIR/watchdog-status"
-if [ -x "$HERE/operator-watchdog.sh" ]; then
-    ( setsid nohup bash "$HERE/operator-watchdog.sh" \
-        --instance "$INSTANCE_ID" --state-dir "$STATE_DIR" \
-        --max-minutes "$MAX_MINUTES" >"$STATE_DIR/watchdog.log" 2>&1 & )
-    sleep 30
-    if [ -f "$WATCHDOG_STATE" ] && grep -q alive "$WATCHDOG_STATE"; then
-        say "watchdog started"
-    else
-        fail 1 "watchdog did not report alive within 30s"
+case "$WATCHDOG_LIFETIME" in ''|*[!0-9]*)
+    fail 2 "watchdog lifetime must be a number of seconds, got '$WATCHDOG_LIFETIME'" ;;
+esac
+case "$WATCHDOG_MAX_AGE" in ''|*[!0-9]*)
+    fail 2 "watchdog max age must be a number of seconds, got '$WATCHDOG_MAX_AGE'" ;;
+esac
+
+# Empty output means every observed signal is healthy. A problem is returned on
+# stdout AND mirrored into watchdog-status, so the workflow's outcome record
+# always shows the last observed state. The heartbeat must be a number whose
+# age is within WATCHDOG_MAX_AGE (two watchdog poll cycles plus slack) and not
+# implausibly in the future; a stalled or forged heartbeat is a failure.
+watchdog_problem() {
+    local pid v age problem=""
+    pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    case "$pid" in
+        ''|*[!0-9]*) problem="no recorded watchdog pid" ;;
+        *)  kill -0 "$pid" 2>/dev/null || problem="watchdog process $pid is gone" ;;
+    esac
+    if [ -z "$problem" ]; then
+        v=$(cat "$WATCHDOG_HEARTBEAT" 2>/dev/null || true)
+        case "$v" in
+            ''|*[!0-9]*) problem="heartbeat is missing or not numeric" ;;
+            *)
+                age=$(( $(date -u +%s) - v ))
+                if [ "$age" -gt "$WATCHDOG_MAX_AGE" ]; then
+                    problem="heartbeat is ${age}s stale (pid $pid)"
+                elif [ "$age" -lt -300 ]; then
+                    problem="heartbeat is $((- age))s in the future"
+                fi
+                ;;
+        esac
     fi
+    if [ -n "$problem" ]; then
+        printf '%s\n' "$problem" > "$WATCHDOG_STATE"
+        printf '%s' "$problem"
+        return 1
+    fi
+    printf 'alive pid=%s heartbeat_age=%ss' "$pid" "$age" > "$WATCHDOG_STATE"
+    return 0
+}
+
+if [ ! -x "$HERE/operator-watchdog.sh" ]; then
+    fail 1 "operator-watchdog.sh is missing or not executable; nothing would bound the run at the deadline"
 fi
+: > "$WATCHDOG_LOG"
+( WATCHDOG_STATE_DIR="$STATE_DIR" setsid nohup bash "$HERE/operator-watchdog.sh" \
+    "$INSTANCE_ID" "$WATCHDOG_LIFETIME" >>"$WATCHDOG_LOG" 2>&1 & echo $! >"$WATCHDOG_PID_FILE" )
+# Bounded startup polling, not a fixed sleep followed by one file check: the
+# pid must exist, and the heartbeat must appear, be numeric and be recent.
+STARTED=""
+for _ in $(seq 1 15); do
+    if watchdog_problem >/dev/null 2>&1; then STARTED=1; break; fi
+    sleep 2
+done
+if [ -z "$STARTED" ]; then
+    fail 1 "watchdog did not become alive within 30s ($(watchdog_problem 2>/dev/null || true)); its output: $(tail -c 400 "$WATCHDOG_LOG" 2>/dev/null | tr '\n' ';')"
+fi
+say "watchdog started (pid $(cat "$WATCHDOG_PID_FILE"), lifetime ${WATCHDOG_LIFETIME}s from LaunchTime)"
 
 # ---- P3: prove termination of THIS instance would be permitted ----------
 if cap_aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --dry-run 2>"$STATE_DIR/p3.err"; then
@@ -119,7 +185,7 @@ fi
 POLL_LOG="$STATE_DIR/poll.log"
 ( setsid nohup bash "$HERE/poll-status.sh" \
     --host "$HOST_NAME" --address "$IP" --port "$PORT" \
-    --ca "$TRUST_DIR/ca.crt" --token "$EVIDENCE_TOKEN" \
+    --ca "$TRUST_DIR/tls.crt" --token "$EVIDENCE_TOKEN" \
     --outdir "$STATE_DIR/snapshots" --duration $(( MAX_MINUTES * 60 )) \
     > "$POLL_LOG" 2>&1 & )
 say "status poller started"
@@ -133,7 +199,7 @@ probe_ready() {
     local code
     code=$(curl -sS --max-time 15 \
                  --resolve "$HOST_NAME:$PORT:$IP" \
-                 --cacert "$TRUST_DIR/ca.crt" \
+                 --cacert "$TRUST_DIR/tls.crt" \
                  -o "$body" -w '%{http_code}' \
                  "$READY_URL" 2>"$log") || code="000"
     printf '%s' "$code"
@@ -175,8 +241,8 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     esac
 
     # Mandatory check, re-evaluated every pass rather than recorded and ignored.
-    if [ -f "$WATCHDOG_STATE" ] && grep -q 'dead' "$WATCHDOG_STATE"; then
-        fail 1 "watchdog stopped while the run was still live"
+    if ! P=$(watchdog_problem); then
+        fail 1 "watchdog stopped while the run was still live: $P"
     fi
 
     SNAP=$(latest_snapshot)
@@ -270,16 +336,19 @@ fi
 contract_check "metrics retained" \
     "$(ls -1 "$STATE_DIR/snapshots"/*.json >/dev/null 2>&1 && echo 1 || echo 0)"
 
-# Export checksum: verify what was retained is intact.
-if [ -x "$HERE/snapshot-evidence.sh" ]; then
-    SUM="$STATE_DIR/evidence.sha256"
-    if bash "$HERE/snapshot-evidence.sh" --state-dir "$STATE_DIR" --out "$SUM" >/dev/null 2>&1 \
-       && [ -s "$SUM" ]; then
-        contract_check "evidence checksum produced" "1"
-        printf 'export-verified' > "$STATE_DIR/export-status"
-    else
-        contract_check "evidence checksum produced" "0"
-    fi
+# Export checksum: verify what THIS supervisor retained is intact, so the
+# verdict can be audited after the run. snapshot-evidence.sh is the guest's
+# publisher (RUN_DIR-based, takes no arguments); checksumming operator-side
+# retention here is a separate, local computation - the seventh attempt would
+# have failed this check by passing --state-dir/--out to a script that parses
+# neither.
+SUM="$STATE_DIR/evidence.sha256"
+if find "$STATE_DIR/snapshots" -type f -name '*.json' -print0 2>/dev/null \
+     | sort -z | xargs -0 -r sha256sum > "$SUM" 2>/dev/null && [ -s "$SUM" ]; then
+    contract_check "evidence checksum produced" "1"
+    printf 'export-verified' > "$STATE_DIR/export-status"
+else
+    contract_check "evidence checksum produced" "0"
 fi
 
 say "stage last seen: ${LAST_STAGE:-none}"

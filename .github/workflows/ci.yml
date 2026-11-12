@@ -1198,7 +1198,8 @@ jobs:
           for f in infra/capacity-run/early-edge.sh \
                    infra/capacity-run/hold-runner.sh \
                    infra/tests/integration/edge-nginx-live.sh \
-                   infra/tests/integration/stage4-hold.sh; do
+                   infra/tests/integration/stage4-hold.sh \
+                   infra/tests/integration/watchdog-supervisor.sh; do
             shellcheck --severity=warning --external-sources "$f"
           done
 
@@ -1235,6 +1236,21 @@ jobs:
         run: |
           set -euo pipefail
           bash infra/tests/integration/stage4-hold.sh
+
+      - name: Prove the supervisor and the real watchdog work together
+        # The seventh attempt died 44 seconds after launch because the
+        # supervisor invoked the watchdog with flags it has never parsed and
+        # waited for a file it has never written; both unit tests passed
+        # because each met only a stub. This runs BOTH REAL SCRIPTS in one
+        # process tree - only the AWS control plane (a recording fake) and the
+        # guest's public HTTPS port are simulated - and proves the instance id
+        # and the 14,400s lifetime reach the watchdog, the heartbeat advances,
+        # a wrong tag is refused, an AWS read failure is not fake liveness,
+        # death/stall/malformed/future heartbeats each fail with the reason,
+        # and a deadline termination targets exactly the verified instance.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/watchdog-supervisor.sh
 
   orchestration:
     name: Capacity orchestration (offline, fake AWS)

@@ -87,7 +87,9 @@ class SupervisorContract(unittest.TestCase):
                        capture_output=True)
 
         (pathlib.Path(W) / "trust").mkdir()
-        shutil.copy(pathlib.Path(W) / "ca.crt", pathlib.Path(W) / "trust" / "ca.crt")
+        # The run's trust material is the self-signed tls.crt (generate-trust.sh
+        # produces no separate ca.crt); the supervisor must verify against it.
+        shutil.copy(pathlib.Path(W) / "ca.crt", pathlib.Path(W) / "trust" / "tls.crt")
         state = pathlib.Path(W) / "state"
         (state / "snapshots").mkdir(parents=True)
 
@@ -126,11 +128,16 @@ class SupervisorContract(unittest.TestCase):
             }}
         """))
 
-        (state / "watchdog-status").write_text("alive\n")
+        # The stub emulates the REAL operator-watchdog.sh interface: positional
+        # <instance-id> [lifetime-seconds], state in WATCHDOG_STATE_DIR, and a
+        # numeric heartbeat written every cycle. It is deliberately NOT the
+        # "echo alive" fiction the supervisor once expected - that mismatch
+        # killed the seventh attempt (run 43224628030).
         (state.parent / "operator-watchdog.sh").write_text(
             "#!/usr/bin/env bash\n"
-            'SD=""; while [ $# -gt 0 ]; do case "$1" in --state-dir) SD="$2"; shift 2;; *) shift;; esac; done\n'
-            'echo alive > "$SD/watchdog-status"\nwhile :; do sleep 5; done\n')
+            'SD="${WATCHDOG_STATE_DIR:?}"\n'
+            'mkdir -p "$SD"; echo $$ > "$SD/pid"\n'
+            'while :; do date -u +%s > "$SD/heartbeat"; sleep 2; done\n')
         (state.parent / "operator-watchdog.sh").chmod(0o755)
         stub = ROOT / "infra" / "tests" / "fixtures" / "poller_stub.sh"
         shutil.copy(stub, state.parent / "poll-status.sh")
@@ -138,11 +145,6 @@ class SupervisorContract(unittest.TestCase):
             # Present from the start, so the supervisor certainly sees it.
             (state / "snapshots" / "0000-truncated.json").write_text('{"stage": "trunc')
         (state.parent / "poll-status.sh").chmod(0o755)
-        (state.parent / "snapshot-evidence.sh").write_text(
-            "#!/usr/bin/env bash\n"
-            'SD=""; OUT=""; while [ $# -gt 0 ]; do case "$1" in --state-dir) SD="$2"; shift 2;; --out) OUT="$2"; shift 2;; *) shift;; esac; done\n'
-            '( cd "$SD" && find snapshots -name "*.json" | sort | xargs -r sha256sum ) > "$OUT"\n')
-        (state.parent / "snapshot-evidence.sh").chmod(0o755)
         shutil.copy(SUPERVISOR, state.parent / "supervise-run.sh")
 
         # The supervisor needs jq. CI installs it; a dev box may not have it on

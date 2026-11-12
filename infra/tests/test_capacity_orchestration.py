@@ -471,7 +471,7 @@ class SupervisionTests(unittest.TestCase):
     def test_watchdog_is_mandatory_not_advisory(self):
         # A watchdog that is not provably alive leaves nothing bounding the run,
         # so the supervisor must stop rather than proceed and record it politely.
-        self.assertIn("watchdog did not report alive", self.text)
+        self.assertIn("watchdog did not become alive", self.text)
         self.assertRegex(self.text, r"fail 1 \"watchdog")
 
     def test_watchdog_death_is_rechecked_every_pass(self):
