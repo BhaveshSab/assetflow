@@ -39,14 +39,45 @@ openssl x509 -req -in "$W/srv.csr" -CA "$W/ca.crt" -CAkey "$W/ca.key" \
 """
 
 APP = r"""
-import http.server, ssl, sys, json, time
-port, crt, key, become, mode = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+import http.server, ssl, sys, json, time, tarfile, hashlib, io, os
+port, crt, key, become, mode, meta_path, token = (
+    sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5],
+    sys.argv[6], sys.argv[7])
 start = time.time()
+# Build the guest archive the publisher would have built, and record its digest
+# the way snapshot-evidence.sh does. The runner must learn the digest from the
+# status document (the poller stub embeds it), then verify the downloaded bytes
+# against it with the real export client.
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+    data = json.dumps({'bootstrap-status': 'ready', 'fixture_users': 200}).encode()
+    import tarfile as _t
+    info = _t.TarInfo('bootstrap-status'); info.size = len(data)
+    tar.addfile(info, io.BytesIO(data))
+archive = buf.getvalue()
+digest = hashlib.sha256(archive).hexdigest()
+with open(meta_path, 'w') as fh:
+    json.dump({'name': 'snapshot-20260101T090000Z.tar.gz', 'sha256': digest,
+               'bytes': len(archive)}, fh)
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+    def _send(self, code, body, ctype='application/json'):
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        if self.path.split("?")[0] != "/api/health/ready":
-            self.send_response(404); self.end_headers(); return
+        path = self.path.split('?')[0]
+        if path.startswith('/evidence/'):
+            if self.headers.get('Authorization', '') != 'Bearer ' + token:
+                self._send(401, b'unauthorised'); return
+            if path == '/evidence/snapshot-20260101T090000Z.tar.gz':
+                self._send(200, archive, 'application/gzip')
+            else:
+                self._send(404, b'not found')
+            return
+        if path != '/api/health/ready':
+            self._send(404, b'{}'); return
         if (time.time() - start) < become:
             body, code = {"status": "not-ready", "database": "down"}, 503
         else:
@@ -56,10 +87,7 @@ class H(http.server.BaseHTTPRequestHandler):
             # fixtures were never seeded reports zero, and zero is a failure.
             body["fixture_users"] = 200 if mode == "ready" else 0
             code = 200
-        raw = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers(); self.wfile.write(raw)
+        self._send(code, json.dumps(body).encode())
 s = http.server.HTTPServer(("127.0.0.1", int(port)), H)
 c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain(crt, key)
 s.socket = c.wrap_socket(s.socket, server_side=True)
@@ -107,7 +135,9 @@ class SupervisorContract(unittest.TestCase):
         become = {"app_ready": 2, "complete": 2, "p3_denied": 2,
                   "no_fixtures": 2}.get(case, 999999)
         mode = "nofixtures" if case == "no_fixtures" else "ready"
-        app = subprocess.Popen(["python3", "-c", APP, port, crt, key, str(become), mode],
+        meta_path = str(pathlib.Path(W) / "guest-meta.json")
+        app = subprocess.Popen(["python3", "-c", APP, port, crt, key, str(become), mode,
+                                meta_path, "t" * 32],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(app.kill)
 
@@ -145,11 +175,27 @@ class SupervisorContract(unittest.TestCase):
             # Present from the start, so the supervisor certainly sees it.
             (state / "snapshots" / "0000-truncated.json").write_text('{"stage": "trunc')
         (state.parent / "poll-status.sh").chmod(0o755)
+        # The REAL export client runs in the sandbox: the supervisor will find
+        # it next to itself and download the guest archive the fake app serves,
+        # verifying the downloaded bytes against the digest the status document
+        # supplied - the same independently-supplied-checksum contract as the
+        # real run, over real TLS with the bearer token.
+        shutil.copy(ROOT / "infra" / "scripts" / "export-evidence.sh",
+                    state.parent / "export-evidence.sh")
+        (state.parent / "export-evidence.sh").chmod(0o755)
         shutil.copy(SUPERVISOR, state.parent / "supervise-run.sh")
 
         # The supervisor needs jq. CI installs it; a dev box may not have it on
         # PATH, so fall back to a locally provided copy if one is present.
         env = dict(os.environ, EVIDENCE_TOKEN="t" * 32)
+        if not shutil.which("jq"):
+            for cand in ("/mnt/c/Users/bhave/tools", os.path.expanduser("~/bin")):
+                if os.path.isfile(os.path.join(cand, "jq")):
+                    env["PATH"] = cand + os.pathsep + env.get("PATH", "")
+                    break
+        # The poller stub embeds the guest-supplied digest into its snapshot,
+        # exactly as the real status document would carry it.
+        env["GUEST_META"] = meta_path
         if not shutil.which("jq"):
             for cand in ("/mnt/c/Users/bhave/tools", os.path.expanduser("~/bin")):
                 if os.path.isfile(os.path.join(cand, "jq")):

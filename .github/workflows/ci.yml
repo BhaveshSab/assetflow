@@ -1198,6 +1198,7 @@ jobs:
           for f in infra/capacity-run/early-edge.sh \
                    infra/capacity-run/hold-runner.sh \
                    infra/tests/integration/edge-nginx-live.sh \
+                   infra/tests/integration/guest-export-live.sh \
                    infra/tests/integration/stage4-hold.sh \
                    infra/tests/integration/watchdog-supervisor.sh; do
             shellcheck --severity=warning --external-sources "$f"
@@ -1236,6 +1237,18 @@ jobs:
         run: |
           set -euo pipefail
           bash infra/tests/integration/stage4-hold.sh
+
+      - name: Prove the guest-evidence export path for real
+        # A checksum over runner-side snapshots is local integrity only. This
+        # runs the REAL publisher, the REAL status service and the REAL
+        # evidence server behind the REAL nginx edge, and proves the digest is
+        # supplied independently over the authenticated status channel, the
+        # download is verified against it through the edge, a tampered digest
+        # is refused (exit 75, no bytes kept), and a missing token never
+        # fetches. No stub replaces any of the four real programs.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/guest-export-live.sh
 
       - name: Prove the supervisor and the real watchdog work together
         # The seventh attempt died 44 seconds after launch because the

@@ -337,19 +337,64 @@ contract_check "metrics retained" \
     "$(ls -1 "$STATE_DIR/snapshots"/*.json >/dev/null 2>&1 && echo 1 || echo 0)"
 
 # Export checksum: verify what THIS supervisor retained is intact, so the
-# verdict can be audited after the run. snapshot-evidence.sh is the guest's
-# publisher (RUN_DIR-based, takes no arguments); checksumming operator-side
-# retention here is a separate, local computation - the seventh attempt would
-# have failed this check by passing --state-dir/--out to a script that parses
-# neither.
+# verdict can be audited after the run. This is LOCAL snapshot integrity only -
+# it says the runner's own copies were not corrupted in place. It is NOT the
+# guest-evidence export, which is proven separately below.
 SUM="$STATE_DIR/evidence.sha256"
 if find "$STATE_DIR/snapshots" -type f -name '*.json' -print0 2>/dev/null \
      | sort -z | xargs -0 -r sha256sum > "$SUM" 2>/dev/null && [ -s "$SUM" ]; then
     contract_check "evidence checksum produced" "1"
-    printf 'export-verified' > "$STATE_DIR/export-status"
 else
     contract_check "evidence checksum produced" "0"
 fi
+
+# ---- guest evidence: authenticated download, verified against the guest's ----
+# own digest. The publisher records the digest of the archive it built; the
+# status document carries that digest over the authenticated status channel;
+# only then is the archive itself downloaded through the edge and verified
+# against it by the real export client. export-evidence.sh exits 0 ONLY when
+# the downloaded bytes match the expected digest over verified TLS with the
+# bearer token - an unverified or failed download can never report success.
+# A missing digest in every retained snapshot is a missing contract, not a skip.
+EXPORTER=""
+[ -x "$HERE/../scripts/export-evidence.sh" ] && EXPORTER="$HERE/../scripts/export-evidence.sh"
+[ -z "$EXPORTER" ] && [ -x "$HERE/export-evidence.sh" ] && EXPORTER="$HERE/export-evidence.sh"
+GUEST_NAME=""; GUEST_SHA=""
+if [ -n "$EXPORTER" ]; then
+    for f in $(ls -1r "$STATE_DIR"/snapshots/*.json 2>/dev/null || true); do
+        n=$(jq -r '.evidence_snapshot.name // ""' "$f" 2>/dev/null || true)
+        s=$(jq -r '.evidence_snapshot.sha256 // ""' "$f" 2>/dev/null || true)
+        printf '%s' "$s" | grep -Eq '^[0-9a-f]{64}$' || continue
+        case "$n" in snapshot-*.tar.gz) ;; *) continue ;; esac
+        GUEST_NAME="$n"; GUEST_SHA="$s"; break
+    done
+fi
+GUEST_EXPORT_NOTE=""
+if [ -z "$EXPORTER" ]; then
+    contract_check "guest evidence exported and checksum-verified" "0"
+    GUEST_EXPORT_NOTE="export client not found"
+elif [ -z "$GUEST_NAME" ] || [ -z "$GUEST_SHA" ]; then
+    contract_check "guest evidence exported and checksum-verified" "0"
+    GUEST_EXPORT_NOTE="no guest-supplied digest in any retained snapshot"
+else
+    GUEST_OUT="$STATE_DIR/guest-evidence.tar.gz"
+    : > "$STATE_DIR/guest-export.log"
+    if EVIDENCE_TOKEN="$EVIDENCE_TOKEN" \
+       EVIDENCE_CA="$TRUST_DIR/tls.crt" \
+       EXPORT_RESOLVE="$HOST_NAME:$PORT:$IP" \
+       EXPORT_ATTEMPTS="${EXPORT_ATTEMPTS:-3}" EXPORT_TIMEOUT=120 \
+       bash "$EXPORTER" "https://$HOST_NAME:$PORT" "$GUEST_NAME" "$GUEST_SHA" \
+           "$GUEST_OUT" >>"$STATE_DIR/guest-export.log" 2>&1 \
+       && [ -s "$GUEST_OUT" ]; then
+        contract_check "guest evidence exported and checksum-verified" "1"
+        printf 'guest-verified archive=%s sha256=%s bytes=%s\n' \
+            "$GUEST_NAME" "$GUEST_SHA" "$(wc -c < "$GUEST_OUT")" > "$STATE_DIR/guest-export.txt"
+    else
+        contract_check "guest evidence exported and checksum-verified" "0"
+        GUEST_EXPORT_NOTE="export failed or unverified (see guest-export.log)"
+    fi
+fi
+[ -n "$GUEST_EXPORT_NOTE" ] && printf '%s\n' "$GUEST_EXPORT_NOTE" > "$STATE_DIR/guest-export.txt"
 
 say "stage last seen: ${LAST_STAGE:-none}"
 printf 'ready' > "$STATE_DIR/app-ready"

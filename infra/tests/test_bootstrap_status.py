@@ -100,6 +100,25 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(report["deadline_state"], "passed")
         self.assertLess(report["deadline_remaining_seconds"], 0)
 
+    def test_publisher_digest_is_carried_when_present(self):
+        # The guest publisher's own record of the archive it built. This is the
+        # independently supplied checksum the runner verifies its download
+        # against - it must travel over the status channel, not be computed
+        # runner-side over the received bytes.
+        self.write(".snapshot-latest.meta",
+                   '{"name":"snapshot-20260101T090000Z.tar.gz",'
+                   '"sha256":"' + 'a' * 64 + '","bytes":1234,"created_epoch":10}')
+        snap = self.mod.status(self.run_dir)["evidence_snapshot"]
+        self.assertEqual(snap["name"], "snapshot-20260101T090000Z.tar.gz")
+        self.assertEqual(snap["sha256"], "a" * 64)
+
+    def test_missing_or_broken_publisher_digest_is_null_not_invented(self):
+        # Absent meta, malformed JSON, or a non-digest value must surface as
+        # null/unknown - never as a fabricated checksum the runner would trust.
+        self.assertIsNone(self.mod.status(self.run_dir)["evidence_snapshot"])
+        self.write(".snapshot-latest.meta", "not json at all")
+        self.assertIsNone(self.mod.status(self.run_dir)["evidence_snapshot"])
+
     def test_seed_exit_code_is_reported_verbatim(self):
         self.write("seed-exit", "137")
         report = self.mod.seed(self.run_dir)

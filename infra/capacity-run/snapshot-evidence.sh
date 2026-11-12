@@ -45,6 +45,20 @@ mv -f "$STAGE/$NAME" "$EVIDENCE_DIR/$NAME" || exit 1
 # server's allow-list requires a name ending .tar.gz, so this is a real copy.
 cp -f "$EVIDENCE_DIR/$NAME" "$EVIDENCE_DIR/snapshot-latest.tar.gz" || exit 1
 
+# Record what was published: the timestamped name and the digest of exactly
+# these bytes, computed here on the guest at publish time. The status service
+# hands that digest to the runner over the authenticated status channel, so the
+# runner can download the archive through the evidence endpoint and verify it
+# against a checksum it did not compute over the bytes it received. The
+# timestamped name is recorded (not the alias) because the alias is rewritten
+# by the next publish while an old digest would still be checked against it;
+# a timestamped archive is immutable once published. The dot-prefix keeps this
+# file out of the archive itself (tar excludes .snapshot-*).
+SHA=$(sha256sum "$EVIDENCE_DIR/$NAME" | awk '{print $1}')
+BYTES=$(wc -c < "$EVIDENCE_DIR/$NAME")
+printf '{"name":"%s","sha256":"%s","bytes":%s,"created_epoch":%s}\n' \
+    "$NAME" "$SHA" "$BYTES" "$(date -u +%s)" > "$EVIDENCE_DIR/.snapshot-latest.meta"
+
 # Bounded retention, tolerant of an empty match.
 if [ -n "$(ls -1t "$EVIDENCE_DIR"/snapshot-2*.tar.gz 2>/dev/null)" ]; then
     ls -1t "$EVIDENCE_DIR"/snapshot-2*.tar.gz 2>/dev/null \

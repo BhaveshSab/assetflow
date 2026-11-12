@@ -250,6 +250,16 @@ def status(run_dir: Path) -> dict:
     else:
         # An unreadable deadline is not "fine".
         out["deadline_state"] = "unreadable"
+    # The evidence publisher's own record of the archive it built: the name and
+    # the digest of exactly those bytes. This is how the runner learns the
+    # expected checksum independently of the archive it downloads - the digest
+    # travels over this authenticated status channel, the bytes over the
+    # evidence endpoint. Absent or unreadable is reported as null (unknown),
+    # never invented; the runner validates the fields before trusting them.
+    try:
+        out["evidence_snapshot"] = json.loads(read_small(ev / ".snapshot-latest.meta", 512))
+    except (ValueError, OSError):
+        out["evidence_snapshot"] = None
     return out
 
 

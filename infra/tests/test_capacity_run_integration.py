@@ -363,6 +363,34 @@ class SnapshotScriptTests(unittest.TestCase):
         for forbidden in ('run.env', 'tls.key'):
             self.assertNotIn(forbidden, names, 'snapshot must not include run secrets')
 
+    def test_publisher_records_the_digest_it_built(self):
+        # The guest must supply the checksum the runner will verify its download
+        # against: computed here, over exactly these bytes, at publish time -
+        # and carried to the runner by the status channel, not by the archive.
+        import hashlib
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        evidence = tmp / 'run' / 'evidence'
+        evidence.mkdir(parents=True)
+        (evidence / 'bootstrap-status').write_text('ready', encoding='utf-8')
+        env = dict(os.environ, RUN_DIR=str(tmp / 'run'))
+        proc = subprocess.run(['bash', str(SNAPSHOT)], capture_output=True,
+                              text=True, timeout=60, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        meta = evidence / '.snapshot-latest.meta'
+        self.assertTrue(meta.exists(), 'publisher must record the digest it built')
+        record = json.loads(meta.read_text(encoding='utf-8'))
+        self.assertRegex(record['name'], r'^snapshot-\d{8}T\d{6}Z\.tar\.gz$',
+                         'the timestamped name, not the mutable alias')
+        self.assertRegex(record['sha256'], r'^[0-9a-f]{64}$')
+        actual = hashlib.sha256((evidence / record['name']).read_bytes()).hexdigest()
+        self.assertEqual(record['sha256'], actual,
+                         'the recorded digest must match the published bytes')
+        self.assertGreater(record['bytes'], 0)
+        # The meta file itself must never travel inside any archive.
+        with tarfile.open(evidence / record['name']) as tar:
+            self.assertNotIn('.snapshot-latest.meta', {n.lstrip('./') for n in tar.getnames()})
+
 
 class DeadlineGuardTests(unittest.TestCase):
     """The guard must terminate, not exit, and must fail closed."""
