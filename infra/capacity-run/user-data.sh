@@ -372,7 +372,7 @@ stage_begin "application health"
 # The stack start and the readiness gate live in the repo, not the payload
 # (the same fetch-from-pinned-commit pattern as early-edge.sh): the payload
 # was within a few hundred bytes of the 16 KiB EC2 cap.
-RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" EVIDENCE_DIR="$EVIDENCE_DIR" APP_DIR="$APP_DIR" \
+env COMPOSE="$COMPOSE" EVIDENCE_DIR="$EVIDENCE_DIR" APP_DIR="$APP_DIR" \
     bash "$APP_DIR/infra/capacity-run/app-health.sh" \
     || die "application readiness never passed (see $EVIDENCE_DIR/api-readiness.log)"
 
