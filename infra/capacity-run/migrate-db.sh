@@ -51,6 +51,57 @@ mkdir -p "$EVIDENCE_DIR"
 COMPOSE="${COMPOSE:-docker compose --env-file infra/.env -f infra/docker-compose.yml}"
 say() { [ "$QUIET" -eq 1 ] || printf '[migrate] %s\n' "$*"; }
 
+# Progress lands in the evidence dir and is served by the status endpoint, so
+# the off-host poller records which phase the migration reached - the one
+# thing a terminated guest cannot otherwise tell us.
+PROGRESS_FILE="$EVIDENCE_DIR/migrate-progress"
+progress() {
+    printf '%s %s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$*" >> "$PROGRESS_FILE" 2>/dev/null || true
+    say "$*"
+}
+
+# Bounds for every image pull, dependency images included. On a
+# credit-throttled t3.micro the whole bootstrap runs at the 10% baseline, so a
+# pull takes tens of minutes and docker's own layer timeouts can fail an
+# attempt that a retry would survive.
+PULL_ATTEMPTS="${PULL_ATTEMPTS:-2}"
+PULL_TIMEOUT="${PULL_TIMEOUT:-1200}"
+
+pull_bounded() {  # pull_bounded <image>; returns 0 when the image is local
+    local image="$1" attempt
+    echo "pull $image" >> "$EVIDENCE_DIR/pull.log"
+    for attempt in $(seq 1 "$PULL_ATTEMPTS"); do
+        progress "pull attempt $attempt/$PULL_ATTEMPTS for $image (bounded ${PULL_TIMEOUT}s)"
+        if timeout "$PULL_TIMEOUT" docker pull "$image" >> "$EVIDENCE_DIR/pull.log" 2>&1; then
+            progress "pulled $image"
+            return 0
+        fi
+        echo "pull attempt $attempt for $image failed rc=$?" >> "$EVIDENCE_DIR/pull.log"
+        [ "$attempt" -lt "$PULL_ATTEMPTS" ] && sleep 30
+    done
+    return 1
+}
+
+# Any failure writes a bounded, redacted detail file BEFORE exiting, so the
+# status endpoint can serve the actual reason off-host: the guest's own logs
+# die with the root volume, and the eleventh attempt's only retained record
+# was the generic die() one-liner. Tails only, hard caps, secrets masked.
+fail() {
+    {
+        printf 'reason=%s\n' "$*"
+        last=$(tail -1 "$PROGRESS_FILE" 2>/dev/null) && printf 'last_progress=%s\n' "$last"
+        for log in deps.log migrate.log pull.log pg-ready.log migrate-status.log build.log; do
+            [ -s "$EVIDENCE_DIR/$log" ] || continue
+            printf '%s (tail)\n' "--- $log"
+            tail -c 2500 "$EVIDENCE_DIR/$log" 2>/dev/null
+        done
+        docker ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | head -20 || true
+    } | sed -E 's#(://[^/@]*):[^@]*@#\1:***@#g; s/(password=)[^ &"]*/\1***/g' \
+      > "$EVIDENCE_DIR/failure-detail" 2>/dev/null || true
+    echo "migrate-db: $*"
+    exit 1
+}
+
 # Pin run-local tags so compose cannot prefer a registry image over the build.
 if [ -n "${RUN_ID:-}" ]; then
     export MIGRATE_IMAGE="assetflow-migrate:${RUN_ID}"
@@ -91,49 +142,22 @@ if [ -n "${FIXTURE_MIGRATE_DIGEST:-}${FIXTURE_API_DIGEST:-}${FIXTURE_WEB_DIGEST:
     export WEB_IMAGE="$FIXTURE_WEB_DIGEST"
     say "pulling the pinned images by digest (no build)"
     # By digest only. There is deliberately no tag here to fall back to.
-    # The pull is BOUNDED and RETRIED: on a credit-throttled t3.micro the
-    # whole bootstrap runs at the 10% baseline, so a pull takes tens of
-    # minutes and docker's own layer timeouts can fail an attempt that a
-    # retry would survive. The ninth attempt died here: one failed pull
-    # meant an instant die() and a terminated instance.
-    PULL_ATTEMPTS="${PULL_ATTEMPTS:-2}"
-    PULL_TIMEOUT="${PULL_TIMEOUT:-1200}"
     for image in "$API_IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"; do
-        echo "pull $image" >> "$EVIDENCE_DIR/pull.log"
-        pulled=0
-        for attempt in $(seq 1 "$PULL_ATTEMPTS"); do
-            echo "pull attempt $attempt/$PULL_ATTEMPTS (bounded ${PULL_TIMEOUT}s)" >> "$EVIDENCE_DIR/pull.log"
-            if timeout "$PULL_TIMEOUT" docker pull "$image" >> "$EVIDENCE_DIR/pull.log" 2>&1; then
-                pulled=1
-                break
-            fi
-            echo "pull attempt $attempt failed rc=$?" >> "$EVIDENCE_DIR/pull.log"
-            [ "$attempt" -lt "$PULL_ATTEMPTS" ] && sleep 30
-        done
-        if [ "$pulled" -ne 1 ]; then
-            echo "migrate-db: cannot pull $image after $PULL_ATTEMPTS attempts"
-            tail -15 "$EVIDENCE_DIR/pull.log" 2>/dev/null
-            exit 1
-        fi
+        pull_bounded "$image" || fail "cannot pull $image after $PULL_ATTEMPTS attempts"
     done
     # Prove what is actually local matches what was asked for. A digest pull that
     # silently resolved to something else would defeat the point of pinning.
     for image in "$API_IMAGE" "$MIGRATE_IMAGE" "$WEB_IMAGE"; do
         resolved=$(docker inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null | sed 's/.*@//')
         printf '%s resolved=%s\n' "$image" "$resolved" >> "$EVIDENCE_DIR/digests.txt"
-        [ "$resolved" = "${image##*@}" ] || {
-            echo "migrate-db: $image resolved to '$resolved', not the pinned digest"
-            exit 1
-        }
+        [ "$resolved" = "${image##*@}" ] || fail "$image resolved to '$resolved', not the pinned digest"
     done
-    say "pinned images verified by digest"
+    progress "pinned images verified by digest"
     $COMPOSE images > "$EVIDENCE_DIR/images.txt" 2>&1 || true
 else
     say "building images from the pinned checkout"
     $COMPOSE build api migrate nginx > "$EVIDENCE_DIR/build.log" 2>&1 || {
-        echo "migrate-db: image build failed (see $EVIDENCE_DIR/build.log)"
-        tail -25 "$EVIDENCE_DIR/build.log" 2>/dev/null
-        exit 1
+        fail "image build failed (see $EVIDENCE_DIR/build.log)"
     }
 
     # Record the actual image IDs, so the evidence shows what ran rather than what
@@ -143,8 +167,21 @@ fi
 say "images"
 [ "$QUIET" -eq 1 ] || sed -n '1,12p' "$EVIDENCE_DIR/images.txt"
 
-say "starting dependencies"
-$COMPOSE up -d postgres redis || { echo "migrate-db: dependency services failed"; exit 1; }
+progress "starting dependencies"
+# Dependency images come from the compose file, not the pin: pull them with
+# the same bounded retry, then start them bounded. An unbounded, unretried
+# `compose up` was the one pull path a transient failure could still kill.
+# The run's own images are excluded: in pinned mode they are digest refs and
+# in build mode they are built locally, so neither belongs in a registry pull.
+dep_images="$($COMPOSE config --images 2>/dev/null \
+    | grep -v '@sha256:' \
+    | grep -vE 'assetflow-(api|migrate|web)' \
+    | sort -u || true)"
+for image in $dep_images; do
+    pull_bounded "$image" || fail "cannot pull dependency $image after $PULL_ATTEMPTS attempts"
+done
+timeout 900 $COMPOSE up -d postgres redis > "$EVIDENCE_DIR/deps.log" 2>&1 \
+    || fail "dependency services failed to start"
 
 # ---- wait for the database to actually accept queries ----------------------
 # `up -d` returns once containers are *started*, not healthy, and the migration
@@ -153,64 +190,57 @@ $COMPOSE up -d postgres redis || { echo "migrate-db: dependency services failed"
 # fails with P1001 "Can't reach database server" - which is exactly what a run
 # recorded. Wait for a real query, bounded, and say so if it never arrives.
 DB_WAIT="${DB_WAIT:-600}"
-say "waiting for postgres to accept queries (bounded ${DB_WAIT}s)"
+progress "waiting for postgres to accept queries (bounded ${DB_WAIT}s)"
 db_ready=0
+i=0
 for _ in $(seq 1 "$DB_WAIT"); do
+    i=$((i + 1))
     if $COMPOSE exec -T postgres pg_isready -U "${POSTGRES_USER:-assetflow}" \
             -d "${POSTGRES_DB:-assetflow}" > "$EVIDENCE_DIR/pg-ready.log" 2>&1; then
         db_ready=1
         break
     fi
+    [ $((i % 30)) -eq 0 ] && progress "waiting for postgres (${i}/${DB_WAIT}s)"
     sleep 1
 done
 if [ "$db_ready" -ne 1 ]; then
-    echo "migrate-db: postgres did not accept queries within ${DB_WAIT}s"
-    tail -10 "$EVIDENCE_DIR/pg-ready.log" 2>/dev/null || true
-    exit 1
+    fail "postgres did not accept queries within ${DB_WAIT}s"
 fi
-say "postgres is accepting queries"
+progress "postgres is accepting queries"
 
 # ---- the actual gate ------------------------------------------------------
 # `run` (not `up -d`) blocks until the container exits and returns its status.
-say "running migrations (foreground, timeout ${TIMEOUT}s)"
+progress "running migrations (foreground, timeout ${TIMEOUT}s)"
 rc=0
 timeout "$TIMEOUT" $COMPOSE run --rm --no-deps migrate \
     > "$EVIDENCE_DIR/migrate.log" 2>&1 || rc=$?
 
 if [ "$rc" -eq 124 ]; then
-    echo "migrate-db: migration timed out after ${TIMEOUT}s"
-    tail -25 "$EVIDENCE_DIR/migrate.log" 2>/dev/null
-    exit 1
+    fail "migration timed out after ${TIMEOUT}s"
 fi
 if [ "$rc" -ne 0 ]; then
-    echo "migrate-db: migration failed with exit $rc"
-    tail -25 "$EVIDENCE_DIR/migrate.log" 2>/dev/null
-    exit 1
+    fail "migration failed with exit $rc"
 fi
-say "migration container exited 0"
+progress "migration container exited 0"
 
 # ---- verify the database itself, not a log phrase -------------------------
 # `migrate status` asks the database which migrations are recorded and compares
 # them with the migration files. A log line can be absent for reasons that have
 # nothing to do with the schema; this cannot.
-say "verifying schema state against the database"
+progress "verifying schema state against the database"
 status_rc=0
 timeout 120 $COMPOSE run --rm --no-deps migrate npx prisma migrate status \
     > "$EVIDENCE_DIR/migrate-status.log" 2>&1 || status_rc=$?
 
 if [ "$status_rc" -ne 0 ]; then
-    echo "migrate-db: 'prisma migrate status' failed (exit $status_rc); the schema did not match the migrations"
-    sed -n '1,40p' "$EVIDENCE_DIR/migrate-status.log" 2>/dev/null
-    exit 1
+    fail "'prisma migrate status' failed (exit $status_rc); the schema did not match the migrations"
 fi
 
 # A pending migration here means the foreground run did not do its job, even
 # though it exited 0.
 if grep -qiE "have not yet been applied|following migration.*not.*applied|pending" \
         "$EVIDENCE_DIR/migrate-status.log" 2>/dev/null; then
-    echo "migrate-db: the database still has unapplied migrations"
-    sed -n '1,40p' "$EVIDENCE_DIR/migrate-status.log" 2>/dev/null
-    exit 1
+    fail "the database still has unapplied migrations"
 fi
 
 # Confirm the fixture table exists. Seeding writes to "User", so a database
@@ -220,11 +250,10 @@ TABLE_COUNT="$($COMPOSE exec -T postgres psql -U "${POSTGRES_USER:-assetflow}" \
     "SELECT count(*) FROM information_schema.tables WHERE table_name = 'User'" \
     2>/dev/null | tr -d '[:space:]')" || TABLE_COUNT=""
 case "$TABLE_COUNT" in
-    ''|*[!0-9]*) echo "migrate-db: could not query the schema (got '$TABLE_COUNT')"; exit 1 ;;
+    ''|*[!0-9]*) fail "could not query the schema (got '$TABLE_COUNT')" ;;
 esac
 [ "$TABLE_COUNT" = "1" ] || {
-    echo 'migrate-db: the "User" table does not exist; migrations did not create the schema'
-    exit 1
+    fail 'the "User" table does not exist; migrations did not create the schema'
 }
 
-say "database schema is current and the User table exists"
+progress "database schema is current and the User table exists"

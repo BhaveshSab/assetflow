@@ -150,6 +150,30 @@ class SnapshotTests(unittest.TestCase):
         self.assertNotIn("LeakMe", blob)
         self.assertLessEqual(len(report["seed_log_tail"]), 20)
 
+    def test_migration_failure_detail_is_served_bounded_and_redacted(self):
+        # The eleventh attempt died with only the generic die() one-liner
+        # retained; migrate-db.sh now writes a bounded detail file and phase
+        # progress, and both must ride to the poller through /status/failure.
+        detail = "\n".join(
+            ["reason=dependency services failed to start", "last_progress=starting dependencies"]
+            + [f"compose line {i} postgresql://assetflow:LeakMe@postgres:5432/db" for i in range(80)]
+        )
+        self.write("failure-detail", detail)
+        progress = "\n".join(f"20261113T0700{i:02d}Z phase {i}" for i in range(40))
+        self.write("migrate-progress", progress)
+        report = self.mod.failure(self.run_dir)
+        blob = json.dumps(report)
+        self.assertNotIn("LeakMe", blob)
+        self.assertIn("dependency services failed to start", blob)
+        self.assertLessEqual(len(report["failure_detail"]), 60)
+        self.assertEqual(len(report["migrate_progress"]), 20)
+        self.assertIn("phase 39", report["migrate_progress"][-1])
+
+    def test_absent_migration_detail_is_omitted_not_fabricated(self):
+        report = self.mod.failure(self.run_dir)
+        self.assertNotIn("failure_detail", report)
+        self.assertNotIn("migrate_progress", report)
+
     def test_no_secret_reaches_any_snapshot(self):
         # Credential-shaped text must not survive into a snapshot. A bare
         # unstructured secret on its own line cannot be detected by pattern, so
@@ -529,6 +553,123 @@ class MigrationReadinessGateTests(unittest.TestCase):
 
     def test_migration_runs_in_the_foreground(self):
         self.assertIn("run --rm --no-deps migrate", self.text)
+
+    def test_every_failure_exit_writes_the_detail_first(self):
+        # The eleventh attempt's only retained record was the generic die()
+        # one-liner; every failure path must now write the bounded redacted
+        # detail before exiting, so the reason survives off-host.
+        self.assertIn("failure-detail", self.text)
+        fail_start = self.text.index("fail() {")
+        body = self.text[fail_start : self.text.index("\n}", fail_start)]
+        self.assertLess(body.index("failure-detail"), body.index("exit 1"))
+        # URL userinfo and assigned passwords must be masked in the detail.
+        self.assertIn(":***@", body)
+        self.assertIn("password=", body)
+
+    def test_dependency_pulls_are_bounded_and_retried(self):
+        # `compose up` implicitly pulls postgres/redis with no bound and no
+        # retry - the one pull path a transient failure could still kill. The
+        # dependencies must be pre-pulled through the same bounded loop.
+        self.assertIn('pull_bounded "$image" || fail "cannot pull dependency', self.text)
+        self.assertIn("timeout 900 $COMPOSE up -d postgres redis", self.text)
+
+    def test_progress_is_recorded_at_every_phase(self):
+        for marker in (
+            'progress "pinned images verified by digest"',
+            'progress "starting dependencies"',
+            'progress "waiting for postgres',
+            'progress "running migrations',
+            'progress "verifying schema state',
+        ):
+            self.assertIn(marker, self.text)
+
+
+class MigrationFailureDetailTests(unittest.TestCase):
+    """The real migrate-db.sh must write a bounded, redacted failure detail
+    before any failure exit, and record progress at every phase.
+
+    The eleventh attempt failed with only the generic die() one-liner
+    retained: migrate.log and pull.log died with the root volume, so the
+    actual migration failure was unrecoverable. This drives the real script
+    to a dependency failure through a stubbed docker and asserts what lands
+    in the evidence dir.
+    """
+
+    def _run_to_dependency_failure(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        stub = tmp / "bin"
+        stub.mkdir()
+        (stub / "docker").write_text(
+            "#!/bin/bash\n"
+            'case "$1" in\n'
+            "  pull) exit 0 ;;\n"
+            "  inspect) echo \"${@: -1}\"; exit 0 ;;\n"
+            "  ps) exit 0 ;;\n"
+            "  compose)\n"
+            "    shift\n"
+            "    while [ $# -gt 0 ]; do\n"
+            "      case \"$1\" in --env-file|-f) shift 2 ;; *) break ;; esac\n"
+            "    done\n"
+            "    case \"$1\" in\n"
+            "      config) printf 'postgres:16.4-alpine\\nredis:7.4-alpine\\n'; exit 0 ;;\n"
+            "      images) exit 0 ;;\n"
+            "      up) echo \"compose up failed: postgresql://assetflow:LeakMe@postgres:5432/db\" >&2; exit 1 ;;\n"
+            "      *) exit 0 ;;\n"
+            "    esac ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        (stub / "docker").chmod(0o755)
+        evidence = tmp / "evidence"
+        env = dict(
+            os.environ,
+            PATH=f"{stub}:{os.environ['PATH']}",
+            FIXTURE_MIGRATE_DIGEST="ghcr.io/bhaveshsab/assetflow-migrate@sha256:" + "a" * 64,
+            FIXTURE_API_DIGEST="ghcr.io/bhaveshsab/assetflow-api@sha256:" + "b" * 64,
+            FIXTURE_WEB_DIGEST="ghcr.io/bhaveshsab/assetflow-web@sha256:" + "c" * 64,
+        )
+        proc = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "infra" / "capacity-run" / "migrate-db.sh"),
+                "--evidence-dir",
+                str(evidence),
+                "--timeout",
+                "60",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        return proc, evidence
+
+    def test_dependency_failure_writes_bounded_redacted_detail(self):
+        proc, evidence = self._run_to_dependency_failure()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("dependency services failed to start", proc.stdout)
+        detail = (evidence / "failure-detail").read_text(encoding="utf-8")
+        self.assertIn("reason=dependency services failed to start", detail)
+        self.assertIn("last_progress=", detail)
+        self.assertIn("--- deps.log (tail)", detail)
+        # The credential-shaped line from the failing compose up must be masked.
+        self.assertNotIn("LeakMe", detail)
+        self.assertIn("://assetflow:***@", detail)
+        # Bounded: six log tails at 2500 bytes plus headers cannot exceed this.
+        self.assertLess(len(detail), 20000)
+
+    def test_progress_records_every_phase_before_the_failure(self):
+        proc, evidence = self._run_to_dependency_failure()
+        progress = (evidence / "migrate-progress").read_text(encoding="utf-8")
+        for marker in (
+            "pull attempt",
+            "pinned images verified by digest",
+            "pull attempt 1/2 for postgres:16.4-alpine",
+            "starting dependencies",
+        ):
+            self.assertIn(marker, progress)
 
 
 if __name__ == "__main__":

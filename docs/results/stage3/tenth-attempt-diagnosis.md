@@ -64,6 +64,46 @@
 - Near-zero CPU credits are real but do not by themselves terminate an instance;
   they are not claimed as the cause.
 
+## Eleventh attempt (run 43380711015, instance i-011e987b7e3941710)
+
+The evidence window worked exactly as designed: the poller captured the
+failure reason off-host at 07:00:55-57Z -
+
+    failed: database migration did not complete (see .../migrate.log)
+            (evidence-window=90s pending)
+
+- die at `stage=deploy line=261`, watchdog alive (heartbeat 07:00:57Z, age
+  30s at check), network down 07:01:27Z, terminated before readiness.
+- CPU was pinned at 10.0% from launch to ~06:55, then dropped to 2.5% with
+  credits regenerating (0.162 at 07:00) - the pull phase had ended. The
+  migration step then failed within roughly a minute, far too fast for a
+  real migration, which points at the dependency start (compose up) or an
+  immediately failing migration container.
+- The exact sub-reason was unrecoverable: migrate-db.sh exited non-zero for
+  any of pull / compose up / pg wait / migrate, and migrate.log and pull.log
+  died with the root volume.
+
+## Correction for the migration path (this commit)
+
+- migrate-db.sh records phase progress (`migrate-progress`) at every step -
+  pulls, digest verification, dependency start, postgres wait (every 30s),
+  migration, schema verification - served by /status/failure so the off-host
+  poller records exactly where a future failure happens.
+- Every failure exit now writes a bounded, redacted `failure-detail` (reason,
+  last progress line, tails of deps/migrate/pull/pg-ready/status/build logs,
+  container states) before exiting; /status/failure serves it and the poller
+  retains it. URL userinfo and assigned passwords are masked.
+- Dependency images (postgres, redis) are pre-pulled through the same bounded,
+  retried loop as the pinned images, and `compose up` is bounded (900s). The
+  run's own images are excluded from that pull in both pinned and build modes.
+- Executable regression tests drive the real script to a dependency failure
+  through a stubbed docker and assert the detail is written, bounded and
+  redacted; endpoint tests pin the served fields' bounds and redaction.
+
+No configuration change (CPU credits, instance type) was made or armed. The
+captured reason is a possible, not guaranteed, outcome: an externally
+initiated termination may remain UNKNOWN.
+
 ## Correction shipped (commits c53afd4, afc5fda, and the review fix)
 
 Bootstrap-error shutdown paths (`die()`, `on_error()`) record the reason and

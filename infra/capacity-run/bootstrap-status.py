@@ -17,7 +17,8 @@ directory (which holds generated credentials):
     /status             stage, timestamps, deadline, disk, memory
     /status/seed        seed exit status, signal, elapsed time
     /status/host        disk and memory only
-    /status/failure     bounded redacted failure summary and seed log tail
+    /status/failure     bounded redacted failure summary, migration detail
+                        and progress, seed log tail
 
 TLS uses the run certificate, and a bearer token is compared in constant time.
 Bodies are capped at 8 KiB and every field passes through redact().
@@ -223,6 +224,17 @@ def failure(run_dir: Path) -> dict:
     summary = read_small(ev / "failure-summary", 4096)
     if summary:
         out["summary"] = [redact(x) for x in summary.splitlines()[:40]]
+    # Migration diagnostics: the eleventh attempt died with only the generic
+    # die() one-liner retained, because migrate.log and pull.log died with the
+    # root volume. migrate-db.sh now writes a bounded, pre-redacted detail file
+    # and phase progress before any failure exit; both ride to the off-host
+    # poller through this endpoint.
+    detail = read_small(ev / "failure-detail", 8192)
+    if detail:
+        out["failure_detail"] = [redact(x) for x in detail.splitlines()[:60] if x.strip()]
+    progress = read_small(ev / "migrate-progress", 4096)
+    if progress:
+        out["migrate_progress"] = [redact(x) for x in progress.splitlines()[-20:] if x.strip()]
     log = read_small(ev / "seed.log", 16384)
     if log:
         out["seed_log_tail"] = [redact(x) for x in log.splitlines()[-20:] if x.strip()]
