@@ -374,7 +374,7 @@ stage_begin "application health"
 # was within a few hundred bytes of the 16 KiB EC2 cap.
 env COMPOSE="$COMPOSE" EVIDENCE_DIR="$EVIDENCE_DIR" APP_DIR="$APP_DIR" RUN_ID="$RUN_ID" \
     bash "$APP_DIR/infra/capacity-run/app-health.sh" \
-    || die "application readiness never passed (see $EVIDENCE_DIR/api-readiness.log)"
+    || die "application health step failed (see $EVIDENCE_DIR/stack-up.log; app-health writes its own precise one-liner)"
 
 # ------------------------------------- 8. single public edge on ONE port
 # One inbound port (8443): /evidence -> the evidence server, /status -> the

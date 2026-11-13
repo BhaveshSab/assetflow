@@ -134,7 +134,48 @@ class HealthProbeTests(unittest.TestCase):
     def test_user_data_invokes_the_script_and_reports_the_gate(self):
         src = body(USER_DATA)
         self.assertIn('app-health.sh', src)
-        self.assertIn('application readiness never passed', src)
+        # The fifteenth attempt: a stack-START failure (nginx could not bind
+        # 0.0.0.0:8443) surfaced as "readiness never passed" because this
+        # fallback die reused the gate's wording. The fallback must not claim
+        # a phase it did not observe; app-health writes its own precise
+        # one-liner for whichever step actually failed.
+        self.assertIn('application health step failed', src)
+        self.assertNotIn('application readiness never passed', src)
+
+    def test_the_guest_port_defaults_can_never_bind_a_public_port(self):
+        """The fifteenth attempt's root cause: the rendered prologue assigned
+        HTTPS_PORT=${HTTPS_PORT:-8443} - a plain 8443. Compose gives shell
+        environment variables precedence over --env-file, so wherever that
+        value leaked into the environment the app nginx's mapping became
+        0.0.0.0:8443 and collided with the host edge. Every default in the
+        guest path must be loopback-bound, so no layer can produce a public
+        mapping."""
+        render = (CAPACITY / 'render-user-data.sh').read_text(encoding='utf-8')
+        user_data = USER_DATA.read_text(encoding='utf-8')
+        for src, name in ((render, 'render-user-data.sh'),
+                          (user_data, 'user-data.sh')):
+            for var, port in (('HTTP_PORT', '8080'), ('HTTPS_PORT', '8440')):
+                for line in src.splitlines():
+                    if ('%s=${%s:-' % (var, var)) in line:
+                        self.assertIn('127.0.0.1:%s' % port, line,
+                                      '%s: %s default is not loopback-bound: %s'
+                                      % (name, var, line.strip()))
+                    if ('%s=127.0.0.1' % var) in line or \
+                       ("%s=\\" % var) in line:
+                        pass  # explicit loopback assignment, fine
+                self.assertNotIn(
+                    '%s=${%s:-8443}' % (var, var), src,
+                    '%s still defaults %s to a public port' % (name, var))
+        # The three sites must agree on the same loopback values: the rendered
+        # prologue, the guest .env heredoc and the re-asserting sed lines.
+        for var, value in (('HTTP_PORT', '127.0.0.1:8080'),
+                           ('HTTPS_PORT', '127.0.0.1:8440')):
+            occurrences = user_data.count('%s=%s' % (var, value))
+            self.assertGreaterEqual(
+                occurrences, 2,
+                'user-data.sh states %s=%s only %d times; the heredoc and '
+                'the sed re-assert must both carry the loopback value'
+                % (var, value, occurrences))
 
     def test_the_status_endpoint_serves_the_readiness_diagnostics(self):
         status = (CAPACITY / 'bootstrap-status.py').read_text(encoding='utf-8')
