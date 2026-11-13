@@ -238,6 +238,20 @@ def failure(run_dir: Path) -> dict:
     log = read_small(ev / "seed.log", 16384)
     if log:
         out["seed_log_tail"] = [redact(x) for x in log.splitlines()[-20:] if x.strip()]
+    # Readiness diagnostics: the thirteenth attempt died at the readiness gate
+    # with nothing but the generic one-liner, because nothing recorded what the
+    # api container was actually doing. app-health.sh now writes the stack
+    # state and the api log tail before failing; both ride to the off-host
+    # poller through this endpoint.
+    api_log = read_small(ev / "api-readiness.log", 8192)
+    if api_log:
+        out["api_log_tail"] = [redact(x) for x in api_log.splitlines()[-40:] if x.strip()]
+    stack_up = read_small(ev / "stack-up.log", 4096)
+    if stack_up:
+        out["stack_up_tail"] = [redact(x) for x in stack_up.splitlines()[-15:] if x.strip()]
+    stack_ps = read_small(ev / "stack-ps.txt", 2048)
+    if stack_ps:
+        out["stack_ps"] = [redact(x) for x in stack_ps.splitlines()[-15:] if x.strip()]
     return out
 
 

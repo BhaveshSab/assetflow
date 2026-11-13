@@ -16,6 +16,7 @@ from pathlib import Path
 
 CAPACITY = Path(__file__).resolve().parents[2] / 'infra/capacity-run'
 USER_DATA = CAPACITY / 'user-data.sh'
+APP_HEALTH = CAPACITY / 'app-health.sh'
 RENDER = CAPACITY / 'render-user-data.sh'
 GUARD = CAPACITY / 'deadline-guard.sh'
 APP_CFG = CAPACITY / 'generate-app-config.sh'
@@ -86,20 +87,60 @@ class HealthProbeTests(unittest.TestCase):
         self.src = body(USER_DATA)
 
     def test_uses_the_real_api_port(self):
-        self.assertIn('127.0.0.1:4000', self.src)
-        self.assertNotIn('127.0.0.1:3000', self.src)
+        self.assertIn('127.0.0.1:4000', APP_HEALTH.read_text(encoding='utf-8'))
+        self.assertNotIn('127.0.0.1:3000', APP_HEALTH.read_text(encoding='utf-8'))
 
     def test_uses_the_real_readiness_route(self):
-        self.assertIn('/api/health/ready', self.src)
+        self.assertIn('/api/health/ready', APP_HEALTH.read_text(encoding='utf-8'))
 
     def test_probes_with_a_client_present_in_the_image(self):
-        self.assertIn('exec -T api node -e', self.src)
-        self.assertNotIn('exec -T api curl', self.src)
+        health = APP_HEALTH.read_text(encoding='utf-8')
+        self.assertIn('exec -T api node -e', health)
+        self.assertNotIn('exec -T api curl', health)
 
     def test_probe_matches_the_compose_healthcheck(self):
         compose = COMPOSE.read_text(encoding='utf-8')
         self.assertIn('127.0.0.1:4000/api/health/ready', compose,
                       'the bootstrap probe must agree with the compose healthcheck')
+
+    def test_the_stack_is_started_before_the_gate(self):
+        """The thirteenth attempt died here by design: nothing had ever run
+        `up -d api nginx`, so the gate probed a container that did not exist
+        for the whole 90-iteration window."""
+        health = APP_HEALTH.read_text(encoding='utf-8')
+        self.assertIn('up -d api nginx', health)
+        self.assertLess(health.index('up -d api nginx'),
+                        health.index('exec -T api node -e'),
+                        'the readiness gate must run after the stack starts')
+
+    def test_the_run_certificate_is_installed_for_the_app_edge(self):
+        """The app nginx mounts ./certs at /etc/letsencrypt; without the run
+        certificate it cannot start at all (CI supplies it the same way)."""
+        health = APP_HEALTH.read_text(encoding='utf-8')
+        self.assertIn('certs/live/assetflow/fullchain.pem', health)
+        self.assertIn('certs/live/assetflow/privkey.pem', health)
+        self.assertLess(health.index('fullchain.pem'),
+                        health.index('up -d api nginx'),
+                        'the certificate must exist before nginx starts')
+
+    def test_readiness_failure_leaves_diagnostics_before_dying(self):
+        health = APP_HEALTH.read_text(encoding='utf-8')
+        self.assertIn('api-readiness.log', health)
+        self.assertIn('stack-ps.txt', health)
+        self.assertLess(health.index('api-readiness.log'),
+                        health.index('fail "application readiness never passed'),
+                        'the api log must be captured before the failure exit')
+
+    def test_user_data_invokes_the_script_and_reports_the_gate(self):
+        src = body(USER_DATA)
+        self.assertIn('app-health.sh', src)
+        self.assertIn('application readiness never passed', src)
+
+    def test_the_status_endpoint_serves_the_readiness_diagnostics(self):
+        status = (CAPACITY / 'bootstrap-status.py').read_text(encoding='utf-8')
+        for name in ('api-readiness.log', 'stack-up.log', 'stack-ps.txt'):
+            self.assertIn(name, status,
+                          '/status/failure does not serve %s' % name)
 
 
 class SeedingTests(unittest.TestCase):
@@ -527,6 +568,116 @@ class UrlSafetyGateTests(unittest.TestCase):
         for name in self.URLSAFE_VARS:
             self.assertIn(name, guard,
                           'the URL-safety gate does not cover %s' % name)
+
+
+class AppHealthScriptTests(unittest.TestCase):
+    """Executable tests on the real app-health.sh with a stubbed compose.
+
+    The stub records every invocation so the ordering contract (certificate
+    installed -> stack started -> gate probes) is observed, not asserted
+    structurally. A failing exec exercises the real diagnostics capture and
+    the real failure exit.
+    """
+
+    SCRIPT = APP_HEALTH
+
+    def _run(self, exec_rc, up_rc=0, ready_after=None, env=None):
+        """Run the real script against a stubbed COMPOSE (and a stubbed sleep,
+        so the full 90-iteration gate runs instantly).
+
+        exec_rc: exit code for the readiness probe until ready_after is hit.
+        ready_after: if set, the probe succeeds from this attempt on.
+        """
+        tmp = Path(tempfile.mkdtemp())
+        stub = tmp / 'compose-stub.sh'
+        if ready_after is not None:
+            exec_body = ('if [ "$(cat %s/probe-count 2>/dev/null || echo 0)" '
+                         '-ge %d ]; then exit 0; else exit %d; fi'
+                         % (tmp, ready_after, exec_rc))
+        else:
+            exec_body = 'exit %d' % exec_rc
+        stub.write_text(
+            '#!/bin/bash\n'
+            'LOG="%s/stub-calls.log"\n'
+            'printf "%%s\\n" "$*" >> "$LOG"\n'
+            'case "$1 $2" in\n'
+            '  "up -d") exit %d ;;\n'
+            '  "exec -T")\n'
+            '    case "$*" in *http://nginx*) echo 200; exit 0 ;; esac\n'
+            '    n=$(cat "%s/probe-count" 2>/dev/null || echo 0)\n'
+            '    echo $((n+1)) > "%s/probe-count"\n'
+            '    %s ;;\n'
+            '  *) exit 0 ;;\n'
+            'esac\n'
+            % (tmp, up_rc, tmp, tmp, exec_body),
+            encoding='utf-8')
+        stub.chmod(0o755)
+        ev = tmp / 'evidence'
+        ev.mkdir()
+        # A fake TLS source so the certificate install really runs.
+        tls = tmp / 'tls'
+        tls.mkdir()
+        (tls / 'tls.crt').write_text('crt')
+        (tls / 'tls.key').write_text('key')
+        app = tmp / 'app'
+        app.mkdir()
+        env = dict(env or {})
+        env.update(
+            APP_DIR=str(app), EVIDENCE_DIR=str(ev), COMPOSE=str(stub),
+            TLS_SRC=str(tls))
+        # The real gate sleeps 5s between probes; stub sleep so 90 iterations
+        # run instantly while the real loop text still executes.
+        proc = subprocess.run(
+            ['bash', '-c', 'sleep() { :; }; export -f sleep; exec bash "$1"',
+             'bash', str(self.SCRIPT)],
+            capture_output=True, text=True, timeout=120,
+            env=env)
+        return proc, tmp, ev
+
+    def test_success_starts_the_stack_then_probes_and_writes_health(self):
+        proc, tmp, ev = self._run(exec_rc=1, ready_after=2)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((ev / 'app-health').read_text().strip(), 'healthy')
+        calls = (tmp / 'stub-calls.log').read_text().splitlines()
+        ups = [i for i, c in enumerate(calls) if c.startswith('up -d')]
+        execs = [i for i, c in enumerate(calls) if c.startswith('exec -T')]
+        self.assertTrue(ups and execs)
+        self.assertLess(ups[0], execs[0],
+                        'the stack must be started before the first probe')
+        self.assertIn('up -d api nginx', calls[ups[0]])
+
+    def test_certificate_is_installed_before_the_stack_starts(self):
+        proc, tmp, ev = self._run(exec_rc=0)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        cert = tmp / 'app' / 'infra' / 'certs' / 'live' / 'assetflow' / 'fullchain.pem'
+        key = tmp / 'app' / 'infra' / 'certs' / 'live' / 'assetflow' / 'privkey.pem'
+        self.assertEqual(cert.read_text(), 'crt')
+        self.assertEqual(key.read_text(), 'key')
+        self.assertEqual(oct(key.stat().st_mode & 0o777), '0o600')
+        calls = (tmp / 'stub-calls.log').read_text().splitlines()
+        self.assertTrue(any(c.startswith('up -d') for c in calls))
+
+    def test_readiness_failure_captures_diagnostics_and_exits_nonzero(self):
+        proc, tmp, ev = self._run(exec_rc=1)
+        self.assertNotEqual(proc.returncode, 0,
+                            'the gate must fail when readiness never passes')
+        self.assertIn('application readiness never passed', proc.stderr)
+        self.assertTrue((ev / 'api-readiness.log').exists(),
+                        'the api log must be captured before the failure exit')
+        self.assertTrue((ev / 'stack-ps.txt').exists())
+        self.assertNotIn('healthy', (ev / 'app-health').read_text()
+                         if (ev / 'app-health').exists() else '')
+
+    def test_stack_start_failure_is_reported_with_the_log(self):
+        proc, tmp, ev = self._run(exec_rc=1, up_rc=7)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('stack failed to start', proc.stderr)
+        self.assertTrue((ev / 'stack-up.log').exists())
+
+    def test_edge_health_is_recorded_after_readiness(self):
+        proc, tmp, ev = self._run(exec_rc=0)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((ev / 'edge-health').read_text().strip(), '200')
 
 
 class WorkflowSecretAlphabetTests(unittest.TestCase):

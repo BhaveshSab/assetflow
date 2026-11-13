@@ -318,8 +318,8 @@ GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
 NODE_ENV=production
 METRICS_ENABLED=true
 OTEL_ENABLED=false
-HTTP_PORT=${HTTP_PORT:-8080}
-HTTPS_PORT=${HTTPS_PORT:-8443}
+HTTP_PORT=127.0.0.1:8080
+HTTPS_PORT=127.0.0.1:8440
 ENVEOF
 chmod 600 "$APP_DIR/infra/.env"
 
@@ -369,37 +369,17 @@ say "verified $SEEDED run-owned accounts with stored hashes"
 stage_done "fixtures"
 
 stage_begin "application health"
-for i in $(seq 1 90); do
-    if $COMPOSE exec -T api node -e \
-        "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
-        >/dev/null 2>&1; then
-        echo healthy > "$EVIDENCE_DIR/app-health"
-        break
-    fi
-    [ "$i" -eq 90 ] && die "application readiness never passed"
-    sleep 5
-done
-
-# Fetch the edge too: a health flag alone is not a working application.
-EDGE_CODE=$($COMPOSE exec -T api node -e \
-    "fetch('http://nginx/api/health/ready').then(r=>{console.log(r.status);process.exit(0)}).catch(()=>{console.log(0);process.exit(0)})" \
-    2>/dev/null | tr -d '[:space:]')
-printf '%s' "${EDGE_CODE:-0}" > "$EVIDENCE_DIR/edge-health"
+# The stack start and the readiness gate live in the repo, not the payload
+# (the same fetch-from-pinned-commit pattern as early-edge.sh): the payload
+# was within a few hundred bytes of the 16 KiB EC2 cap.
+RUN_ID="$RUN_ID" COMPOSE="$COMPOSE" EVIDENCE_DIR="$EVIDENCE_DIR" APP_DIR="$APP_DIR" \
+    bash "$APP_DIR/infra/capacity-run/app-health.sh" \
+    || die "application readiness never passed (see $EVIDENCE_DIR/api-readiness.log)"
 
 # ------------------------------------- 8. single public edge on ONE port
-# The client may only be allowed one inbound port, and approving that port must
-# actually let the load generator reach the APPLICATION. nginx here is a small
-# reverse proxy on 8443 that routes by path:
-#
-#   /evidence/<name>.tar.gz  -> the Python evidence server (loopback 9443)
-#   everything else          -> the application edge (nginx container, 8080)
-#
-# One port, two destinations, no wideneing of source CIDRs, and no change to the
-# application's own limiters: /api still passes through the app nginx with its
-# limit_req zone and burst=200 exactly as configured.
-#
-# TLS is terminated here with the operator-supplied certificate, so the client
-# verifies capacity-run.test on 8443 for both the application and the evidence.
+# One inbound port (8443): /evidence -> the evidence server, /status -> the
+# status service, everything else -> the application edge on 8080. TLS uses the
+# operator-supplied certificate; the app's own limiters are untouched.
 stage_begin "single-port edge"
 
 # Bind the application edge to loopback only: it must not be reachable directly.
