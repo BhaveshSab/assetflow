@@ -93,6 +93,20 @@ class SnapshotTests(unittest.TestCase):
         self.write("stage-current", "fixtures")
         self.assertEqual(self.mod.status(self.run_dir)["stage"], "fixtures")
 
+    def test_seeded_fixture_count_is_reported_from_the_guests_own_record(self):
+        """The sixteenth attempt reached ready with a healthy stack and still
+        failed the 'fixtures seeded (>0)' contract check, because the status
+        document carried no count at all and no snapshot ever carried
+        accounts_seen_in_log. The count the seed wrote is the guest's own
+        record and must ride the status channel."""
+        self.write("fixture-users", "200")
+        self.assertEqual(self.mod.status(self.run_dir)["fixture_users"], 200)
+
+    def test_a_missing_or_unreadable_fixture_count_is_null_never_invented(self):
+        self.assertIsNone(self.mod.status(self.run_dir)["fixture_users"])
+        self.write("fixture-users", "not-a-number")
+        self.assertIsNone(self.mod.status(self.run_dir)["fixture_users"])
+
     def test_unreadable_deadline_is_not_reported_as_fine(self):
         report = self.mod.status(self.run_dir)
         self.assertEqual(report["deadline_state"], "unreadable")

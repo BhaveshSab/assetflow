@@ -283,6 +283,14 @@ def status(run_dir: Path) -> dict:
         "application_ready": False,
         "note": "diagnostic channel; application readiness is reported by the application, not here",
     }
+    # The guest's own record of the seeded fixture count: seed-fixtures.sh
+    # writes the verified account count it created, and the sixteenth attempt
+    # showed the supervisor's contract check needs it in the status document -
+    # the run reached ready with the stack healthy but the check found no
+    # count anywhere and failed the run after the fact. Absent or unreadable
+    # is null (unknown), never invented.
+    users = read_small(ev / "fixture-users", 32).strip()
+    out["fixture_users"] = int(users) if users.isdigit() else None
     deadline = read_small(ev / "deadline-epoch", 32).strip()
     if deadline.isdigit():
         remaining = int(deadline) - now
