@@ -82,10 +82,9 @@ class H(http.server.BaseHTTPRequestHandler):
             body, code = {"status": "not-ready", "database": "down"}, 503
         else:
             body = {"status": "ready", "database": "up", "schema": "current"}
-            # Fixtures only present when the run really seeded them.
-            # The application reports the count it actually has. A run whose
-            # fixtures were never seeded reports zero, and zero is a failure.
-            body["fixture_users"] = 200 if mode == "ready" else 0
+            # The real application's readiness document carries status,
+            # database and schema only - the seeded count travels on the
+            # status channel (bootstrap-status.py fixture_users), not here.
             code = 200
         self._send(code, json.dumps(body).encode())
 s = http.server.HTTPServer(("127.0.0.1", int(port)), H)
@@ -198,6 +197,11 @@ class SupervisorContract(unittest.TestCase):
         # The poller stub embeds the guest-supplied digest into its snapshot,
         # exactly as the real status document would carry it.
         env["GUEST_META"] = meta_path
+        # The no_fixtures case models a run whose seed never wrote a count:
+        # the status document then carries fixture_users 0, and the contract
+        # check must fail on it rather than going looking for a friendlier
+        # number.
+        env["STUB_FIXTURE_USERS"] = "0" if case == "no_fixtures" else "200"
         if not shutil.which("jq"):
             for cand in ("/mnt/c/Users/bhave/tools", os.path.expanduser("~/bin")):
                 if os.path.isfile(os.path.join(cand, "jq")):

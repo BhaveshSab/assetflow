@@ -226,6 +226,21 @@ latest_snapshot() {
     return 0
 }
 
+# The NEWEST snapshot regardless of the consumed ledger, read-only. The
+# eighteenth-attempt audit: latest_snapshot is a consuming read - a step that
+# runs earlier (the diagnostic stage) can consume the only fresh snapshot and
+# leave a later check with nothing, and on a real run the newest UNCONSUMED
+# snapshot can predate the seed and carry a null count. A check that wants the
+# guest's current state must peek at the newest file, not dequeue one.
+newest_snapshot() {
+    local f last=""
+    for f in "$STATE_DIR"/snapshots/*.json; do
+        [ -f "$f" ] && last="$f"
+    done
+    [ -n "$last" ] && printf '%s' "$last"
+    return 0
+}
+
 START=$(date +%s)
 DEADLINE=$(( START + MAX_MINUTES * 60 ))
 : > "$STATE_DIR/consumed"
@@ -360,10 +375,18 @@ if [ -n "$FIX" ]; then
     # not a cue to go looking for a friendlier number somewhere else.
     contract_check "fixtures seeded (>0)" "$([ "$FIX" -gt 0 ] 2>/dev/null && echo 1 || echo 0)"
 else
-    # Fall back to the guest evidence log if the route does not report it.
-    SNAP=$(latest_snapshot)
+    # Fall back to the newest status-channel snapshot, read-only: the count
+    # the seed wrote rides every snapshot taken after the fixtures stage, and
+    # consuming reads here would race the diagnostic stage for the same file.
+    SNAP=$(newest_snapshot)
     if [ -n "$SNAP" ]; then
-        N=$(jq -r '.accounts_seen_in_log // 0' "$SNAP" 2>/dev/null || echo 0)
+        # The status channel document: bootstrap-status.py reports
+        # fixture_users from the guest's own record (the count the seed
+        # verified), and the poller captures that document as its snapshots.
+        # The sixteenth and seventeenth attempts showed the previous field
+        # name here - accounts_seen_in_log - was produced by nothing, so the
+        # fallback could only ever read zero.
+        N=$(jq -r '.fixture_users // 0' "$SNAP" 2>/dev/null || echo 0)
         contract_check "fixtures seeded (from status log, >0)" \
             "$([ "$N" -gt 0 ] 2>/dev/null && echo 1 || echo 0)"
     else
