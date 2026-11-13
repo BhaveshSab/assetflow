@@ -64,18 +64,29 @@
 - Near-zero CPU credits are real but do not by themselves terminate an instance;
   they are not claimed as the cause.
 
-## Correction shipped (commit c53afd4)
+## Correction shipped (commits c53afd4, afc5fda, and the review fix)
 
-A bounded, clamped evidence window before any guest-initiated shutdown:
-`die()`, `on_error()` and the deadline guard's `shut_down()` now record the
-reason, hold the guest up (default 90s, max 180s, env-overridable) so the 30s
-off-host poller captures `failed: <reason> (evidence-window=Ns shutdown-pending)`
-via /status, and only then shut down. `on_error()` also writes the
-failure-summary marker now (only `die()` did). The deadline unit's
-`TimeoutStartSec=240` keeps systemd from killing the guard mid-window. The
-guard embed is gzipped (like the TLS material) to stay inside the 16 KiB
-user-data cap. Fail-closed cleanup is unchanged: the instance still terminates.
+Bootstrap-error shutdown paths (`die()`, `on_error()`) record the reason and
+hold a bounded evidence window so the 30s off-host poller captures
+`failed: <reason> (evidence-window=Ns shutdown-pending)` via /status before the
+network drops. `on_error()` also writes the failure-summary marker now (only
+`die()` did). The guard embed is gzipped (like the TLS material) to stay inside
+the 16 KiB user-data cap.
+
+A review found that the first version of this correction also delayed the
+deadline guard's shutdown by the window - a safety regression, because the
+four-hour limit is a maximum, not a deadline after which evidence collection
+begins. Corrected: deadline-guard.sh's `shut_down()` is immediate again (no
+window, no sleep anywhere in the guard), and the bootstrap window is capped by
+the remaining approved lifetime (a 120s margin is kept for the shutdown and
+cleanup) and skipped entirely when the deadline cannot be validated (for
+example a die() before the config is sourced). Executable regression tests
+cover deadline expiry and invalid-deadline immediacy (elapsed < 10s) and the
+window cap/skip behaviour, run against the real rendered function text.
+Fail-closed cleanup is unchanged: every path still terminates the instance.
 
 No configuration change (CPU credits, instance type) was made or armed. If the
 next failure's captured reason shows a throttle-induced timeout, that becomes
 the evidence for a configuration recommendation; until then none is claimed.
+A captured reason is possible, not guaranteed: an externally initiated
+termination may remain UNKNOWN.

@@ -59,17 +59,40 @@ stage_done()  { console_log "stage-done: $1"; say "== $1 done =="; }
 
 # Refuse to leave a half-configured host running.
 
-# A guest-initiated shutdown must not race the off-host poller (30s sampling):
+# Bootstrap-error shutdowns must not race the off-host poller (30s sampling):
 # hold a bounded window after recording the reason so /status serves it, then
-# shut down. Fail-closed is preserved: the instance still terminates.
+# shut down. The window is capped by the REMAINING approved lifetime and is
+# skipped entirely when the deadline cannot be validated (for example a die()
+# before the config is sourced): the four-hour limit is a maximum, and
+# deadline enforcement itself never waits. Deadline-expired and invalid-
+# deadline shutdowns live in deadline-guard.sh and are always immediate.
 EW_SECONDS="${EW_SECONDS:-90}"
 case "$EW_SECONDS" in ''|*[!0-9]*) EW_SECONDS=90 ;; esac
 [ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180
 
 evidence_window() {
-    console_log "evidence window ${EW_SECONDS}s open, then shutdown"
-    status "failed: $1 (evidence-window=${EW_SECONDS}s shutdown-pending)"
-    sleep "$EW_SECONDS" || true
+    local wait="$EW_SECONDS" now remaining note
+    case "${DEADLINE_EPOCH:-}" in
+        ''|*[!0-9]*) wait=0 ;;
+        *)
+            # 120s margin for the shutdown and the fail-closed cleanup after it.
+            now=$(date +%s)
+            remaining=$(( DEADLINE_EPOCH - now - 120 ))
+            if [ "$remaining" -le 0 ]; then
+                wait=0
+            elif [ "$wait" -gt "$remaining" ]; then
+                wait="$remaining"
+            fi
+            ;;
+    esac
+    if [ "$wait" -gt 0 ]; then
+        note="evidence-window=${wait}s pending"
+    else
+        note="evidence-window=0s immediate"
+    fi
+    console_log "evidence window=${wait}s"
+    status "failed: $1 ($note)"
+    [ "$wait" -gt 0 ] && sleep "$wait" || true
 }
 
 die() {
@@ -154,8 +177,6 @@ Description=capacity run deadline enforcement
 After=network.target
 [Service]
 Type=oneshot
-# must exceed the bounded evidence window (up to 180s); the default is 90s
-TimeoutStartSec=240
 Environment=RUN_DIR=$RUN_DIR
 # NO RemainAfterExit: it would keep the unit active after the first check and
 # every later timer tick would be a no-op.

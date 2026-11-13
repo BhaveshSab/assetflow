@@ -125,8 +125,6 @@ echo '${TLS_KEY_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
 
 mkdir -p /usr/local/lib/capacity-run-src
-# The guard is gzipped like the TLS material: the 16 KiB user-data cap leaves
-# no room for it uncompressed next to the annotated bootstrap.
 echo '${GUARD_GZ}' | base64 -d | gzip -d > /usr/local/lib/capacity-run-src/deadline-guard.sh
 chmod 755 /usr/local/lib/capacity-run-src/deadline-guard.sh
 

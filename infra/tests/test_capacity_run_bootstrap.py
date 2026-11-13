@@ -10,10 +10,12 @@ contract tests in this file asserted the superseded design (user-data re-arming 
 transient timer on every boot) and have been replaced.
 """
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -157,14 +159,16 @@ class DigestPinnedDeploymentTests(unittest.TestCase):
 
 
 class ShutdownEvidenceWindowTests(unittest.TestCase):
-    """A guest-initiated shutdown must give the off-host poller a bounded window
-    to capture the failure reason before the network drops.
+    """Bootstrap-error shutdowns may hold a bounded evidence window so the
+    off-host poller captures the failure reason; deadline enforcement may not.
 
     Attempts 9 and 10 died with no recoverable reason: every shutdown path
     wrote its reason and called `shutdown -h now` immediately, and the poller
-    (30s sampling) lost the race. The correction keeps fail-closed cleanup
-    (the instance still terminates) but holds the guest up for a bounded,
-    clamped window after the reason is recorded, so /status serves it off-host.
+    (30s sampling) lost the race. The correction gives BOOTSTRAP-ERROR paths a
+    bounded window, capped by the remaining approved lifetime and skipped when
+    the deadline cannot be validated. DEADLINE ENFORCEMENT (deadline-guard.sh)
+    has no window at all: the four-hour limit is a maximum, not a deadline
+    after which evidence collection begins.
     """
 
     def setUp(self):
@@ -172,12 +176,18 @@ class ShutdownEvidenceWindowTests(unittest.TestCase):
         self.guard = (CAPACITY_DIR / "deadline-guard.sh").read_text(encoding="utf-8")
 
     def test_window_is_bounded_and_defaults_to_ninety(self):
-        for text in (self.bootstrap, self.guard):
-            self.assertIn('EW_SECONDS="${EW_SECONDS:-90}"', text)
-            self.assertIn("''|*[!0-9]*) EW_SECONDS=90", text)
-            self.assertIn('[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180', text)
+        self.assertIn('EW_SECONDS="${EW_SECONDS:-90}"', self.bootstrap)
+        self.assertIn("''|*[!0-9]*) EW_SECONDS=90", self.bootstrap)
+        self.assertIn('[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180', self.bootstrap)
 
-    def test_die_records_the_reason_then_waits_then_shuts_down(self):
+    def test_deadline_guard_has_no_window_and_no_sleep(self):
+        # The four-hour limit is a maximum: deadline enforcement must be
+        # immediate, so the guard carries no window, no clamp and no sleep.
+        self.assertNotIn("evidence_window", self.guard)
+        self.assertNotIn("EW_SECONDS", self.guard)
+        self.assertNotIn("sleep ", self.guard)
+
+    def test_die_records_the_reason_then_shuts_down(self):
         body = self.bootstrap[
             self.bootstrap.index("die() {") : self.bootstrap.index("on_error() {")
         ]
@@ -202,27 +212,74 @@ class ShutdownEvidenceWindowTests(unittest.TestCase):
         self.assertLess(body.index("failure-summary"), body.index("evidence_window"))
         self.assertLess(body.index("evidence_window"), body.index("shutdown -h now"))
 
-    def test_deadline_guard_shutdown_gives_the_same_window(self):
-        body = self.guard[self.guard.index("shut_down() {") :]
-        self.assertLess(body.index('emit "$1"'), body.index("evidence_window"))
-        self.assertLess(body.index("evidence_window"), body.index('"$SHUTDOWN_BIN" -h now'))
-
     def test_the_window_reports_itself_in_the_status_body(self):
         # The captured off-host record must show the countdown, not just the
         # reason, so a retained snapshot proves the window was open.
         self.assertIn(
-            "(evidence-window=${EW_SECONDS}s shutdown-pending)", self.bootstrap
+            "note=\"evidence-window=${wait}s pending\"", self.bootstrap
         )
 
     def test_a_failed_sleep_must_not_skip_the_shutdown(self):
-        self.assertIn('sleep "$EW_SECONDS" || true', self.bootstrap)
-        self.assertIn('sleep "$EW_SECONDS" || true', self.guard)
+        self.assertIn('sleep "$wait" || true', self.bootstrap)
 
-    def test_the_deadline_unit_tolerates_the_window(self):
-        # Type=oneshot defaults to a 90s start timeout on Ubuntu; a 90s window
-        # would be killed at the boundary and the shutdown skipped.
-        self.assertIn("TimeoutStartSec=240", self.bootstrap)
-        unit_start = self.bootstrap.index("capacity-deadline.service <<UNIT")
-        unit_end = self.bootstrap.index("\nUNIT\n", unit_start)
-        unit = self.bootstrap[unit_start:unit_end]
-        self.assertIn("TimeoutStartSec=240", unit)
+    # -- executable checks of the real rendered function text ----------------
+
+    def _run_window(self, deadline_epoch):
+        """Extract the real clamp + evidence_window text from user-data.sh and
+        run it with stubbed console_log/status/sleep, recording what it does."""
+        start = self.bootstrap.index('EW_SECONDS="${EW_SECONDS:-90}"')
+        chunk = self.bootstrap[start : self.bootstrap.index("\ndie() {", start)]
+        cap = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, cap, True)
+        epoch = "" if deadline_epoch is None else str(deadline_epoch)
+        script = textwrap.dedent(f"""
+            console_log() {{ echo "LOG: $1"; }}
+            status() {{ printf '%s' "$1" > "$CAP/status"; }}
+            sleep() {{ echo "$1" >> "$CAP/sleeps"; }}
+            DEADLINE_EPOCH='{epoch}'
+            CAP='{cap.as_posix()}'
+            {chunk}
+            evidence_window "boom rc=7"
+        """)
+        proc = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        status_file = cap / "status"
+        sleeps_file = cap / "sleeps"
+        status = status_file.read_text(encoding="utf-8") if status_file.exists() else ""
+        sleeps = sleeps_file.read_text(encoding="utf-8").split() if sleeps_file.exists() else []
+        return status, sleeps
+
+    def test_window_sleeps_the_full_default_when_lifetime_is_long(self):
+        deadline = int(time.time()) + 3600
+        status, sleeps = self._run_window(deadline)
+        self.assertEqual(sleeps, ["90"])
+        self.assertIn("evidence-window=90s pending", status)
+        self.assertIn("boom rc=7", status)
+
+    def test_window_is_capped_by_the_remaining_lifetime(self):
+        # remaining - 120s margin = 80s: the window must shrink, not overrun.
+        deadline = int(time.time()) + 200
+        status, sleeps = self._run_window(deadline)
+        self.assertEqual(sleeps, ["80"])
+        self.assertIn("evidence-window=80s pending", status)
+
+    def test_window_is_skipped_when_the_lifetime_is_nearly_spent(self):
+        deadline = int(time.time()) + 100
+        status, sleeps = self._run_window(deadline)
+        self.assertEqual(sleeps, [])
+        self.assertIn("evidence-window=0s immediate", status)
+        self.assertIn("boom rc=7", status)
+
+    def test_window_is_skipped_when_the_deadline_is_missing(self):
+        # die() can fire before the config is sourced: no validated deadline,
+        # no delay.
+        status, sleeps = self._run_window(None)
+        self.assertEqual(sleeps, [])
+        self.assertIn("evidence-window=0s immediate", status)
+
+    def test_window_is_skipped_when_the_deadline_is_not_a_number(self):
+        status, sleeps = self._run_window("not-a-number")
+        self.assertEqual(sleeps, [])
+        self.assertIn("evidence-window=0s immediate", status)

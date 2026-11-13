@@ -41,16 +41,10 @@ console_log() {
     fi
 }
 
-# Same contract as user-data.sh: record the reason, hold a bounded window for
-# the off-host poller, then shut down. Fail-closed is preserved.
-EW_SECONDS="${EW_SECONDS:-90}"
-case "$EW_SECONDS" in ''|*[!0-9]*) EW_SECONDS=90 ;; esac
-[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180
-
-evidence_window() {
-    console_log "evidence window ${EW_SECONDS}s open, then shutdown"
-    sleep "$EW_SECONDS" || true
-}
+# Deadline enforcement is a MAXIMUM, never a deadline after which evidence
+# collection begins: every shut_down here is immediate, with no evidence
+# window. Bootstrap-error windows live in user-data.sh, capped by the
+# remaining approved lifetime.
 
 # Record the environment once per invocation so a failing unit explains itself
 # without needing the journal: which deadline file, which value, what time is
@@ -58,10 +52,11 @@ evidence_window() {
 console_log "run dir=$RUN_DIR deadline_file=$DEADLINE_FILE now=$(date +%s)"
 
 shut_down() {
-    # Write the reason before shutting down so the evidence archive explains it.
+    # Write the reason before shutting down so the evidence archive explains
+    # it, but NEVER delay the shutdown: this path enforces the four-hour
+    # maximum (or fails closed on an invalid deadline).
     emit "$1"
     console_log "SHUTDOWN: $1"
-    evidence_window "$1"
     "$SHUTDOWN_BIN" -h now || true
     exit 0
 }

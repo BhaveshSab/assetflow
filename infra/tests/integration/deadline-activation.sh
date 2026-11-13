@@ -52,10 +52,6 @@ export DEADLINE_FILE="$WORK/run/deadline-epoch"
 export STATUS_FILE="$WORK/run/deadline-status"
 export SHUTDOWN_BIN="$WORK/shutdown"
 export SHUTDOWN_STUB_LOG="$STUB_LOG"
-# This harness asserts activation and shutdown WIRING; the bounded evidence
-# window before the shutdown call is asserted statically, and a 90s sleep here
-# would outrun the harness's bounded waits.
-export EW_SECONDS=0
 printf '%s\n' "\$(date +%s)" >> "$WORK/activations-\${UNIT_TAG}.log"
 exec bash "$GUARD"
 RUNNER
@@ -151,7 +147,7 @@ printf '17abc400' > "$WORK/run/deadline-epoch"
 : > "$STUB_LOG"
 RUN_DIR="$WORK/run" DEADLINE_FILE="$WORK/run/deadline-epoch" \
 STATUS_FILE="$WORK/run/deadline-status" SHUTDOWN_BIN="$WORK/shutdown" \
-SHUTDOWN_STUB_LOG="$STUB_LOG" EW_SECONDS=0 bash "$GUARD" >/dev/null 2>&1
+SHUTDOWN_STUB_LOG="$STUB_LOG" bash "$GUARD" >/dev/null 2>&1
 if [ -s "$STUB_LOG" ]; then
     note "PASS  a non-numeric deadline fails closed rather than being coerced"
 else

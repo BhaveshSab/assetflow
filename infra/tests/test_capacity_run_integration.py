@@ -410,40 +410,49 @@ class DeadlineGuardTests(unittest.TestCase):
         (fake_bin / 'shutdown').chmod(0o755)
 
         env = dict(os.environ, RUN_DIR=str(run_dir),
-                   SHUTDOWN_BIN=str(fake_bin / 'shutdown'),
-                   # These tests assert the shutdown call itself; the bounded
-                   # evidence window before it is asserted statically, and a
-                   # 90s sleep here would only burn the test's timeout.
-                   EW_SECONDS='0')
+                   SHUTDOWN_BIN=str(fake_bin / 'shutdown'))
+        started = time.monotonic()
         proc = subprocess.run(['bash', str(CAPACITY_DIR / 'deadline-guard.sh')],
                               capture_output=True, text=True, timeout=30, env=env)
-        return proc, marker, evidence
+        elapsed = time.monotonic() - started
+        return proc, marker, evidence, elapsed
 
     def test_expired_deadline_actually_calls_shutdown(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        proc, marker, _ = self.run_guard(tmp, str(int(time.time()) - 10))
+        proc, marker, _, elapsed = self.run_guard(tmp, str(int(time.time()) - 10))
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(marker.exists(), 'expired deadline must call shutdown, not just exit')
         self.assertIn('deadline reached', (tmp / 'run/evidence/deadline-status').read_text())
 
+    def test_expired_deadline_shuts_down_immediately(self):
+        # The four-hour limit is a maximum: deadline enforcement must not wait
+        # for any evidence window. This is the regression that caught the
+        # 90s sleep the window briefly introduced into shut_down().
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        _, marker, _, elapsed = self.run_guard(tmp, str(int(time.time()) - 10))
+        self.assertTrue(marker.exists())
+        self.assertLess(elapsed, 10, f'guard took {elapsed:.1f}s to shut down')
+
     def test_missing_deadline_fails_closed(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        proc, marker, _ = self.run_guard(tmp, None)
+        proc, marker, _, _ = self.run_guard(tmp, None)
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(marker.exists(), 'a missing deadline must terminate, not run forever')
 
-    def test_malformed_deadline_fails_closed(self):
+    def test_malformed_deadline_fails_closed_immediately(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        proc, marker, _ = self.run_guard(tmp, 'not-a-number')
+        _, marker, _, elapsed = self.run_guard(tmp, 'not-a-number')
         self.assertTrue(marker.exists())
+        self.assertLess(elapsed, 10, f'guard took {elapsed:.1f}s to fail closed')
 
     def test_future_deadline_does_not_terminate(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        proc, marker, _ = self.run_guard(tmp, str(int(time.time()) + 3600))
+        proc, marker, _, _ = self.run_guard(tmp, str(int(time.time()) + 3600))
         self.assertEqual(proc.returncode, 0)
         self.assertFalse(marker.exists(), 'inside the window nothing must be terminated')
 
