@@ -581,24 +581,17 @@ class AppHealthScriptTests(unittest.TestCase):
 
     SCRIPT = APP_HEALTH
 
-    def _run(self, exec_rc, up_rc=0, ready_after=None, env=None):
-        """Run the real script against a stubbed COMPOSE (and a stubbed sleep,
-        so the full 90-iteration gate runs instantly).
-
-        exec_rc: exit code for the readiness probe until ready_after is hit.
-        ready_after: if set, the probe succeeds from this attempt on.
-        """
-        tmp = Path(tempfile.mkdtemp())
-        stub = tmp / 'compose-stub.sh'
+    def _stub_text(self, tmp, exec_rc, up_rc=0, ready_after=None):
         if ready_after is not None:
             exec_body = ('if [ "$(cat %s/probe-count 2>/dev/null || echo 0)" '
                          '-ge %d ]; then exit 0; else exit %d; fi'
                          % (tmp, ready_after, exec_rc))
         else:
             exec_body = 'exit %d' % exec_rc
-        stub.write_text(
+        return (
             '#!/bin/bash\n'
             'LOG="%s/stub-calls.log"\n'
+            "env | grep -E '^(API_IMAGE|WEB_IMAGE|MIGRATE_IMAGE)=' >> \"$LOG\"\n"
             'printf "%%s\\n" "$*" >> "$LOG"\n'
             'case "$1 $2" in\n'
             '  "up -d") exit %d ;;\n'
@@ -609,8 +602,22 @@ class AppHealthScriptTests(unittest.TestCase):
             '    %s ;;\n'
             '  *) exit 0 ;;\n'
             'esac\n'
-            % (tmp, up_rc, tmp, tmp, exec_body),
-            encoding='utf-8')
+            % (tmp, up_rc, tmp, tmp, exec_body))
+
+    def _run(self, exec_rc, up_rc=0, ready_after=None, env=None, digest_file=None,
+             run_id=None):
+        """Run the real script against a stubbed COMPOSE (and a stubbed sleep,
+        so the full 90-iteration gate runs instantly).
+
+        exec_rc: exit code for the readiness probe until ready_after is hit.
+        ready_after: if set, the probe succeeds from this attempt on.
+        digest_file: if given, written to APP_DIR/infra/capacity-run/ as the
+          image-digests.env the bootstrap sources for the migration.
+        """
+        tmp = Path(tempfile.mkdtemp())
+        stub = tmp / 'compose-stub.sh'
+        stub.write_text(self._stub_text(tmp, exec_rc, up_rc, ready_after),
+                        encoding='utf-8')
         stub.chmod(0o755)
         ev = tmp / 'evidence'
         ev.mkdir()
@@ -621,10 +628,16 @@ class AppHealthScriptTests(unittest.TestCase):
         (tls / 'tls.key').write_text('key')
         app = tmp / 'app'
         app.mkdir()
+        if digest_file is not None:
+            capdir = app / 'infra' / 'capacity-run'
+            capdir.mkdir(parents=True)
+            (capdir / 'image-digests.env').write_text(digest_file, encoding='utf-8')
         env = dict(env or {})
         env.update(
             APP_DIR=str(app), EVIDENCE_DIR=str(ev), COMPOSE=str(stub),
             TLS_SRC=str(tls))
+        if run_id is not None:
+            env['RUN_ID'] = run_id
         # The real gate sleeps 5s between probes; stub sleep so 90 iterations
         # run instantly while the real loop text still executes.
         proc = subprocess.run(
@@ -635,7 +648,7 @@ class AppHealthScriptTests(unittest.TestCase):
         return proc, tmp, ev
 
     def test_success_starts_the_stack_then_probes_and_writes_health(self):
-        proc, tmp, ev = self._run(exec_rc=1, ready_after=2)
+        proc, tmp, ev = self._run(run_id='cap-test', exec_rc=1, ready_after=2)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual((ev / 'app-health').read_text().strip(), 'healthy')
         calls = (tmp / 'stub-calls.log').read_text().splitlines()
@@ -647,7 +660,7 @@ class AppHealthScriptTests(unittest.TestCase):
         self.assertIn('up -d api nginx', calls[ups[0]])
 
     def test_certificate_is_installed_before_the_stack_starts(self):
-        proc, tmp, ev = self._run(exec_rc=0)
+        proc, tmp, ev = self._run(run_id='cap-test', exec_rc=0)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         cert = tmp / 'app' / 'infra' / 'certs' / 'live' / 'assetflow' / 'fullchain.pem'
         key = tmp / 'app' / 'infra' / 'certs' / 'live' / 'assetflow' / 'privkey.pem'
@@ -658,7 +671,7 @@ class AppHealthScriptTests(unittest.TestCase):
         self.assertTrue(any(c.startswith('up -d') for c in calls))
 
     def test_readiness_failure_captures_diagnostics_and_exits_nonzero(self):
-        proc, tmp, ev = self._run(exec_rc=1)
+        proc, tmp, ev = self._run(run_id='cap-test', exec_rc=1)
         self.assertNotEqual(proc.returncode, 0,
                             'the gate must fail when readiness never passes')
         self.assertIn('application readiness never passed', proc.stderr)
@@ -669,15 +682,62 @@ class AppHealthScriptTests(unittest.TestCase):
                          if (ev / 'app-health').exists() else '')
 
     def test_stack_start_failure_is_reported_with_the_log(self):
-        proc, tmp, ev = self._run(exec_rc=1, up_rc=7)
+        proc, tmp, ev = self._run(run_id='cap-test', exec_rc=1, up_rc=7)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn('stack failed to start', proc.stderr)
         self.assertTrue((ev / 'stack-up.log').exists())
 
     def test_edge_health_is_recorded_after_readiness(self):
-        proc, tmp, ev = self._run(exec_rc=0)
+        proc, tmp, ev = self._run(run_id='cap-test', exec_rc=0)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual((ev / 'edge-health').read_text().strip(), '200')
+
+    # ------------------------------------------------------------------ pinning
+
+    DIGEST_FILE = (
+        'FIXTURE_MIGRATE_DIGEST=repo/migrate@sha256:%s\n'
+        'FIXTURE_API_DIGEST=repo/api@sha256:%s\n'
+        'FIXTURE_WEB_DIGEST=repo/web@sha256:%s\n'
+    ) % ('1' * 64, '2' * 64, '3' * 64)
+
+    def test_pinned_digests_are_exported_before_the_stack_starts(self):
+        """The fourteenth attempt's failure: migrate-db.sh exports the pinned
+        image refs inside its own process, so without re-pinning here compose
+        resolved ghcr.io/...:latest and pulled a mutable tag instead of running
+        the images the migration actually ran."""
+        proc, tmp, ev = self._run(exec_rc=0, digest_file=self.DIGEST_FILE)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = (tmp / 'stub-calls.log').read_text().splitlines()
+        ups = [i for i, c in enumerate(calls) if c.startswith('up -d')]
+        self.assertTrue(ups)
+        before_up = '\n'.join(calls[:ups[0] + 1])
+        self.assertIn('API_IMAGE=repo/api@sha256:' + '2' * 64, before_up)
+        self.assertIn('WEB_IMAGE=repo/web@sha256:' + '3' * 64, before_up)
+        self.assertIn('MIGRATE_IMAGE=repo/migrate@sha256:' + '1' * 64, before_up)
+
+    def test_a_partial_pin_is_refused(self):
+        partial = self.DIGEST_FILE.replace(
+            'FIXTURE_WEB_DIGEST=repo/web@sha256:' + '3' * 64 + '\n', '')
+        proc, tmp, ev = self._run(exec_rc=0, digest_file=partial)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('partial pin', proc.stderr)
+
+    def test_a_non_digest_pin_is_refused(self):
+        tagged = self.DIGEST_FILE.replace('@sha256:' + '2' * 64, ':latest')
+        proc, tmp, ev = self._run(exec_rc=0, digest_file=tagged)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('image@sha256', proc.stderr)
+
+    def test_build_mode_pins_the_run_local_tags(self):
+        proc, tmp, ev = self._run(exec_rc=0, run_id='cap-test')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = (tmp / 'stub-calls.log').read_text().splitlines()
+        self.assertIn('API_IMAGE=assetflow-api:cap-test', '\n'.join(calls))
+
+    def test_no_pin_at_all_is_refused(self):
+        proc, tmp, ev = self._run(exec_rc=0)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('no image pin', proc.stderr)
 
 
 class WorkflowSecretAlphabetTests(unittest.TestCase):

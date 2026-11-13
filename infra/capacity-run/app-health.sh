@@ -24,6 +24,30 @@ TLS_SRC="${TLS_SRC:-/etc/capacity-run}"
 
 fail() { printf '%s\n' "app-health: $1" >&2; exit 1; }
 
+# Pin the SAME images the migration ran. migrate-db.sh exports the pinned
+# digest refs inside its own process, so they do not reach this script: without
+# them compose resolves ${API_IMAGE:-ghcr.io/...:latest} and tries to PULL a
+# mutable, possibly private tag - the fourteenth attempt's stack-start failure.
+# The digest file is the same one the bootstrap sourced for the migration.
+DIGEST_FILE="$APP_DIR/infra/capacity-run/image-digests.env"
+# shellcheck disable=SC1090
+if [ -r "$DIGEST_FILE" ]; then . "$DIGEST_FILE"; fi
+if [ -n "${FIXTURE_MIGRATE_DIGEST:-}${FIXTURE_API_DIGEST:-}${FIXTURE_WEB_DIGEST:-}" ]; then
+    for required in FIXTURE_MIGRATE_DIGEST FIXTURE_API_DIGEST FIXTURE_WEB_DIGEST; do
+        eval "value=\${$required:-}"
+        [ -n "$value" ] || fail "$required is empty but others are set; refusing a partial pin"
+        case "$value" in *@sha256:*) ;; *) fail "$required must be an image@sha256: digest" ;; esac
+    done
+    export MIGRATE_IMAGE="$FIXTURE_MIGRATE_DIGEST" API_IMAGE="$FIXTURE_API_DIGEST" WEB_IMAGE="$FIXTURE_WEB_DIGEST"
+elif [ -n "${RUN_ID:-}" ]; then
+    # Build mode: the images were built from the pinned checkout under these
+    # run-local tags (migrate-db.sh built them); a registry tag must never be
+    # preferred over them.
+    export MIGRATE_IMAGE="assetflow-migrate:${RUN_ID}" API_IMAGE="assetflow-api:${RUN_ID}" WEB_IMAGE="assetflow-web:${RUN_ID}"
+else
+    fail "no image pin available: set the digest file or RUN_ID"
+fi
+
 # The app nginx serves TLS from ./certs (mounted at /etc/letsencrypt). CI
 # supplies the run certificate the same way; without it nginx cannot start.
 mkdir -p "$APP_DIR/infra/certs/live/assetflow" || fail "cannot create the certs directory"
@@ -47,6 +71,16 @@ for i in $(seq 1 90); do
     [ "$i" -eq 90 ] && {
         $COMPOSE ps > "$EVIDENCE_DIR/stack-ps.txt" 2>&1 || true
         $COMPOSE logs --tail 80 api > "$EVIDENCE_DIR/api-readiness.log" 2>&1 || true
+        # Host context a crash loop or an OOM kill would only imply: container
+        # states with restart counts, memory, and the kernel's own kill record.
+        {
+            printf '%s\n' '--- docker ps -a (states)'
+            docker ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | head -20
+            printf '%s\n' '--- free -m'
+            free -m 2>/dev/null | head -3
+            printf '%s\n' '--- kernel OOM records (tail)'
+            dmesg 2>/dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -5
+        } >> "$EVIDENCE_DIR/api-readiness.log" 2>&1 || true
         fail "application readiness never passed (see api-readiness.log)"
     }
     sleep 5

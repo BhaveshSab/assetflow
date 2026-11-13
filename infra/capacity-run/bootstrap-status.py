@@ -71,6 +71,20 @@ def read_small(path: Path, limit: int = 4096) -> str:
         return ""
 
 
+def read_tail(path: Path, limit: int = 4096) -> str:
+    """The LAST `limit` bytes of a file, or '' - a pull or container log's
+    decisive content (what finished, what failed, what is restarting) is at
+    the END, and a head read once hid exactly that."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
 def disk(run_dir: Path) -> dict:
     target = run_dir if run_dir.exists() else Path("/")
     try:
@@ -243,10 +257,10 @@ def failure(run_dir: Path) -> dict:
     # api container was actually doing. app-health.sh now writes the stack
     # state and the api log tail before failing; both ride to the off-host
     # poller through this endpoint.
-    api_log = read_small(ev / "api-readiness.log", 8192)
+    api_log = read_tail(ev / "api-readiness.log", 8192)
     if api_log:
         out["api_log_tail"] = [redact(x) for x in api_log.splitlines()[-40:] if x.strip()]
-    stack_up = read_small(ev / "stack-up.log", 4096)
+    stack_up = read_tail(ev / "stack-up.log", 4096)
     if stack_up:
         out["stack_up_tail"] = [redact(x) for x in stack_up.splitlines()[-15:] if x.strip()]
     stack_ps = read_small(ev / "stack-ps.txt", 2048)

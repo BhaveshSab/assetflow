@@ -614,6 +614,42 @@ jobs:
             CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \
             bash infra/capacity-run/hold-runner.sh
 
+      - name: Emit the failure diagnostics as annotations
+        # The retained artifact needs authentication to download, and the job
+        # logs are admin-only - both were dead ends for the operator's offline
+        # agent. Check-run annotations ARE readable through the public API, so
+        # the redacted failure detail rides on them: bounded, pre-redacted by
+        # bootstrap-status.py, and capped so the annotation stream stays sane.
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          LAST="$(ls -1 "$S"/snapshots/*-failure.json 2>/dev/null | tail -1 || true)"
+          if [ -z "$LAST" ]; then
+            echo "::warning title=diagnostics::no failure snapshot was captured"
+            exit 0
+          fi
+          python3 - "$LAST" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          lines = []
+          lines.append("status: %s" % d.get("bootstrap_status", "unknown"))
+          for s in d.get("summary", [])[:6]:
+              lines.append("summary: %s" % s)
+          for key in ("api_log_tail", "stack_up_tail", "stack_ps"):
+              for x in d.get(key, [])[:12]:
+                  lines.append("%s: %s" % (key, x))
+          for x in d.get("migrate_progress", [])[-6:]:
+              lines.append("progress: %s" % x)
+          for x in d.get("failure_detail", [])[:12]:
+              lines.append("detail: %s" % x)
+          for x in d.get("seed_log_tail", [])[-4:]:
+              lines.append("seed: %s" % x)
+          for line in lines[:40]:
+              text = line.replace("%", "%25")
+              print("::warning title=stage3-diag::%s" % text[:180])
+          PY
+
       - name: Fail the job when Stage 3 did not meet its contract
         # Cleanup and retention above always run first. This step is what makes
         # the job's colour mean something: a green job means the Stage 3
