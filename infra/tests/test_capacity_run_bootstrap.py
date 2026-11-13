@@ -154,3 +154,75 @@ class DigestPinnedDeploymentTests(unittest.TestCase):
         self.assertIn("packages: write", job)
         # Anonymous pull must be proven before anything depends on it.
         self.assertIn("docker logout ghcr.io", job)
+
+
+class ShutdownEvidenceWindowTests(unittest.TestCase):
+    """A guest-initiated shutdown must give the off-host poller a bounded window
+    to capture the failure reason before the network drops.
+
+    Attempts 9 and 10 died with no recoverable reason: every shutdown path
+    wrote its reason and called `shutdown -h now` immediately, and the poller
+    (30s sampling) lost the race. The correction keeps fail-closed cleanup
+    (the instance still terminates) but holds the guest up for a bounded,
+    clamped window after the reason is recorded, so /status serves it off-host.
+    """
+
+    def setUp(self):
+        self.bootstrap = (CAPACITY_DIR / "user-data.sh").read_text(encoding="utf-8")
+        self.guard = (CAPACITY_DIR / "deadline-guard.sh").read_text(encoding="utf-8")
+
+    def test_window_is_bounded_and_defaults_to_ninety(self):
+        for text in (self.bootstrap, self.guard):
+            self.assertIn('EW_SECONDS="${EW_SECONDS:-90}"', text)
+            self.assertIn("''|*[!0-9]*) EW_SECONDS=90", text)
+            self.assertIn('[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180', text)
+
+    def test_die_records_the_reason_then_waits_then_shuts_down(self):
+        body = self.bootstrap[
+            self.bootstrap.index("die() {") : self.bootstrap.index("on_error() {")
+        ]
+        self.assertIn("failure-summary", body)
+        self.assertLess(body.index("evidence_window"), body.index("shutdown -h now"))
+
+    def test_the_window_writes_the_reason_to_status_before_sleeping(self):
+        # The off-host record must carry the reason AND the countdown.
+        start = self.bootstrap.index("evidence_window() {")
+        end = self.bootstrap.index("\n}\n", start)
+        body = self.bootstrap[start:end]
+        self.assertIn('status "failed: $1', body)
+        self.assertLess(body.index('status "failed: $1'), body.index("sleep"))
+
+    def test_on_error_also_records_the_failure_summary(self):
+        # Only die() used to write the marker; an unguarded failure must explain
+        # itself just as completely.
+        body = self.bootstrap[
+            self.bootstrap.index("on_error() {") : self.bootstrap.index("trap 'on_error")
+        ]
+        self.assertIn("failure-summary", body)
+        self.assertLess(body.index("failure-summary"), body.index("evidence_window"))
+        self.assertLess(body.index("evidence_window"), body.index("shutdown -h now"))
+
+    def test_deadline_guard_shutdown_gives_the_same_window(self):
+        body = self.guard[self.guard.index("shut_down() {") :]
+        self.assertLess(body.index('emit "$1"'), body.index("evidence_window"))
+        self.assertLess(body.index("evidence_window"), body.index('"$SHUTDOWN_BIN" -h now'))
+
+    def test_the_window_reports_itself_in_the_status_body(self):
+        # The captured off-host record must show the countdown, not just the
+        # reason, so a retained snapshot proves the window was open.
+        self.assertIn(
+            "(evidence-window=${EW_SECONDS}s shutdown-pending)", self.bootstrap
+        )
+
+    def test_a_failed_sleep_must_not_skip_the_shutdown(self):
+        self.assertIn('sleep "$EW_SECONDS" || true', self.bootstrap)
+        self.assertIn('sleep "$EW_SECONDS" || true', self.guard)
+
+    def test_the_deadline_unit_tolerates_the_window(self):
+        # Type=oneshot defaults to a 90s start timeout on Ubuntu; a 90s window
+        # would be killed at the boundary and the shutdown skipped.
+        self.assertIn("TimeoutStartSec=240", self.bootstrap)
+        unit_start = self.bootstrap.index("capacity-deadline.service <<UNIT")
+        unit_end = self.bootstrap.index("\nUNIT\n", unit_start)
+        unit = self.bootstrap[unit_start:unit_end]
+        self.assertIn("TimeoutStartSec=240", unit)

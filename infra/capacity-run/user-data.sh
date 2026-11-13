@@ -9,18 +9,13 @@
 # INPUTS - there is exactly one delivery path, and it is provisioned explicitly:
 #
 #   Every input is written to /etc/capacity-run/run-config.env by the operator
-#   BEFORE launch, and is embedded by the provisioning wrapper
-#   infra/capacity-run/render-user-data.sh, which base64s the file into this
-#   script's USERDATA payload. No AWS user credentials, no long-lived keys, and no
-#   secrets in Git: the operator supplies them at render time from their own
-#   environment, and render-user-data.sh refuses to write plaintext credentials.
+#   BEFORE launch, and is embedded by infra/capacity-run/render-user-data.sh,
+#   which base64s the file into this script's USERDATA payload. No AWS user
+#   credentials, no long-lived keys, and no secrets in Git.
 #
-#   The launch time is NOT read from IMDS. EC2 does not expose a launch timestamp
-#   under /latest/meta-data/instance/lifecycle (that path is the instance lifecycle
-#   *state* action, not a timestamp), and no LaunchTime tag is sent by the launch
-#   request. The original deadline is instead provisioned by the operator, who is
-#   the only party that knows the launch instant: LAUNCH_EPOCH is written into
-#   run-config.env at render time. The guest cannot forge or extend it.
+#   The launch time is NOT read from IMDS (EC2 does not expose it there); the
+#   deadline is LAUNCH_EPOCH from run-config.env, provisioned by the operator.
+#   The guest cannot forge or extend it.
 #
 # FAIL CLOSED: if any required input is missing or invalid, this script writes a
 # FAILED status and terminates the instance. It never starts the app on a partial
@@ -63,6 +58,20 @@ stage_begin() {
 stage_done()  { console_log "stage-done: $1"; say "== $1 done =="; }
 
 # Refuse to leave a half-configured host running.
+
+# A guest-initiated shutdown must not race the off-host poller (30s sampling):
+# hold a bounded window after recording the reason so /status serves it, then
+# shut down. Fail-closed is preserved: the instance still terminates.
+EW_SECONDS="${EW_SECONDS:-90}"
+case "$EW_SECONDS" in ''|*[!0-9]*) EW_SECONDS=90 ;; esac
+[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180
+
+evidence_window() {
+    console_log "evidence window ${EW_SECONDS}s open, then shutdown"
+    status "failed: $1 (evidence-window=${EW_SECONDS}s shutdown-pending)"
+    sleep "$EW_SECONDS" || true
+}
+
 die() {
     printf '[bootstrap][FATAL] %s\n' "$*" >&2
     console_log "FATAL: $* (stage=$STAGE line=${BASH_LINENO[0]:-?})"
@@ -71,7 +80,7 @@ die() {
     # can read it.
     printf 'stage=%s line=%s rc=die one-line=%s\n' \
         "$STAGE" "${BASH_LINENO[0]:-?}" "$*" > "$EVIDENCE_DIR/failure-summary" 2>/dev/null || true
-    status "failed: $*"
+    evidence_window "$*"
     # The instance was launched with InstanceInitiatedShutdownBehavior=terminate,
     # so this TERMINATES it and deletes the root volume.
     /sbin/shutdown -h now || true
@@ -87,7 +96,9 @@ on_error() {
         printf '[bootstrap][FATAL] unexpected failure rc=%s at line %s (stage=%s)\n' \
             "$rc" "$1" "$STAGE" >&2
         console_log "FATAL unexpected rc=$rc line=$1 stage=$STAGE"
-        status "failed: rc=$rc line=$1 stage=$STAGE"
+        printf 'stage=%s line=%s rc=%s\n' \
+            "$STAGE" "$1" "$rc" > "$EVIDENCE_DIR/failure-summary" 2>/dev/null || true
+        evidence_window "rc=$rc line=$1 stage=$STAGE"
         /sbin/shutdown -h now || true
     fi
 }
@@ -143,6 +154,8 @@ Description=capacity run deadline enforcement
 After=network.target
 [Service]
 Type=oneshot
+# must exceed the bounded evidence window (up to 180s); the default is 90s
+TimeoutStartSec=240
 Environment=RUN_DIR=$RUN_DIR
 # NO RemainAfterExit: it would keep the unit active after the first check and
 # every later timer tick would be a no-op.

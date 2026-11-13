@@ -410,7 +410,11 @@ class DeadlineGuardTests(unittest.TestCase):
         (fake_bin / 'shutdown').chmod(0o755)
 
         env = dict(os.environ, RUN_DIR=str(run_dir),
-                   SHUTDOWN_BIN=str(fake_bin / 'shutdown'))
+                   SHUTDOWN_BIN=str(fake_bin / 'shutdown'),
+                   # These tests assert the shutdown call itself; the bounded
+                   # evidence window before it is asserted statically, and a
+                   # 90s sleep here would only burn the test's timeout.
+                   EW_SECONDS='0')
         proc = subprocess.run(['bash', str(CAPACITY_DIR / 'deadline-guard.sh')],
                               capture_output=True, text=True, timeout=30, env=env)
         return proc, marker, evidence

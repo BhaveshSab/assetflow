@@ -41,6 +41,17 @@ console_log() {
     fi
 }
 
+# Same contract as user-data.sh: record the reason, hold a bounded window for
+# the off-host poller, then shut down. Fail-closed is preserved.
+EW_SECONDS="${EW_SECONDS:-90}"
+case "$EW_SECONDS" in ''|*[!0-9]*) EW_SECONDS=90 ;; esac
+[ "$EW_SECONDS" -le 180 ] || EW_SECONDS=180
+
+evidence_window() {
+    console_log "evidence window ${EW_SECONDS}s open, then shutdown"
+    sleep "$EW_SECONDS" || true
+}
+
 # Record the environment once per invocation so a failing unit explains itself
 # without needing the journal: which deadline file, which value, what time is
 # now, and what it is about to do.
@@ -50,6 +61,7 @@ shut_down() {
     # Write the reason before shutting down so the evidence archive explains it.
     emit "$1"
     console_log "SHUTDOWN: $1"
+    evidence_window "$1"
     "$SHUTDOWN_BIN" -h now || true
     exit 0
 }

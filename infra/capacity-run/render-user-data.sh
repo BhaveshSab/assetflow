@@ -99,15 +99,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             { print }
         ' "$1"
     }
-    GUARD_B64_DECODED="$(strip_comments "$HERE/deadline-guard.sh")"
+    GUARD_GZ="$(strip_comments "$HERE/deadline-guard.sh" | gzip -9 | base64 -w0)"
 
 {
     cat <<PROLOGUE
 #!/bin/bash
 set -e
 
-# The prelude runs before the bootstrap has a log file, say() or die(), so a
-# failure here would otherwise abort silently. Report to /dev/console.
+# prelude_fail: the prelude runs before the bootstrap has a log file or die(),
+# so a failure here would otherwise abort silently; report to /dev/console.
 prelude_fail() {
     rc=\$?
     msg="prelude failed (rc=\$rc) at line \$1"
@@ -125,9 +125,9 @@ echo '${TLS_KEY_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.key
 chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
 
 mkdir -p /usr/local/lib/capacity-run-src
-cat > /usr/local/lib/capacity-run-src/deadline-guard.sh <<'GUARDEMBED'
-${GUARD_B64_DECODED}
-GUARDEMBED
+# The guard is gzipped like the TLS material: the 16 KiB user-data cap leaves
+# no room for it uncompressed next to the annotated bootstrap.
+echo '${GUARD_GZ}' | base64 -d | gzip -d > /usr/local/lib/capacity-run-src/deadline-guard.sh
 chmod 755 /usr/local/lib/capacity-run-src/deadline-guard.sh
 
 cat > /etc/capacity-run/run-config.env <<'CAPCONFIG'
