@@ -7,6 +7,8 @@ the fast contract layer.
 """
 import base64
 import os
+import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -461,6 +463,112 @@ class RealDefectRegressions(unittest.TestCase):
 
     def test_diagnostics_go_to_the_console(self):
         self.assertIn('/dev/console', USER_DATA.read_text(encoding='utf-8'))
+
+
+class UrlSafetyGateTests(unittest.TestCase):
+    """The compose file builds DATABASE_URL/REDIS_URL by raw interpolation.
+
+    A password carrying '/' or '+' (openssl rand -base64 emits both) breaks the
+    URL's authority split and Prisma dies with P1013 "invalid port number" deep
+    inside the migration - the twelfth attempt's captured failure. The guest
+    must refuse such values before the deploy stage, naming the variable.
+    """
+
+    URLSAFE_VARS = ('POSTGRES_PASSWORD', 'REDIS_PASSWORD',
+                    'GRAFANA_ADMIN_PASSWORD', 'JWT_SECRET', 'LOADTEST_PASSWORD')
+
+    def _guard_text(self):
+        text = USER_DATA.read_text(encoding='utf-8')
+        start = text.index('for v in POSTGRES_PASSWORD')
+        end = text.index('done', text.index('case "$val" in', start))
+        return text[start:end + 4]
+
+    def _run_guard(self, env):
+        """Execute the real guard text with a stubbed die()."""
+        guard = self._guard_text()
+        script = [
+            'die() { echo "DIE:$1" >&2; exit 3; }',
+            'set -u',
+        ]
+        for key, value in env.items():
+            script.append("export %s=%s" % (key, shlex.quote(value)))
+        script.append(guard)
+        script.append('echo GUARD-OK')
+        proc = subprocess.run(
+            ['bash', '-c', '\n'.join(script)],
+            capture_output=True, text=True, timeout=30)
+        return proc
+
+    def test_guard_rejects_a_base64_password_with_slash(self):
+        env = {name: 'a' * 40 for name in self.URLSAFE_VARS}
+        env['POSTGRES_PASSWORD'] = 'ab+cd/ef=' + 'a' * 40
+        proc = self._run_guard(env)
+        self.assertNotEqual(proc.returncode, 0, 'guard accepted a password with / and +')
+        self.assertIn('POSTGRES_PASSWORD', proc.stderr)
+        self.assertIn('URL-safe', proc.stderr)
+
+    def test_guard_rejects_any_non_alnum_character(self):
+        env = {name: 'a' * 40 for name in self.URLSAFE_VARS}
+        for bad in ('/', '+', '=', '@', ':', '%'):
+            env['REDIS_PASSWORD'] = 'x' + bad + 'y'
+            proc = self._run_guard(env)
+            self.assertNotEqual(proc.returncode, 0,
+                                'guard accepted a password containing %r' % bad)
+            self.assertIn('REDIS_PASSWORD', proc.stderr)
+
+    def test_guard_accepts_alnum_values(self):
+        env = {name: 'aB3xY9' * 8 for name in self.URLSAFE_VARS}
+        proc = self._run_guard(env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn('GUARD-OK', proc.stdout)
+
+    def test_guard_covers_every_value_that_lands_in_a_url(self):
+        guard = self._guard_text()
+        for name in self.URLSAFE_VARS:
+            self.assertIn(name, guard,
+                          'the URL-safety gate does not cover %s' % name)
+
+
+class WorkflowSecretAlphabetTests(unittest.TestCase):
+    """The workflow generates run secrets with its own gen(); it must produce
+    URL-safe values - the twelfth attempt failed because the old gen() emitted
+    openssl base64 including '+' and '/'.
+    """
+
+    WORKFLOW = (Path(__file__).resolve().parents[2]
+                / '.github' / 'workflows' / 'capacity-run.yml')
+
+    def _gen_pipeline(self):
+        text = self.WORKFLOW.read_text(encoding='utf-8')
+        match = re.search(r'^\s*gen\(\) \{ (.*) \}$', text, re.MULTILINE)
+        self.assertIsNotNone(match, 'the workflow no longer defines gen()')
+        return match.group(1).rstrip('; \t')
+
+    def test_generated_secrets_are_url_safe(self):
+        pipeline = self._gen_pipeline()
+        for _ in range(64):
+            proc = subprocess.run(['bash', '-c', pipeline],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            value = proc.stdout.strip()
+            self.assertRegex(value, r'^[A-Za-z0-9]+$')
+            self.assertGreaterEqual(len(value), 32,
+                                    'generated secret too short: %d' % len(value))
+
+    def test_loadtest_password_is_exactly_40_url_safe_chars(self):
+        pipeline = self._gen_pipeline()
+        proc = subprocess.run(['bash', '-c', pipeline + ' | cut -c1-40'],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        value = proc.stdout.strip()
+        self.assertRegex(value, r'^[A-Za-z0-9]{40}$')
+
+    def test_the_pipeline_strips_base64_specials(self):
+        pipeline = self._gen_pipeline()
+        self.assertIn("tr -d", pipeline)
+        for special in ('=', '+', '/'):
+            self.assertIn(special, pipeline.split('tr -d', 1)[1],
+                          'gen() does not strip %r' % special)
 
 
 if __name__ == '__main__':

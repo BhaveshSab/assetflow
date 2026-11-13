@@ -297,9 +297,10 @@ stage_done "code"
 # compose has no defaults for POSTGRES_PASSWORD/REDIS_PASSWORD, so it cannot
 # start without these. Generated per run; nothing shared with production.
 stage_begin "application configuration"
-for required in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD JWT_SECRET LOADTEST_PASSWORD; do
-    eval "value=\${$required:-}"
-    [ -n "${value:-}" ] || die "$required is empty: compose cannot start"
+for v in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD JWT_SECRET LOADTEST_PASSWORD; do
+    eval "val=\${$v:-}"
+    [ -n "$val" ] || die "$v is empty: compose cannot start"
+    case "$val" in *[!A-Za-z0-9]*) die "$v is not URL-safe" ;; esac
 done
 [ "${#JWT_SECRET}" -ge 32 ] || die "JWT_SECRET must be >= 32 chars in production"
 mkdir -p "$APP_DIR/infra"

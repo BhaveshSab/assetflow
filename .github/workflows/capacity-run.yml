@@ -187,13 +187,18 @@ jobs:
           mkdir -p "$DIR"; chmod 700 "$DIR"
           umask 077
 
-          gen() { openssl rand -base64 36 | tr -d '\n'; }
+          gen() { openssl rand -base64 48 | tr -d '\n=+/' | cut -c1-48; }
+          # URL-safe by construction: the compose file builds DATABASE_URL and
+          # REDIS_URL by raw interpolation, so a '/' or '+' in a password
+          # terminates the URL authority and Prisma fails with P1013 "invalid
+          # port number" (the twelfth attempt's captured failure). Same
+          # alphabet as generate-app-config.sh, which CI itself uses.
           {
             printf 'POSTGRES_PASSWORD=%s\n' "$(gen)"
             printf 'REDIS_PASSWORD=%s\n' "$(gen)"
             printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(gen)"
             printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
-            printf 'LOADTEST_PASSWORD=%s\n' "$(gen)"
+            printf 'LOADTEST_PASSWORD=%s\n' "$(gen | cut -c1-40)"
             printf 'EVIDENCE_TOKEN=%s\n' "$(openssl rand -hex 32)"
           } > "$DIR/secrets.env"
           chmod 600 "$DIR/secrets.env"
