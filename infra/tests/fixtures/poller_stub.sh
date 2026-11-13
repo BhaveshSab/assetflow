@@ -28,11 +28,19 @@ if [ -n "${GUEST_META:-}" ]; then
 fi
 # The real poller writes a fresh snapshot every interval and runs until the
 # supervisor stops it; a single file can be consumed by an earlier contract
-# step and leave nothing for a later one, which no real run can hit.
+# step and leave nothing for a later one, which no real run can hit. Each
+# cycle writes the four records the real poller writes, with the REAL naming
+# (<ts>-status.json, -seed, -host, -failure): only the -status record carries
+# the status fields. The eighteenth attempt failed exactly because the
+# supervisor's newest-snapshot lookup globbed *.json and read a -seed record -
+# this stub is the regression test for that.
 n=1
 while :; do
+    ts=$(date -u +%Y%m%dT%H%M%S)
     printf '{"stage":"bootstrap","application_ready":false,"fixture_users":%s,%s}\n' \
-        "${STUB_FIXTURE_USERS:-200}" "$EV" > "$OUT/$(printf '%04d' "$n").json"
+        "${STUB_FIXTURE_USERS:-200}" "$EV" > "$OUT/${ts}-status.json"
+    printf '{"seeded":true}\n' > "$OUT/${ts}-seed.json"
+    printf '{"load":0.1}\n' > "$OUT/${ts}-host.json"
     n=$((n + 1))
     sleep 2
 done

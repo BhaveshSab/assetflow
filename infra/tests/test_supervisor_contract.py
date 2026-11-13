@@ -174,7 +174,7 @@ class SupervisorContract(unittest.TestCase):
         shutil.copy(stub, state.parent / "poll-status.sh")
         if case == "never_with_bad_snapshot":
             # Present from the start, so the supervisor certainly sees it.
-            (state / "snapshots" / "0000-truncated.json").write_text('{"stage": "trunc')
+            (state / "snapshots" / "20260101T000000Z-status.json").write_text('{"stage": "trunc')
         (state.parent / "poll-status.sh").chmod(0o755)
         # The REAL export client runs in the sandbox: the supervisor will find
         # it next to itself and download the guest archive the fake app serves,
@@ -230,7 +230,7 @@ class SupervisorContract(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual((state / "verdict").read_text().strip(), "complete")
         # The snapshot the poller wrote still says false, and was not a gate.
-        snap = (state / "snapshots" / "0001.json")
+        snap = sorted((state / "snapshots").glob("*-status.json"))[0]
         self.assertIn('"application_ready": false', snap.read_text().replace('"application_ready":false', '"application_ready": false'))
 
     def test_app_never_ready_fails_nonzero(self):

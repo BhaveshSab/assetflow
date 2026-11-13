@@ -95,8 +95,9 @@ while :; do
         fetch /status/host host       || true
         fetch /status/failure failure || true
         # Report only on change, so the operator's log stays readable. The
-        # newest snapshot is the one just written.
-        newest=$(ls -t "$OUTDIR" 2>/dev/null | head -1)
+        # newest STATUS snapshot is the one just written - the -seed/-host/
+        # -failure records of the same cycle do not carry a stage.
+        newest=$(ls -t "$OUTDIR"/*-status.json 2>/dev/null | head -1)
         stage=""
         if [ -n "$newest" ]; then
             stage=$(sed -n 's/.*"stage": *"\([^"]*\)".*/\1/p' "$OUTDIR/$newest" 2>/dev/null | head -1)

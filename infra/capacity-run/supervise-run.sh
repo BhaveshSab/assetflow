@@ -208,14 +208,17 @@ probe_ready() {
 # The guest's bootstrap status document is a DIAGNOSTIC. Its application_ready
 # field is false by design; stage is informational only.
 latest_snapshot() {
-    # Consume without modifying: read the newest non-consumed file and record
-    # its name in our own ledger. The poller's files are never renamed or moved.
+    # Consume without modifying: read the newest non-consumed STATUS document
+    # and record its name in our own ledger. The poller writes four files per
+    # cycle (-status, -seed, -host, -failure) and only -status carries the
+    # stage; globbing *.json would read a seed or failure record as the
+    # diagnostic document.
     local f
     # Consume in filename order, which is timestamp order for the poller's own
     # names. The consumed ledger is a plain file of basenames; the poller's
     # files are never renamed, moved or rewritten.
     shopt -s nullglob
-    for f in "$STATE_DIR/snapshots"/*.json; do
+    for f in "$STATE_DIR/snapshots"/*-status.json; do
         if ! grep -qxF "$(basename "$f")" "$STATE_DIR/consumed" 2>/dev/null; then
             shopt -u nullglob
             printf '%s' "$f"
@@ -226,15 +229,18 @@ latest_snapshot() {
     return 0
 }
 
-# The NEWEST snapshot regardless of the consumed ledger, read-only. The
+# The NEWEST STATUS snapshot regardless of the consumed ledger, read-only. The
 # eighteenth-attempt audit: latest_snapshot is a consuming read - a step that
 # runs earlier (the diagnostic stage) can consume the only fresh snapshot and
 # leave a later check with nothing, and on a real run the newest UNCONSUMED
 # snapshot can predate the seed and carry a null count. A check that wants the
-# guest's current state must peek at the newest file, not dequeue one.
+# guest's current state must peek at the newest file, not dequeue one. And it
+# must be a -status file: the poller's -seed/-host/-failure records of the same
+# cycle do not carry the status fields, and the eighteenth attempt failed
+# exactly there - the newest *.json was a -seed record with no fixture_users.
 newest_snapshot() {
     local f last=""
-    for f in "$STATE_DIR"/snapshots/*.json; do
+    for f in "$STATE_DIR"/snapshots/*-status.json; do
         [ -f "$f" ] && last="$f"
     done
     [ -n "$last" ] && printf '%s' "$last"
