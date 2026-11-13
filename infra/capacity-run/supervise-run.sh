@@ -57,6 +57,12 @@ mkdir -p "$STATE_DIR/snapshots"
 
 say() { printf '[supervise] %s\n' "$*"; }
 
+# A warning the operator must see in the job output without failing the run:
+# the guest-export note rides this, and the retention step reads it back. It
+# was undefined until the nineteenth attempt's diagnosis - the line that calls
+# it only executes when an export fails, which no earlier test reached.
+warn() { printf '[supervise] WARN %s\n' "$*" >&2; }
+
 # Every failure is recorded before the process exits, so the workflow can still
 # run cleanup and retention and still report why.
 VERDICT="$STATE_DIR/verdict"
@@ -427,8 +433,17 @@ fi
 EXPORTER=""
 [ -x "$HERE/../scripts/export-evidence.sh" ] && EXPORTER="$HERE/../scripts/export-evidence.sh"
 [ -z "$EXPORTER" ] && [ -x "$HERE/export-evidence.sh" ] && EXPORTER="$HERE/export-evidence.sh"
-GUEST_NAME=""; GUEST_SHA=""
-if [ -n "$EXPORTER" ]; then
+
+# The digest travels on the status channel; the guest publishes its first
+# archive at bootstrap end and the poller captures the carrying document on
+# its next cycle - up to one poll interval after readiness. The nineteenth
+# attempt failed here deterministically: the scan ran seconds after readiness,
+# before any post-publish capture existed. The contract is that a digest
+# EXISTS, not that it exists instantly, so scan in a bounded wait.
+find_guest_digest() {
+    GUEST_NAME=""; GUEST_SHA=""
+    [ -n "$EXPORTER" ] || return 0
+    local f n s
     for f in $(ls -1r "$STATE_DIR"/snapshots/*.json 2>/dev/null || true); do
         n=$(jq -r '.evidence_snapshot.name // ""' "$f" 2>/dev/null || true)
         s=$(jq -r '.evidence_snapshot.sha256 // ""' "$f" 2>/dev/null || true)
@@ -436,13 +451,18 @@ if [ -n "$EXPORTER" ]; then
         case "$n" in snapshot-*.tar.gz) ;; *) continue ;; esac
         GUEST_NAME="$n"; GUEST_SHA="$s"; break
     done
-fi
+}
+DIGEST_DEADLINE=$(( $(date +%s) + ${DIGEST_WAIT:-180} ))
+while :; do
+    find_guest_digest
+    [ -n "$GUEST_NAME" ] && break
+    [ "$(date +%s)" -ge "$DIGEST_DEADLINE" ] && break
+    sleep 5
+done
 GUEST_EXPORT_NOTE=""
 if [ -z "$EXPORTER" ]; then
-    contract_check "guest evidence exported and checksum-verified" "0"
     GUEST_EXPORT_NOTE="export client not found"
 elif [ -z "$GUEST_NAME" ] || [ -z "$GUEST_SHA" ]; then
-    contract_check "guest evidence exported and checksum-verified" "0"
     GUEST_EXPORT_NOTE="no guest-supplied digest in any retained snapshot (scanned $(ls -1 "$STATE_DIR"/snapshots/*.json 2>/dev/null | wc -l) snapshots)"
 else
     GUEST_OUT="$STATE_DIR/guest-evidence.tar.gz"
@@ -460,11 +480,17 @@ else
     else
         # A failure must name its reason: the export log is the evidence, and a
         # bounded tail of it reaches the supervisor output the workflow records.
-        contract_check "guest evidence exported and checksum-verified" "0"
         GUEST_EXPORT_NOTE="export failed or unverified: $(tail -c 300 "$STATE_DIR/guest-export.log" 2>/dev/null | tr '\n' ';')"
     fi
 fi
-[ -n "$GUEST_EXPORT_NOTE" ] && { printf '%s\n' "$GUEST_EXPORT_NOTE" > "$STATE_DIR/guest-export.txt"; warn "guest export: $GUEST_EXPORT_NOTE"; }
+# The note is emitted BEFORE the contract check records the failure: a failed
+# check exits the run, and a note printed after that exit is never seen - the
+# nineteenth attempt's diagnosis was invisible for exactly this reason.
+if [ -n "$GUEST_EXPORT_NOTE" ]; then
+    printf '%s\n' "$GUEST_EXPORT_NOTE" > "$STATE_DIR/guest-export.txt"
+    warn "guest export: $GUEST_EXPORT_NOTE"
+    contract_check "guest evidence exported and checksum-verified" "0"
+fi
 
 say "stage last seen: ${LAST_STAGE:-none}"
 printf 'ready' > "$STATE_DIR/app-ready"

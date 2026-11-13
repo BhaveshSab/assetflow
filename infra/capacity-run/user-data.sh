@@ -427,6 +427,11 @@ printf '[Unit]\n[Timer]\nOnBootSec=60s\nOnUnitActiveSec=60s\nUnit=capacity-snaps
 systemctl daemon-reload
 systemctl enable --now capacity-metrics.service  || die "metrics service failed"
 systemctl enable --now capacity-snapshot.timer   || die "snapshot timer failed"
+# The timer's first elapse can lag the enable by up to its interval, and the
+# supervisor's export check needs a published digest within seconds of
+# readiness. Run the publisher once NOW so the first archive and its
+# .snapshot-latest.meta exist deterministically; the timer keeps it fresh.
+systemctl start capacity-snapshot.service        || die "evidence snapshot failed"
 
 # Record what is actually enabled, for the operator to read back.
 systemctl list-timers --all > "$EVIDENCE_DIR/timers.txt" 2>&1 || true

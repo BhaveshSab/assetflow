@@ -132,7 +132,8 @@ class SupervisorContract(unittest.TestCase):
             crt, key = str(pathlib.Path(W) / "o.crt"), str(pathlib.Path(W) / "o.key")
 
         become = {"app_ready": 2, "complete": 2, "p3_denied": 2,
-                  "no_fixtures": 2}.get(case, 999999)
+                  "no_fixtures": 2, "digest_delayed": 2,
+                  "digest_never": 2}.get(case, 999999)
         mode = "nofixtures" if case == "no_fixtures" else "ready"
         meta_path = str(pathlib.Path(W) / "guest-meta.json")
         app = subprocess.Popen(["python3", "-c", APP, port, crt, key, str(become), mode,
@@ -202,6 +203,15 @@ class SupervisorContract(unittest.TestCase):
         # check must fail on it rather than going looking for a friendlier
         # number.
         env["STUB_FIXTURE_USERS"] = "0" if case == "no_fixtures" else "200"
+        # The delayed-digest case models the publish cadence: the guest
+        # publishes at bootstrap end and the poller captures the carrying
+        # document up to one interval later, so the supervisor must wait
+        # bounded instead of judging the scan instantly. The never case keeps
+        # the wait short via DIGEST_WAIT so the test stays fast.
+        env["STUB_DIGEST_DELAY"] = {
+            "digest_delayed": "6", "digest_never": "9999"}.get(case, "0")
+        if case == "digest_never":
+            env["DIGEST_WAIT"] = "3"
         if not shutil.which("jq"):
             for cand in ("/mnt/c/Users/bhave/tools", os.path.expanduser("~/bin")):
                 if os.path.isfile(os.path.join(cand, "jq")):
@@ -259,6 +269,22 @@ class SupervisorContract(unittest.TestCase):
         for check in ("database == up", "schema == current", "fixtures seeded",
                       "metrics retained", "evidence checksum"):
             self.assertIn(check, out)
+
+    def test_a_late_publishing_guest_is_waited_for_not_failed(self):
+        """The nineteenth attempt failed deterministically: the guest publishes
+        its first archive at bootstrap end and the poller captures the carrying
+        status document up to one interval later, but the supervisor scanned
+        seconds after readiness - before any post-publish capture existed -
+        and failed 'no guest-supplied digest in any retained snapshot'. The
+        contract is that a digest EXISTS, not that it exists instantly."""
+        rc, out, _ = self._run("digest_delayed")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("guest evidence exported and checksum-verified", out)
+
+    def test_a_digest_that_never_appears_fails_after_the_bounded_wait(self):
+        rc, out, _ = self._run("digest_never")
+        self.assertNotEqual(rc, 0, out)
+        self.assertIn("no guest-supplied digest", out)
 
     # ---- snapshot handling ---------------------------------------------
     def test_malformed_snapshot_is_skipped_not_trusted(self):

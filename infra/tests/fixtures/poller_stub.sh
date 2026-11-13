@@ -34,11 +34,21 @@ fi
 # the status fields. The eighteenth attempt failed exactly because the
 # supervisor's newest-snapshot lookup globbed *.json and read a -seed record -
 # this stub is the regression test for that.
+# STUB_DIGEST_DELAY holds the guest-supplied digest back for N seconds,
+# modelling the publish cadence the supervisor's bounded digest wait exists
+# for: the guest publishes at bootstrap end and the poller captures the
+# carrying document up to one interval later.
 n=1
+DELAY=${STUB_DIGEST_DELAY:-0}
+START=$(date +%s)
 while :; do
     ts=$(date -u +%Y%m%dT%H%M%S)
+    BODY="$EV"
+    if [ "$DELAY" -gt 0 ] && [ $(( $(date +%s) - START )) -lt "$DELAY" ]; then
+        BODY='"evidence_snapshot": null'
+    fi
     printf '{"stage":"bootstrap","application_ready":false,"fixture_users":%s,%s}\n' \
-        "${STUB_FIXTURE_USERS:-200}" "$EV" > "$OUT/${ts}-status.json"
+        "${STUB_FIXTURE_USERS:-200}" "$BODY" > "$OUT/${ts}-status.json"
     printf '{"seeded":true}\n' > "$OUT/${ts}-seed.json"
     printf '{"load":0.1}\n' > "$OUT/${ts}-host.json"
     n=$((n + 1))
