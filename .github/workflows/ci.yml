@@ -1127,7 +1127,16 @@ jobs:
           LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
           test -n "$LT_PW" || { echo '::error::no fixture password'; exit 1; }
           mkdir -p "$RUNNER_TEMP/smoke"
+          chmod 777 "$RUNNER_TEMP/smoke"
+          # The run CA goes into the container's trust store. The pinned image
+          # runs as UID 12345 and does not ship ca-certificates tooling, so
+          # neither a system-anchor install nor a root-owned mount works: the
+          # first version of this step hit "certificate signed by unknown
+          # authority", and its summary write failed with permission denied.
+          # Both are fixed the way load-test.sh already does it - run as the
+          # invoking user, and hand Go the bundle through SSL_CERT_FILE.
           docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
             --add-host capacity-run.test:127.0.0.1 \
             -e SSL_CERT_FILE=/trust/tls.crt \
             -v "$RUN_DIR/trust:/trust:ro" \

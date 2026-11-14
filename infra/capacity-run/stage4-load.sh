@@ -228,7 +228,13 @@ if command -v k6 >/dev/null 2>&1; then
 elif command -v docker >/dev/null 2>&1; then
     K6_IMAGE="${K6_IMAGE:-grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8}"
     k6_cmd() {
+        # --user is not cosmetic. The pinned image runs as UID 12345, so without
+        # it k6 cannot write its summary into the stage directory and reports
+        # "could not open ... permission denied" - a real failure seen in CI.
+        # Running as the invoking user keeps every artefact owned by us, exactly
+        # as load-test.sh already does.
         docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
             --add-host "$CAPACITY_HOSTNAME:$IP" \
             -e SSL_CERT_FILE=/trust/tls.crt \
             -v "$TRUST_DIR:/trust:ro" \
