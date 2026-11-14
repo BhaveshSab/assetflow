@@ -642,6 +642,47 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("PIPESTATUS[0]", step)
         self.assertNotIn("\n          RC=$?\n", step)
 
+    def test_every_path_handed_to_k6_is_mounted_into_the_container(self):
+        """Attempt 25 pulled the pinned image, then reported:
+
+        The moduleSpecifier "/work/home/runner/.../scripts/k6-load.js"
+        couldn't be found on local disk.
+
+        to_k6_path built that path with "${1#$RUN_DIR}" and prefixed /work. The
+        strip is a no-op when the prefix does not match, so a path outside
+        $RUN_DIR - the k6 script, which lives in infra/scripts - became
+        /work plus its full host path. Only $RUN_DIR was mounted. The failure
+        surfaces as a missing module, nowhere near the mount list that caused
+        it, and only after the image pull and a 2-minute stage.
+        """
+        script = (ROOT / "infra" / "capacity-run" / "stage4-load.sh").read_text(encoding="utf-8")
+
+        # Every volume the k6 container gets, as container paths.
+        mounts = re.findall(r'-v "\$[A-Z_]+:(/[^:"]+)', script)
+        self.assertTrue(mounts, "expected the k6 container to mount at least one volume")
+
+        # to_k6_path must map each host tree it can be given onto a real mount,
+        # and must refuse anything it cannot place.
+        # The old form applied the strip to every path. The correct one branches
+        # on the path first, so a path outside $RUN_DIR can never become
+        # "/work" plus its absolute host path.
+        fn = script.split("to_k6_path()")[1].split("\n}")[0]
+        self.assertIn('case "$1" in', fn,
+                      "to_k6_path must branch on the path before stripping it")
+        self.assertIn("return 1", fn,
+                      "to_k6_path must fail on a path it cannot map")
+
+        mapped = re.findall(r"printf '(/[a-z]+)%s'", script.split("to_k6_path()")[1].split("}")[0])
+        self.assertTrue(mapped, "to_k6_path should map to explicit container roots")
+        for prefix in mapped:
+            self.assertIn(prefix, mounts,
+                          "to_k6_path maps to %s but the container mounts %s" % (prefix, mounts))
+
+        # The script k6 is asked to run must sit under one of those trees.
+        self.assertRegex(script, r'\$HERE/\.\./scripts')
+        self.assertIn("-v \"$HERE/../scripts:", script,
+                      "the k6 script tree must be mounted, or k6 cannot import it")
+
     def test_the_approval_scan_pages_so_an_approval_is_not_missed(self):
         """Reading only page 1 would report "absent" while a real approval sat
         on page 2 - a silent miss that looks exactly like patience."""

@@ -239,6 +239,7 @@ elif command -v docker >/dev/null 2>&1; then
             -e SSL_CERT_FILE=/trust/tls.crt \
             -v "$TRUST_DIR:/trust:ro" \
             -v "$RUN_DIR:/work" -w /work \
+            -v "$HERE/../scripts:/k6:ro" \
             "$K6_IMAGE" run "$@"
     }
     K6_LOCAL=false
@@ -248,7 +249,18 @@ fi
 
 # Paths inside the k6 container are /work-relative; locally they are real.
 to_k6_path() {
-    if [ "$K6_LOCAL" = true ]; then printf '%s' "$1"; else printf '/work%s' "${1#$RUN_DIR}"; fi
+    if [ "$K6_LOCAL" = true ]; then printf '%s' "$1"; return 0; fi
+    case "$1" in
+        "$RUN_DIR"/*)
+            printf '/work%s' "${1#$RUN_DIR}" ;;
+        "$HERE/../scripts"/*)
+            printf '/k6%s' "${1#$HERE/../scripts}" ;;
+        *)
+            # Never hand k6 a path that was not mounted: it reports the failure
+            # as a missing module, a long way from the real cause.
+            printf 'to_k6_path: %s is not under $RUN_DIR or the k6 script tree\n' "$1" >&2
+            return 1 ;;
+    esac
 }
 
 # ---- 4. the samplers ---------------------------------------------------------
