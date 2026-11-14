@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -595,6 +596,51 @@ class WorkflowStructureTests(unittest.TestCase):
         # The workflow must require the approver too, and refuse without it.
         self.assertIn("STAGE4_APPROVER", self.text)
         self.assertIn("no comment can authorize load", self.text)
+
+    def test_the_workflow_supplies_every_variable_the_stage4_script_requires(self):
+        """Attempt 23 died at stage4-load.sh line 68: "STATE_DIR is required".
+
+        The script asserts its whole input contract with ${VAR:?} and has no
+        defaults - deliberately, because a wrong trust dir or instance id would
+        mean loading the wrong system. The workflow sourced secrets.env and
+        passed nothing else, so the step could never have run a single request.
+        Every other Stage 4 test passed, because they each checked one side of
+        the boundary and none checked the boundary itself.
+        """
+        script = (ROOT / "infra" / "capacity-run" / "stage4-load.sh").read_text(encoding="utf-8")
+        # Every variable the script refuses to run without.
+        required = re.findall(r'^(\w+)="\$\{\1:\?', script, re.MULTILINE)
+        self.assertGreaterEqual(
+            len(required), 8,
+            "expected the script to assert at least its documented inputs, "
+            "found: %s" % required)
+
+        # Isolate the Stage 4 step, then require each name to be provided -
+        # either exported, assigned, or sourced from a file the step reads.
+        step_start = self.text.index("Stage 4 - revalidate and run the approved load")
+        step_end = self.text.index("- name: Stage 4 - retain the measurement evidence", step_start)
+        step = self.text[step_start:step_end]
+
+        missing = []
+        for name in required:
+            provided = (
+                ("export %s=" % name) in step
+                or ("%s=" % name) in step
+                or ("%s: " % name) in step
+                or ('"$%s"' % name) in step
+                or ("${%s" % name) in step
+            )
+            if not provided:
+                missing.append(name)
+        self.assertEqual(
+            missing, [],
+            "the Stage 4 step never provides %s, so stage4-load.sh would die at "
+            "its ${VAR:?} assertion" % missing)
+
+        # The exit status must come from the script, not from the tee it is
+        # piped into - otherwise a failing ramp reports success.
+        self.assertIn("PIPESTATUS[0]", step)
+        self.assertNotIn("\n          RC=$?\n", step)
 
     def test_the_approval_scan_pages_so_an_approval_is_not_missed(self):
         """Reading only page 1 would report "absent" while a real approval sat

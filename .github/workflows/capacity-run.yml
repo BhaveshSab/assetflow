@@ -717,9 +717,47 @@ jobs:
             exit 0
           fi
           set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          # The script asserts every one of these and dies on the first that is
+          # missing - it has no defaults, by design, because a wrong trust dir
+          # or a wrong instance id would mean loading the wrong system. Attempt
+          # 23 failed at line 68 with "STATE_DIR is required" because this step
+          # sourced secrets.env and passed nothing else. Export the whole
+          # contract explicitly, and fail with a named reason if any source is
+          # absent rather than letting the script die on a bare parameter
+          # expansion.
+          export STATE_DIR="$S"
+          export TRUST_DIR="$RUNNER_TEMP/trust"
+          export CAPACITY_HOSTNAME="capacity-run.test"
+          export PORT=8443
+          export INSTANCE_ID="${{ steps.launch.outputs.id }}"
+          export DEADLINE_EPOCH="$(cat "$S/deadline-epoch" 2>/dev/null || echo '')"
+          export LOADTEST_RUN_ID="cap-20261109t0800z-a7f3"
+          export EVIDENCE_TOKEN="${EVIDENCE_TOKEN:-}"
+          export LOADTEST_PASSWORD="${LOADTEST_PASSWORD:-}"
+
+          missing=""
+          for v in STATE_DIR TRUST_DIR CAPACITY_HOSTNAME INSTANCE_ID \
+                   DEADLINE_EPOCH EVIDENCE_TOKEN LOADTEST_PASSWORD LOADTEST_RUN_ID; do
+            eval "val=\${$v:-}"
+            [ -n "$val" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Stage 4::preflight refused: missing$missing"
+            echo "stage4=failed" >> "$GITHUB_OUTPUT"
+            echo "1" > "$S/stage4.rc"
+            exit 0
+          fi
+          case "$DEADLINE_EPOCH" in
+            ''|*[!0-9]*)
+              echo "::error title=Stage 4::preflight refused: deadline-epoch is not unix seconds ('$DEADLINE_EPOCH')"
+              echo "stage4=failed" >> "$GITHUB_OUTPUT"
+              echo "1" > "$S/stage4.rc"
+              exit 0 ;;
+          esac
+
           set +e
           bash infra/capacity-run/stage4-load.sh 2>&1 | tee "$S/stage4.out"
-          RC=$?
+          RC=${PIPESTATUS[0]}
           set -e
           echo "stage4 rc=$RC"
           echo "rc=$RC" >> "$GITHUB_OUTPUT"
