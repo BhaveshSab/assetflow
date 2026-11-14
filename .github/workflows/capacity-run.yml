@@ -627,6 +627,11 @@ jobs:
           # The issue whose comments carry approvals. A repository variable so
           # the number is configuration, not code.
           STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
+          # The ONLY login whose comment can approve load. A run id and a
+          # launch sha are public, so text alone must never authorize a run:
+          # the comment's author is verified against this name using the
+          # identity GitHub returns, not anything written in the comment.
+          STAGE4_APPROVER: ${{ vars.STAGE4_APPROVER }}
         run: |
           set -euo pipefail
           S="$RUNNER_TEMP/state"
@@ -640,9 +645,17 @@ jobs:
             echo denied > "$S/stage4-outcome"
             exit 2
           fi
+          # Without an approver there is no one whose comment counts. Refusing
+          # here is strictly safer than admitting any author.
+          if [ -z "${STAGE4_APPROVER:-}" ]; then
+            echo "::error title=hold::STAGE4_APPROVER is unset; no comment can authorize load"
+            echo denied > "$S/stage4-outcome"
+            exit 2
+          fi
           STATE_DIR="$S" HOLD_MINUTES="${{ vars.STAGE4_HOLD_MINUTES || '45' }}" \
             CAP_PROFILE="${{ env.AWS_PROFILE || 'capacity' }}" \
             CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \
+            STAGE4_APPROVER="$STAGE4_APPROVER" STAGE4_ISSUE="$STAGE4_ISSUE" \
             bash infra/capacity-run/hold-runner.sh
 
       - name: Close the run when no Stage 4 approval arrived

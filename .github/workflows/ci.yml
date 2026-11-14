@@ -1465,45 +1465,62 @@ jobs:
 
       - name: Prove the real token can read the approvals issue
         # The question the repository-variable mechanism got wrong, asked of
-        # the actual credential rather than assumed. A read that fails prints
-        # the exact HTTP status and fails this job.
+        # the actual credential rather than assumed. Success here means three
+        # separate things, each checked: the API answered HTTP 200, the body
+        # parsed as a comment list, and the classifier reached a verdict.
+        # `malformed` is NOT accepted as proof - a response that cannot be
+        # parsed has not demonstrated that the token can read anything.
         env:
           GITHUB_TOKEN: ${{ github.token }}
           API_REPO: ${{ github.repository }}
           STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
+          STAGE4_APPROVER: ${{ vars.STAGE4_APPROVER }}
         run: |
           set -euo pipefail
           if [ -z "${STAGE4_ISSUE:-}" ]; then
-            echo "::warning title=transport::STAGE4_APPROVAL_ISSUE is unset, so the"
-            echo "live read cannot be exercised. The offline half above still ran."
-            echo "### Transport: live read SKIPPED (no approval issue configured)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error title=transport::STAGE4_APPROVAL_ISSUE is unset, so the live read cannot run"
+            echo "### Transport: live read NOT EXERCISED (no approval issue configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
-          # A run id and sha that cannot match anything, so this step proves the
-          # READ and never mistakes an old approval for a new one.
+          if [ -z "${STAGE4_APPROVER:-}" ]; then
+            echo "::error title=transport::STAGE4_APPROVER is unset, so no author could be verified"
+            echo "### Transport: live read NOT EXERCISED (no approver configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # A run id and sha that cannot match anything: this proves the READ
+          # and can never mistake an old approval for a new one.
           S="$(mktemp -d)"
           RUN_ID=0 \
           LAUNCH_SHA=0000000000000000000000000000000000000000 \
           RUN_ATTEMPT=1 \
           STATE_DIR="$S" \
-            bash infra/capacity-run/stage4-approval.sh --check || true
+            bash infra/capacity-run/stage4-approval.sh --check 2>&1 || true
 
           OUTCOME="$(cat "$S/stage4-approval-outcome" 2>/dev/null || echo none)"
           STATUS="$(cat "$S/stage4-approval-status" 2>/dev/null || echo none)"
           echo "transport read: HTTP $STATUS, outcome $OUTCOME"
-          echo "- transport read: HTTP \`$STATUS\`, outcome \`$OUTCOME\`" >> "$GITHUB_STEP_SUMMARY"
-          # A read that could not happen is a real failure of the mechanism:
-          # exactly the class of bug this job exists to catch.
+          printf -- '- transport read: HTTP %s, outcome %s\n' "$STATUS" "$OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error title=transport::the approvals endpoint answered HTTP $STATUS, not 200"
+            exit 1
+          fi
+          # HTTP 200 and a real verdict. `absent` is the expected outcome here,
+          # because nothing authorizes run 0.
           case "$OUTCOME" in
-            absent|matched|stale|refused|malformed)
-              echo "the workflow token CAN read the approvals issue" ;;
-            none|denied|throttled)
-              echo "::error title=transport::the workflow token could not read the approvals issue (HTTP $STATUS, $OUTCOME)"
+            absent|matched|stale|unauthorized|refused)
+              echo "the workflow token read the approvals issue (HTTP 200) and the body parsed: transport proven" ;;
+            malformed)
+              echo "::error title=transport::HTTP 200 but the response did not parse; this is not proof of a working read"
+              exit 1 ;;
+            denied|throttled|invalid|none)
+              echo "::error title=transport::the read failed ($OUTCOME, HTTP $STATUS)"
               exit 1 ;;
             *)
-              echo "::error title=transport::unexpected transport outcome '$OUTCOME' (HTTP $STATUS)"
+              echo "::error title=transport::unexpected outcome '$OUTCOME'"
               exit 1 ;;
           esac
+
 
   capacity-images:
     name: Publish capacity-test images (digest-pinned)

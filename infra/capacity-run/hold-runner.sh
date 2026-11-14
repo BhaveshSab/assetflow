@@ -47,6 +47,7 @@
 #   GITHUB_TOKEN  required. The job's own token, used only to READ the
 #                 approvals issue's comments. Never printed, never retained.
 #   STAGE4_ISSUE  required. The issue number whose comments carry approvals.
+#   STAGE4_APPROVER required. The one login whose comment can approve.
 #   RUN_ID        required. This workflow run's id (github.run_id).
 #   RUN_ATTEMPT   required. This attempt number (github.run_attempt).
 #   API_REPO      optional. Defaults to $GITHUB_REPOSITORY.
@@ -68,6 +69,9 @@ GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
 RUN_ATTEMPT="${RUN_ATTEMPT:?RUN_ATTEMPT is required}"
 STAGE4_ISSUE="${STAGE4_ISSUE:?STAGE4_ISSUE is required}"
+# The only login whose comment can approve. Required: an empty value
+# would mean any author counts, which is the vulnerability this guards.
+STAGE4_APPROVER="${STAGE4_APPROVER:?STAGE4_APPROVER is required}"
 API_REPO="${API_REPO:-${GITHUB_REPOSITORY:-}}"
 
 [[ "$HOLD_MINUTES" =~ ^[0-9]+$ ]] || {
@@ -90,6 +94,12 @@ END=$(( $(date +%s) + HOLD_MINUTES * 60 ))
 if [ "$DEADLINE" -gt 0 ] && [ "$END" -gt "$DEADLINE" ]; then
     END=$(( DEADLINE - 300 ))
 fi
+
+# The approval window opens now, when the hold begins. A comment written
+# before this instant belongs to an earlier attempt and cannot authorize this
+# one, even if its run id and sha somehow matched.
+WINDOW_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "window-start=$WINDOW_START" >> "$STATE_DIR/hold-window"
 
 echo "hold-until-epoch=$END" > "$STATE_DIR/hold-window"
 echo "Waiting up to $HOLD_MINUTES minutes (max 120), bounded by the guest deadline."
@@ -114,6 +124,7 @@ APPROVAL_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stage4-approval.sh
 approval_matches() {
     API_REPO="$API_REPO" RUN_ID="$RUN_ID" LAUNCH_SHA="$LAUNCH_SHA" \
     RUN_ATTEMPT="$RUN_ATTEMPT" STAGE4_ISSUE="$STAGE4_ISSUE" \
+    STAGE4_APPROVER="$STAGE4_APPROVER" STAGE4_WINDOW_START="$WINDOW_START" \
     GITHUB_TOKEN="$GITHUB_TOKEN" STATE_DIR="$STATE_DIR" \
         bash "$APPROVAL_CHECK" --check
 }

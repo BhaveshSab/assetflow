@@ -557,7 +557,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn(r"stage4-approve", appr)
         self.assertIn("[0-9a-f]{40}", appr)
         # All three bindings must still be present and compared.
-        self.assertIn('run_id, sha, attempt = sys.argv[1], sys.argv[2], sys.argv[3]', appr)
+        self.assertIn(
+            'dump, run_id, sha, attempt, approver, window = sys.argv[1:7]', appr)
         self.assertIn('if r == run_id and s == sha', appr)
         self.assertIn('if attempt != "1"', appr)
         # The hold must still require attempt 1 and must delegate to the
@@ -566,6 +567,44 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("stage4-approval.sh", hold)
         # The launch sha must be recorded at launch time.
         self.assertIn("launch-sha", self.text)
+
+    def test_only_the_authorized_operator_can_approve(self):
+        """A run id and a launch sha are public. Matching the TEXT of a comment
+        is therefore not authorization: on a public repository anyone able to
+        comment, including a bot, could approve a load run by copying the line.
+        Every identity field GitHub attributes must be checked."""
+        appr = (ROOT / "infra" / "capacity-run" / "stage4-approval.sh").read_text(encoding="utf-8")
+        # The approver is a required input, not an optional refinement.
+        self.assertIn("STAGE4_APPROVER:?", appr)
+        # Identity is taken from the API's attribution, never from the body.
+        self.assertIn('user.get("login")', appr)
+        self.assertIn('user.get("type")', appr)
+        self.assertIn('c.get("author_association")', appr)
+        self.assertIn('c.get("performed_via_github_app")', appr)
+        # Bots and GitHub Apps are refused even when the login matches.
+        self.assertIn('utype.lower() == "bot"', appr)
+        # A non-owner/member/collaborator is refused.
+        self.assertIn('("OWNER", "MEMBER", "COLLABORATOR")', appr)
+        # An approval predating the window is refused, and reported as stale
+        # rather than unauthorized because the cause is timing, not identity.
+        self.assertIn('c.get("created_at")', appr)
+        self.assertIn("predates the approval window", appr)
+        # `unauthorized` must be a first-class outcome, distinguishable from
+        # `absent`: someone posted the line and it did not count.
+        self.assertIn("record outcome unauthorized", appr)
+        # The workflow must require the approver too, and refuse without it.
+        self.assertIn("STAGE4_APPROVER", self.text)
+        self.assertIn("no comment can authorize load", self.text)
+
+    def test_the_approval_scan_pages_so_an_approval_is_not_missed(self):
+        """Reading only page 1 would report "absent" while a real approval sat
+        on page 2 - a silent miss that looks exactly like patience."""
+        appr = (ROOT / "infra" / "capacity-run" / "stage4-approval.sh").read_text(encoding="utf-8")
+        self.assertIn('rel="next"', appr)
+        self.assertIn("MAX_PAGES", appr)
+        # A truncated scan is an explicit failure, never "absent".
+        self.assertIn('LAST_STATUS="truncated"', appr)
+        self.assertIn("truncated)", appr)
 
     def test_the_approval_transport_cannot_swallow_access_failures(self):
         """The attempt-22 defect: a 403 was indistinguishable from "not yet
@@ -576,7 +615,8 @@ class WorkflowStructureTests(unittest.TestCase):
             self.assertIn(outcome, appr, f"the transport never records '{outcome}'")
         # The HTTP status must be captured and recorded.
         self.assertIn("%{http_code}", appr)
-        self.assertIn('record status "$status"', appr)
+        # The status of every page read is recorded, not just the last one.
+        self.assertIn('record status "$LAST_STATUS"', appr)
         self.assertIn('stage4-approval-$1', appr)
         # 403 must distinguish quota from permission, because only one of them
         # is worth waiting out.

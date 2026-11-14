@@ -92,7 +92,7 @@ CURLSTUB
     set +e
     STATE_DIR="$W" HOLD_MINUTES="$1" CAP_PROFILE=stub CAP_REGION=stub-region \
         GITHUB_TOKEN=stub-token RUN_ID="$RUN_ID" RUN_ATTEMPT="$attempt" \
-        API_REPO=example/repo STAGE4_ISSUE=1 \
+        API_REPO=example/repo STAGE4_ISSUE=1 STAGE4_APPROVER=bhaveshsabharwal \
         PATH="$W/bin:/usr/local/bin:/usr/bin:/bin" bash infra/capacity-run/hold-runner.sh >"$W/out" 2>&1
     local rc=$?
     set -u
@@ -149,34 +149,57 @@ if [ "$OUTCOME" = "timeout" ] || [ "$OUTCOME" = "malformed" ]; then
 else bad "a failed read produced outcome '$OUTCOME'"; fi
 
 # g. A malformed approval line is never an approval.
-OUT=$(run_wait "0" "0" "echo running" '[{"id": 1, "body": "stage4-approve yes"}]')
+# One comment object as GitHub would return it for the authorized operator.
+# The body alone is no longer sufficient: the author, its type, its repository
+# association and a timestamp inside the hold window are all required, so the
+# fixture has to carry them or the test is not modelling reality.
+approval_json() {  # approval_json <body>
+    printf '[{"id":1,"body":"%s","user":{"login":"bhaveshsabharwal","type":"User"},"author_association":"OWNER","created_at":"%s","performed_via_github_app":null}]' \
+        "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+# A comment written by someone other than the operator.
+foreign_json() {  # foreign_json <body> <login>
+    printf '[{"id":1,"body":"%s","user":{"login":"%s","type":"User"},"author_association":"NONE","created_at":"%s","performed_via_github_app":null}]' \
+        "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve yes")")
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "timeout" ]; then ok "a malformed approval line is never an approval"
 else bad "a malformed line produced outcome '$OUTCOME'"; fi
 
 # h. Another run's id is never an approval.
-OUT=$(run_wait "0" "0" "echo running" '[{"id": 1, "body": "stage4-approve 99999999999:$LAUNCH_SHA"}]')
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve 99999999999:$LAUNCH_SHA")")
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "timeout" ]; then ok "another run's id is never an approval"
 else bad "a foreign run id produced outcome '$OUTCOME'"; fi
 
 # i. Another commit's sha is never an approval.
-OUT=$(run_wait "0" "0" "echo running" '[{"id": 1, "body": "stage4-approve $RUN_ID:ffffffffffffffffffffffffffffffffffffffff"}]')
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve $RUN_ID:ffffffffffffffffffffffffffffffffffffffff")")
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "timeout" ]; then ok "another commit's sha is never an approval"
 else bad "a foreign sha produced outcome '$OUTCOME'"; fi
 
 # j. A re-run (attempt > 1) is never an approval, even with a matching line.
-OUT=$(run_wait "0" "0" "echo running" "[{\"id\": 1, \"body\": \"stage4-approve $RUN_ID:$LAUNCH_SHA\"}]" 2)
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve $RUN_ID:$LAUNCH_SHA")" 2)
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "timeout" ]; then ok "a re-run (attempt > 1) is never an approval"
 else bad "attempt 2 produced outcome '$OUTCOME'"; fi
 
 # k. The exact "<this run>:<this launch sha>" line IS the approval.
-OUT=$(run_wait "0" "0" "echo running" "[{\"id\": 1, \"body\": \"stage4-approve $RUN_ID:$LAUNCH_SHA\"}]" 1)
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve $RUN_ID:$LAUNCH_SHA")" 1)
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "approved" ]; then ok "the exact run-id and launch-sha line is the approval"
 else bad "the matching line produced outcome '$OUTCOME'"; fi
+
+# k1. A stranger posting the exact approval line must not start load. This is
+#     the end-to-end form of the identity rule: the same check the hold loop
+#     makes, reached through the real script rather than the classifier alone.
+OUT=$(run_wait "0" "0" "echo running" "$(foreign_json "stage4-approve $RUN_ID:$LAUNCH_SHA" someone-else)" 1)
+OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
+if [ "$OUTCOME" = "timeout" ]; then ok "a stranger's approval line does not hand off"
+else bad "a stranger's approval line produced outcome '$OUTCOME'"; fi
 
 # k2. An UNREADABLE issue is an explicit denial, not a silent wait. This is the
 #     exact failure the variable design hid: 403 was indistinguishable from
@@ -200,7 +223,7 @@ else bad "HTTP 429 produced outcome '$OUTCOME', wanted throttled"; fi
 
 # k5. A matching approval must TRANSITION into the load orchestration, not
 #     merely record a word. `approved` is the handoff the workflow keys on.
-OUT=$(run_wait "0" "0" "echo running" "[{\"id\": 1, \"body\": \"stage4-approve $RUN_ID:$LAUNCH_SHA\"}]" 1)
+OUT=$(run_wait "0" "0" "echo running" "$(approval_json "stage4-approve $RUN_ID:$LAUNCH_SHA")" 1)
 OUTCOME=$(printf '%s' "$OUT" | sed -n 3p)
 if [ "$OUTCOME" = "approved" ]; then
     ok "a matching approval hands off to the load orchestration"
@@ -218,7 +241,7 @@ printf '#!/usr/bin/env bash\nprintf %s '"'"'{"value":"'"$RUN_ID"':'"$LAUNCH_SHA"
 chmod +x "$W/bin/aws" "$W/bin/curl"
 set +e
 STATE_DIR="$W" HOLD_MINUTES=0 CAP_PROFILE=stub CAP_REGION=stub-region \
-    GITHUB_TOKEN=stub-token RUN_ID="$RUN_ID" RUN_ATTEMPT=1 API_REPO=example/repo STAGE4_ISSUE=1 \
+    GITHUB_TOKEN=stub-token RUN_ID="$RUN_ID" RUN_ATTEMPT=1 API_REPO=example/repo STAGE4_ISSUE=1 STAGE4_APPROVER=bhaveshsabharwal \
     PATH="$W/bin:/usr/local/bin:/usr/bin:/bin" bash infra/capacity-run/hold-runner.sh >"$W/out" 2>&1
 OUTCOME=$(cat "$W/stage4-outcome" 2>/dev/null || echo none)
 set -u
