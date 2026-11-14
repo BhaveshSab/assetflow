@@ -1145,17 +1145,25 @@ jobs:
             -e SSL_CERT_FILE=/trust/tls.crt \
             -v "$RUN_DIR/trust:/trust:ro" \
             grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8 \
-            version || true
+            version
+          # Two probes, because the failure was NOT TLS: k6 reported
+          # 'https://capacity-run.test/api/auth/login' with the port dropped,
+          # i.e. BASE_URL arrived without ':8543'. These print what the script
+          # actually receives for BASE_URL and whether the port is reachable
+          # from inside the container, so the next run states the cause.
           docker run --rm --network host \
             --user "$(id -u):$(id -g)" \
             --add-host capacity-run.test:127.0.0.1 \
             -e SSL_CERT_FILE=/trust/tls.crt \
+            -e BASE_URL=https://capacity-run.test:8543 \
             -v "$RUN_DIR/trust:/trust:ro" \
             grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8 \
-            run --no-summary -e VUS=1 -e DURATION=1s -- /dev/stdin <<'PROBE' 2>&1 | tee "$RUNNER_TEMP/smoke/probe.log" || true
+            run -e VUS=1 -e DURATION=1s --quiet - /dev/stdin <<'PROBE' 2>&1 | tee "$RUNNER_TEMP/smoke/probe.log" || true
           import http from 'k6/http';
           export default function () {
-            const r = http.get('https://capacity-run.test:8543/api/health/ready');
+            const base = __ENV.BASE_URL || '(unset)';
+            console.log('CRITICAL BASE_URL=' + base);
+            const r = http.get(base + '/api/health/ready');
             console.log('probe status=' + r.status + ' error=' + (r.error || 'none'));
           }
           PROBE
@@ -1184,7 +1192,20 @@ jobs:
             grep -q "^$key=" "$S" || { echo "::error::summary missing $key"; exit 1; }
           done
           grep -q '^tag=smoke-stage4-path$' "$S" || { echo '::error::the stage tag did not reach the summary'; exit 1; }
-          echo "SMOKE PASS: k6 ran, authenticated as fixture accounts, and wrote a parseable summary"
+          # A summary with zero requests is not a run: k6 can exit 0 having
+          # failed setup, which is how 'the path works' could be claimed on no
+          # traffic at all.
+          REQS=$(grep '^requests=' "$S" | cut -d= -f2)
+          case "$REQS" in
+            ''|*[!0-9]*) echo "::error::summary has no request count ($REQS)"; exit 1 ;;
+          esac
+          [ "$REQS" -gt 0 ] || { echo '::error::k6 reported zero requests'; exit 1; }
+          ERR=$(grep '^error_rate=' "$S" | cut -d= -f2)
+          case "$ERR" in
+            0.00000|0.0|0) ;;
+            *) echo "::error::the smoke run saw failures (error_rate=$ERR)"; exit 1 ;;
+          esac
+          echo "SMOKE PASS: k6 ran $REQS requests with 0 errors and wrote a parseable summary"
 
       - name: Readiness and checksum-verified export as a client
         run: |
