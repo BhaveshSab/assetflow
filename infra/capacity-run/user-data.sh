@@ -399,6 +399,13 @@ EnvironmentFile=/etc/capacity-run/evidence.env
 ExecStart=/usr/bin/python3 $APP_DIR/infra/scripts/evidence_server.py --cert /etc/capacity-run/tls.crt --key /etc/capacity-run/tls.key --port 9443 --host 127.0.0.1"
 systemctl daemon-reload
 systemctl enable --now capacity-evidence.service || die "evidence endpoint failed"
+# The edge switch verifies all three routes before handing routing over, and
+# its evidence probe needs a PUBLISHED archive - which the snapshot unit could
+# only produce after the switch, so the probe could only ever see 404 and the
+# switch could only ever die (the twentieth attempt's console: 'edge cannot
+# reach app (200), evidence (404) or status (200)'). Publish the first archive
+# NOW, before the switch, so the verification reflects a working endpoint.
+bash "$APP_DIR/infra/capacity-run/snapshot-evidence.sh" || die "evidence snapshot failed"
 
 # The certificate covers capacity-run.test; the app's own nginx inside compose
 # uses its own cert, which this proxy does not consume.

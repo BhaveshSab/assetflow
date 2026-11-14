@@ -238,6 +238,31 @@ class SeedingTests(unittest.TestCase):
         self.assertIn("loadtest-${RUN_ID}-", helper)
 
 
+class EvidencePublishOrderingTests(unittest.TestCase):
+    """The twentieth attempt's console: 'edge cannot reach app (200), evidence
+    (404) or status (200)'. The edge switch verifies all three routes before
+    handing routing over, but the only archive publisher ran in the lifecycle
+    stage - AFTER the switch - so the evidence probe could only ever see 404
+    and the switch could only ever die. The first publish must exist before
+    the switch is attempted."""
+
+    def setUp(self):
+        self.src = body(USER_DATA)
+
+    def test_first_publish_precedes_the_edge_switch(self):
+        evidence_unit = self.src.index('capacity-evidence.service')
+        publish = self.src.index('snapshot-evidence.sh')
+        switch = self.src.index('early-edge.sh" switch')
+        self.assertLess(evidence_unit, publish,
+                        'the publisher needs the evidence endpoint it publishes for')
+        self.assertLess(publish, switch,
+                        'the switch verifies /evidence serves an archive; the '
+                        'first publish must precede it')
+
+    def test_the_lifecycle_stage_still_publishes_deterministically(self):
+        self.assertIn('systemctl start capacity-snapshot.service', self.src)
+
+
 class DeadlineServiceTests(unittest.TestCase):
     """Defect 4: a oneshot with RemainAfterExit runs exactly once."""
 

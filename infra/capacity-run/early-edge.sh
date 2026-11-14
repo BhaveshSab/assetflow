@@ -33,7 +33,15 @@ set -euo pipefail
 # die and say are normally provided by the caller (user-data defines them).
 # Fall back to plain implementations so this script also runs standalone in the
 # integration tests.
-type die >/dev/null 2>&1 || die() { printf 'fatal: %s\n' "$*" >&2; exit 1; }
+type die >/dev/null 2>&1 || die() {
+    printf 'fatal: %s\n' "$*" >&2
+    # This script runs inside the bootstrap payload, whose own die trap writes
+    # the failure summary; a die HERE bypasses that trap, so the one-liner
+    # never reached /status/failure and the twentieth attempt's switch failure
+    # was only visible on the console. Record it for the diagnostic channel.
+    printf '%s\n' "edge $MODE failed: $*" > "$EVIDENCE_DIR/failure-summary" 2>/dev/null || true
+    exit 1
+}
 type say >/dev/null 2>&1 || say() { printf '%s\n' "$*"; }
 
 : "${EXPECTED_COMMIT:?}" "${CAPACITY_HOSTNAME:?}" "${EVIDENCE_TOKEN:?}" "${EVIDENCE_DIR:?}"
