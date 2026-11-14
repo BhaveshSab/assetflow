@@ -1135,6 +1135,32 @@ jobs:
           # authority", and its summary write failed with permission denied.
           # Both are fixed the way load-test.sh already does it - run as the
           # invoking user, and hand Go the bundle through SSL_CERT_FILE.
+          # Prove from INSIDE the k6 container, with k6's own TLS stack, that
+          # the certificate is trusted. When this fails the step must say why:
+          # exit 107 alone costs a full CI cycle to interpret.
+          echo "--- k6 container can see and trust the CA? ---"
+          docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
+            --add-host capacity-run.test:127.0.0.1 \
+            -e SSL_CERT_FILE=/trust/tls.crt \
+            -v "$RUN_DIR/trust:/trust:ro" \
+            grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8 \
+            version || true
+          docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
+            --add-host capacity-run.test:127.0.0.1 \
+            -e SSL_CERT_FILE=/trust/tls.crt \
+            -v "$RUN_DIR/trust:/trust:ro" \
+            grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8 \
+            run --no-summary -e VUS=1 -e DURATION=1s -- /dev/stdin <<'PROBE' 2>&1 | tee "$RUNNER_TEMP/smoke/probe.log" || true
+          import http from 'k6/http';
+          export default function () {
+            const r = http.get('https://capacity-run.test:8543/api/health/ready');
+            console.log('probe status=' + r.status + ' error=' + (r.error || 'none'));
+          }
+          PROBE
+          echo "--- end of probe ---"
+
           docker run --rm --network host \
             --user "$(id -u):$(id -g)" \
             --add-host capacity-run.test:127.0.0.1 \
