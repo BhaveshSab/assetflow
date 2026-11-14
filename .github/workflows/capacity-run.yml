@@ -42,12 +42,15 @@ concurrency:
 
 permissions:
   contents: read
-  # The Stage 4 approval is a repository variable read AT RUNTIME by the held
-  # job: a ${{ vars.* }} expression is evaluated once at workflow start and can
-  # never see a value set while the job runs. This grants nothing else - the
-  # token still cannot write, and the approval itself is fail-closed on every
-  # mismatch inside hold-runner.sh.
+  # The Stage 4 approval is read AT RUNTIME by the held job from an ISSUE
+  # COMMENT. It is NOT a repository variable: GET /repos/{o}/{r}/actions/
+  # variables/{n} needs the "Variables" repository permission, which does not
+  # exist in the GITHUB_TOKEN permission list at all (so no YAML can grant it),
+  # and vars.* is interpolated before the job reaches the runner, so it can
+  # never see a mid-run change. `issues: read` IS a documented GITHUB_TOKEN
+  # scope and is the entire requirement: read-only, on comments in this repo.
   actions: read
+  issues: read
 
 env:
   # One credential mechanism. Every AWS call goes through cap_aws, which passes
@@ -608,12 +611,12 @@ jobs:
         # private CA, token and state are the only things that can verify the
         # run's TLS. If the job exits, the runner is destroyed and all three
         # are lost - so the job, not just the instance, is held, and the hold
-        # itself polls for the approval: the repository variable
-        # STAGE4_APPROVED, read live over the REST API, bound to this run's id
-        # and the launch sha. To approve a Stage 4 run, set
-        #   STAGE4_APPROVED = <run_id>:<launch_sha>
-        # (both values are printed by this step) while the job is holding. A
-        # passive hold could never turn an approval into work; this one can.
+        # itself polls for the approval: a COMMENT on the approvals issue, read
+        # live over the REST API, bound to this run's id and the launch sha.
+        # To approve a Stage 4 run, comment on that issue with exactly
+        #   stage4-approve <run_id>:<launch_sha>
+        # (this step prints those values). A passive hold could never turn an
+        # approval into work; this one can.
         # Bounded by STAGE4_HOLD_MINUTES, the run's absolute deadline, and a
         # hard cap so it can never outlive the 4-hour instance lifetime.
         if: always() && steps.observe.outputs.stage3 == 'pass'
@@ -621,12 +624,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          # The issue whose comments carry approvals. A repository variable so
+          # the number is configuration, not code.
+          STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
         run: |
           set -euo pipefail
           S="$RUNNER_TEMP/state"
           echo "Stage 3 passed. Waiting bounded for a Stage 4 approval on this
           same runner: same source /32, same private CA, same token, same
           state directory and the same retained instance."
+          # A missing issue number is a configuration error, not a reason to
+          # hold silently: fail before the wait starts, with a recorded outcome.
+          if [ -z "${STAGE4_ISSUE:-}" ]; then
+            echo "::error title=hold::STAGE4_APPROVAL_ISSUE is unset; no approval can be read"
+            echo denied > "$S/stage4-outcome"
+            exit 2
+          fi
           STATE_DIR="$S" HOLD_MINUTES="${{ vars.STAGE4_HOLD_MINUTES || '45' }}" \
             CAP_PROFILE="${{ env.AWS_PROFILE || 'capacity' }}" \
             CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \

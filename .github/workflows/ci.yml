@@ -1295,6 +1295,8 @@ jobs:
                    infra/capacity-run/ingress.sh \
                    infra/capacity-run/supervise-run.sh \
                    infra/capacity-run/early-edge.sh \
+                   infra/capacity-run/stage4-approval.sh \
+                   infra/capacity-run/stage4-load.sh \
                    infra/capacity-run/hold-runner.sh; do
             shellcheck --severity=warning --external-sources "$f"
           done
@@ -1435,6 +1437,73 @@ jobs:
             exit 1
           fi
           echo "readback uses the correct APIs"
+
+  stage4-approval-transport:
+    name: Stage 4 approval transport (real token, no AWS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The point of this job is the permission contract: does a workflow's own
+    # GITHUB_TOKEN, granted exactly what the launch workflow grants, really
+    # read the approvals issue? No AWS credentials are present and nothing is
+    # launched, so this is free and safe on every push.
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq
+
+      - name: Prove the approval transport is fail-closed, offline
+        # Every documented response shape - absent, matched, stale, denied,
+        # throttled, malformed, attempt != 1 - driven through the real
+        # stage4-approval.sh with a stubbed transport.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-approval.sh
+
+      - name: Prove the real token can read the approvals issue
+        # The question the repository-variable mechanism got wrong, asked of
+        # the actual credential rather than assumed. A read that fails prints
+        # the exact HTTP status and fails this job.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          API_REPO: ${{ github.repository }}
+          STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGE4_ISSUE:-}" ]; then
+            echo "::warning title=transport::STAGE4_APPROVAL_ISSUE is unset, so the"
+            echo "live read cannot be exercised. The offline half above still ran."
+            echo "### Transport: live read SKIPPED (no approval issue configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A run id and sha that cannot match anything, so this step proves the
+          # READ and never mistakes an old approval for a new one.
+          S="$(mktemp -d)"
+          RUN_ID=0 \
+          LAUNCH_SHA=0000000000000000000000000000000000000000 \
+          RUN_ATTEMPT=1 \
+          STATE_DIR="$S" \
+            bash infra/capacity-run/stage4-approval.sh --check || true
+
+          OUTCOME="$(cat "$S/stage4-approval-outcome" 2>/dev/null || echo none)"
+          STATUS="$(cat "$S/stage4-approval-status" 2>/dev/null || echo none)"
+          echo "transport read: HTTP $STATUS, outcome $OUTCOME"
+          echo "- transport read: HTTP \`$STATUS\`, outcome \`$OUTCOME\`" >> "$GITHUB_STEP_SUMMARY"
+          # A read that could not happen is a real failure of the mechanism:
+          # exactly the class of bug this job exists to catch.
+          case "$OUTCOME" in
+            absent|matched|stale|refused|malformed)
+              echo "the workflow token CAN read the approvals issue" ;;
+            none|denied|throttled)
+              echo "::error title=transport::the workflow token could not read the approvals issue (HTTP $STATUS, $OUTCOME)"
+              exit 1 ;;
+            *)
+              echo "::error title=transport::unexpected transport outcome '$OUTCOME' (HTTP $STATUS)"
+              exit 1 ;;
+          esac
 
   capacity-images:
     name: Publish capacity-test images (digest-pinned)

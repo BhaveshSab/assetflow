@@ -9,12 +9,19 @@
 # on a match, hands control back to the workflow, which runs Stage 4 on this
 # same runner.
 #
-# The approval is a repository variable, read at runtime through the REST API.
-# A ${{ vars.* }} expression is evaluated once when the workflow starts and can
-# never see a value set while the job is running; the API read is live on every
-# poll. The variable's value must be exactly "<run id>:<launch sha>":
+# The approval is an ISSUE COMMENT, not a repository variable. The variable
+# design was unbuildable: GET /repos/{o}/{r}/actions/variables/{n} requires the
+# "Variables" repository permission, which is not in the GITHUB_TOKEN permission
+# list at all, so no workflow `permissions:` key can grant it, and ${{ vars.* }}
+# is frozen at job start. `issues: read` IS a documented GITHUB_TOKEN scope, and
+# a comment is written by a human while the job holds, so it is readable
+# mid-run. The comment body must carry exactly one line:
 #
-#   - a missing or unreadable variable approves nothing;
+#       stage4-approve <run id>:<launch sha>
+#
+# with these consequences, all fail-closed:
+#
+#   - no such comment approves nothing;
 #   - a value left over from an earlier run carries that run's id and can
 #     never match this one (this is what makes it single-use per run);
 #   - a value naming any other commit approves nothing;
@@ -38,7 +45,8 @@
 #   CAP_PROFILE   required. AWS profile name.
 #   CAP_REGION    required. AWS region.
 #   GITHUB_TOKEN  required. The job's own token, used only to READ the
-#                 approval variable. It is never printed and never retained.
+#                 approvals issue's comments. Never printed, never retained.
+#   STAGE4_ISSUE  required. The issue number whose comments carry approvals.
 #   RUN_ID        required. This workflow run's id (github.run_id).
 #   RUN_ATTEMPT   required. This attempt number (github.run_attempt).
 #   API_REPO      optional. Defaults to $GITHUB_REPOSITORY.
@@ -47,6 +55,9 @@
 #   approved      the variable matched this run; Stage 4 may run
 #   timeout       the window closed without a matching approval
 #   instance-gone the instance ended; nothing left to test
+#   denied        the approvals issue could not be READ (401/403/404): an
+#                 explicit bounded failure, never a silent wait
+#   throttled     the API refused for quota, which waiting cannot fix
 set -euo pipefail
 
 STATE_DIR="${STATE_DIR:?STATE_DIR is required}"
@@ -56,6 +67,7 @@ CAP_REGION="${CAP_REGION:?CAP_REGION is required}"
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 RUN_ID="${RUN_ID:?RUN_ID is required}"
 RUN_ATTEMPT="${RUN_ATTEMPT:?RUN_ATTEMPT is required}"
+STAGE4_ISSUE="${STAGE4_ISSUE:?STAGE4_ISSUE is required}"
 API_REPO="${API_REPO:-${GITHUB_REPOSITORY:-}}"
 
 [[ "$HOLD_MINUTES" =~ ^[0-9]+$ ]] || {
@@ -82,31 +94,28 @@ fi
 echo "hold-until-epoch=$END" > "$STATE_DIR/hold-window"
 echo "Waiting up to $HOLD_MINUTES minutes (max 120), bounded by the guest deadline."
 echo "Retained instance: $INSTANCE_ID"
-echo "Set the repository variable STAGE4_APPROVED to \"<run id>:<launch sha>\" to approve."
+echo "To approve, comment on issue #$STAGE4_ISSUE with exactly:"
+echo "  stage4-approve $RUN_ID:$LAUNCH_SHA"
 echo "The wait ends at $END; afterwards bounded cleanup runs without load."
 
-# The approval read. Every failure mode - network error, absent variable,
-# malformed value, wrong run, wrong commit - returns 1, which the caller treats
-# as "not approved". Nothing here can invent an approval.
+# The approval read is delegated to stage4-approval.sh, which records the HTTP
+# status of every attempt and distinguishes absent, matched, stale, denied,
+# throttled and malformed. The previous inline version discarded curl's exit
+# status with `2>/dev/null || true`, so an access failure looked exactly like
+# "not approved yet" and the wait sat silent for its whole window. That is the
+# defect this replaces, and it is why attempt 22 produced no load.
+APPROVAL_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stage4-approval.sh"
+[ -f "$APPROVAL_CHECK" ] || {
+    echo "::error title=hold::approval transport missing at $APPROVAL_CHECK" >&2
+    echo "denied" > "$STATE_DIR/stage4-outcome"
+    exit 1
+}
+
 approval_matches() {
-    local value
-    value="$(curl -fsS --max-time 15 \
-        -H "Authorization: Bearer $GITHUB_TOKEN" \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/$API_REPO/actions/variables/STAGE4_APPROVED" \
-        2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("value",""))' 2>/dev/null || true)"
-    [ -n "$value" ] || return 1
-    printf '%s' "$value" > "$STATE_DIR/stage4-approval-seen"
-    # The value must be "<digits>:<40 hex>" - anything else is not an approval.
-    printf '%s' "$value" | grep -Eq '^[0-9]+:[0-9a-f]{40}$' || return 1
-    local seen_run seen_sha
-    seen_run="${value%%:*}"
-    seen_sha="${value#*:}"
-    [ "$seen_run" = "$RUN_ID" ] || return 1
-    [ -n "$LAUNCH_SHA" ] || return 1
-    [ "$seen_sha" = "$LAUNCH_SHA" ] || return 1
-    [ "$RUN_ATTEMPT" = "1" ] || return 1
-    return 0
+    API_REPO="$API_REPO" RUN_ID="$RUN_ID" LAUNCH_SHA="$LAUNCH_SHA" \
+    RUN_ATTEMPT="$RUN_ATTEMPT" STAGE4_ISSUE="$STAGE4_ISSUE" \
+    GITHUB_TOKEN="$GITHUB_TOKEN" STATE_DIR="$STATE_DIR" \
+        bash "$APPROVAL_CHECK" --check
 }
 
 while :; do
@@ -124,11 +133,22 @@ while :; do
     # The approval is checked every iteration, and once even when the window
     # has already closed: an approval set seconds before the window's end is
     # still an approval, and a zero-minute window still gets one check.
-    if approval_matches; then
-        echo "the approval variable matched this run and launch sha"
-        echo "approved" > "$STATE_DIR/stage4-outcome"
-        exit 0
-    fi
+    approval_matches || true
+    APPROVAL_STATE="$(cat "$STATE_DIR/stage4-approval-outcome" 2>/dev/null || echo unknown)"
+    case "$APPROVAL_STATE" in
+        matched)
+            echo "the approval comment matched this run and launch sha"
+            echo "approved" > "$STATE_DIR/stage4-outcome"
+            exit 0 ;;
+        denied|throttled)
+            # A read failure cannot be fixed by waiting: the token is not
+            # allowed or the API refused. Fail explicitly and boundedly rather
+            # than burning the whole window in silence.
+            echo "::error title=hold::approvals unreadable ($APPROVAL_STATE, HTTP $(cat "$STATE_DIR/stage4-approval-status" 2>/dev/null || echo unknown))"
+            echo "$APPROVAL_STATE" > "$STATE_DIR/stage4-outcome"
+            exit 0 ;;
+        *) : ;;
+    esac
     [ "$(date +%s)" -lt "$END" ] || break
     sleep 30
 done

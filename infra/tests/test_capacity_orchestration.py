@@ -544,19 +544,56 @@ class WorkflowStructureTests(unittest.TestCase):
         the approval wait, never without it. See test_capacity_gate for the
         full contract; here the workflow-level facts are pinned."""
         self.assertIn("stage4-load.sh", self.text)
-        self.assertIn("STAGE4_APPROVED", self.text)
+        self.assertIn("STAGE4_ISSUE", self.text)
         self.assertIn("capacity-run-stage4-evidence", self.text)
 
     def test_the_stage4_approval_is_bound_to_the_run_and_launch_sha(self):
+        """The binding is unchanged by the transport change: run id, launch sha,
+        attempt 1. What changed is WHERE it is read from."""
         hold = (ROOT / "infra" / "capacity-run" / "hold-runner.sh").read_text(encoding="utf-8")
-        # The variable value must be "<run id>:<40-hex sha>" - anything else,
-        # including a bare boolean, approves nothing.
-        self.assertIn("^[0-9]+:[0-9a-f]{40}$", hold)
-        self.assertIn('[ "$seen_run" = "$RUN_ID" ]', hold)
-        self.assertIn('[ "$seen_sha" = "$LAUNCH_SHA" ]', hold)
+        appr = (ROOT / "infra" / "capacity-run" / "stage4-approval.sh").read_text(encoding="utf-8")
+        # The line format is enforced by the transport, which is the only place
+        # that sees the text a human wrote.
+        self.assertIn(r"stage4-approve", appr)
+        self.assertIn("[0-9a-f]{40}", appr)
+        # All three bindings must still be present and compared.
+        self.assertIn('run_id, sha, attempt = sys.argv[1], sys.argv[2], sys.argv[3]', appr)
+        self.assertIn('if r == run_id and s == sha', appr)
+        self.assertIn('if attempt != "1"', appr)
+        # The hold must still require attempt 1 and must delegate to the
+        # transport rather than reading the API itself.
         self.assertIn('[ "$RUN_ATTEMPT" = "1" ]', hold)
+        self.assertIn("stage4-approval.sh", hold)
         # The launch sha must be recorded at launch time.
         self.assertIn("launch-sha", self.text)
+
+    def test_the_approval_transport_cannot_swallow_access_failures(self):
+        """The attempt-22 defect: a 403 was indistinguishable from "not yet
+        approved", so the hold burned its window in silence."""
+        appr = (ROOT / "infra" / "capacity-run" / "stage4-approval.sh").read_text(encoding="utf-8")
+        # Every status class is named, not collapsed into one silent path.
+        for outcome in ("absent", "matched", "stale", "denied", "throttled", "malformed"):
+            self.assertIn(outcome, appr, f"the transport never records '{outcome}'")
+        # The HTTP status must be captured and recorded.
+        self.assertIn("%{http_code}", appr)
+        self.assertIn('record status "$status"', appr)
+        self.assertIn('stage4-approval-$1', appr)
+        # 403 must distinguish quota from permission, because only one of them
+        # is worth waiting out.
+        self.assertIn("rate limit", appr)
+        # And the hold must fail loudly on a read failure rather than waiting.
+        hold = (ROOT / "infra" / "capacity-run" / "hold-runner.sh").read_text(encoding="utf-8")
+        self.assertIn("denied|throttled)", hold)
+        self.assertIn("approvals unreadable", hold)
+
+    def test_the_workflow_grants_the_documented_permission_for_the_channel(self):
+        """`actions: read` does NOT grant the Actions-variables API - there is no
+        variables scope in GITHUB_TOKEN at all. The channel must be one the
+        documented scopes actually cover."""
+        self.assertIn("issues: read", self.text)
+        # The unbuildable mechanism must be gone, not merely unused.
+        self.assertNotIn("STAGE4_APPROVED = <run_id>", self.text)
+        self.assertNotIn("actions/variables/STAGE4_APPROVED", self.text)
 
     def test_workflow_dispatch_is_declared(self):
         self.assertIn("workflow_dispatch", self.text)
