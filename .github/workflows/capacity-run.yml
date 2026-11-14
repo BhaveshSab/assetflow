@@ -42,6 +42,12 @@ concurrency:
 
 permissions:
   contents: read
+  # The Stage 4 approval is a repository variable read AT RUNTIME by the held
+  # job: a ${{ vars.* }} expression is evaluated once at workflow start and can
+  # never see a value set while the job runs. This grants nothing else - the
+  # token still cannot write, and the approval itself is fail-closed on every
+  # mismatch inside hold-runner.sh.
+  actions: read
 
 env:
   # One credential mechanism. Every AWS call goes through cap_aws, which passes
@@ -376,6 +382,11 @@ jobs:
             --token-file "$RUNNER_TEMP/state/client-token" \
             --out "$RUNNER_TEMP/state/instance-id"
           echo "id=$(cat "$RUNNER_TEMP/state/instance-id")" >> "$GITHUB_OUTPUT"
+          # The launch sha, recorded while the truth is in hand: the Stage 4
+          # approval binds to exactly the commit whose code launched this
+          # instance, so a later approval can never be applied to a run whose
+          # guest code differs from what was approved.
+          printf '%s' "$GITHUB_SHA" > "$RUNNER_TEMP/state/launch-sha"
 
       - name: Read back the configuration that was actually created
         run: |
@@ -591,28 +602,181 @@ jobs:
             echo "The guest terminates itself at the 4-hour deadline."
           fi
 
-      - name: Hold this runner for a possible Stage 4 approval
+      - name: Wait bounded for a Stage 4 approval
         # Retaining the INSTANCE is not enough for Stage 4. The runner's own
         # public address is the only address allowed through tcp/8443, and its
         # private CA, token and state are the only things that can verify the
-        # run's TLS. If the job exits, the runner is destroyed and all three are
-        # lost - the retained instance becomes unreachable and unusable.
-        #
-        # So the job, not just the instance, is held. Bounded by STAGE4_HOLD_MINUTES
-        # and also by the run's absolute deadline, AND hard-capped so it can never
-        # outlive the 4-hour instance lifetime. No AWS service or permission is
-        # involved: this is a wait inside the job that is already running.
+        # run's TLS. If the job exits, the runner is destroyed and all three
+        # are lost - so the job, not just the instance, is held, and the hold
+        # itself polls for the approval: the repository variable
+        # STAGE4_APPROVED, read live over the REST API, bound to this run's id
+        # and the launch sha. To approve a Stage 4 run, set
+        #   STAGE4_APPROVED = <run_id>:<launch_sha>
+        # (both values are printed by this step) while the job is holding. A
+        # passive hold could never turn an approval into work; this one can.
+        # Bounded by STAGE4_HOLD_MINUTES, the run's absolute deadline, and a
+        # hard cap so it can never outlive the 4-hour instance lifetime.
         if: always() && steps.observe.outputs.stage3 == 'pass'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           S="$RUNNER_TEMP/state"
-          echo "Stage 3 passed. Holding this runner so a Stage 4 approval can run
-          against the SAME runner: same source /32, same private CA, same token,
-          same state directory and the same retained instance."
+          echo "Stage 3 passed. Waiting bounded for a Stage 4 approval on this
+          same runner: same source /32, same private CA, same token, same
+          state directory and the same retained instance."
           STATE_DIR="$S" HOLD_MINUTES="${{ vars.STAGE4_HOLD_MINUTES || '45' }}" \
             CAP_PROFILE="${{ env.AWS_PROFILE || 'capacity' }}" \
             CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \
             bash infra/capacity-run/hold-runner.sh
+
+      - name: Close the run when no Stage 4 approval arrived
+        # The instance was retained ONLY for a possibly approved Stage 4. No
+        # approval means no reason to keep either the instance or its ingress:
+        # this is the bounded cleanup the "no approval" path owes, and it uses
+        # the same authority as every other cleanup in this workflow - the
+        # recorded instance id and the recorded rule id, nothing else.
+        if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          [ -f "$S/stage4-outcome" ] || { echo "no Stage 4 wait ran (Stage 3 did not pass); nothing to close"; exit 0; }
+          OUTCOME=$(cat "$S/stage4-outcome")
+          echo "Stage 4 wait outcome: $OUTCOME"
+          case "$OUTCOME" in
+            timeout) ;;
+            instance-gone)
+              # The guest ended itself at its deadline. The ingress rule it was
+              # retained with outlives it only until this step: close it now.
+              bash infra/capacity-run/ingress.sh close --state-dir "$S"
+              echo "instance gone; ingress closed"
+              exit 0 ;;
+            *) exit 0 ;;
+          esac
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          fi
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
+          echo "no approval arrived: the instance was terminated and the ingress closed"
+
+      - name: Stage 4 - revalidate and run the approved load
+        # Runs only on an approval that matched this run's id and launch sha,
+        # on attempt 1, inside the bounded window. The script revalidates the
+        # instance, the Stage 3 evidence, HTTPS readiness, the watchdog and the
+        # remaining lifetime BEFORE any load, and never touches cleanup
+        # authority itself.
+        id: stage4
+        if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
+        run: |
+          set -uo pipefail
+          S="$RUNNER_TEMP/state"
+          OUTCOME=$(cat "$S/stage4-outcome" 2>/dev/null || echo none)
+          if [ "$OUTCOME" != "approved" ]; then
+            echo "stage4=not-run" >> "$GITHUB_OUTPUT"
+            echo "Stage 4 did not run: the wait outcome was '$OUTCOME'"
+            exit 0
+          fi
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          set +e
+          bash infra/capacity-run/stage4-load.sh 2>&1 | tee "$S/stage4.out"
+          RC=$?
+          set -e
+          echo "stage4 rc=$RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          printf '%s' "$RC" > "$S/stage4.rc"
+          if [ "$RC" -eq 0 ]; then
+            echo "stage4=ran" >> "$GITHUB_OUTPUT"
+          else
+            echo "stage4=failed" >> "$GITHUB_OUTPUT"
+            echo "::error title=Stage 4::the load sequence failed (rc=$RC)"
+          fi
+
+      - name: Stage 4 - retain the measurement evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          R="$RUNNER_TEMP/retained-stage4"
+          mkdir -p "$R"
+          if [ ! -d "$S/stage4" ]; then
+            echo "no Stage 4 directory was created; nothing to retain"
+            exit 0
+          fi
+          # Named files only, same rule as the Stage 3 retention: a glob is how
+          # a secret rides along. The fixture password lives in the trust env,
+          # never in these files; k6 receives it through -e and writes none of
+          # it into summaries or logs.
+          for f in stage4-report.md guest-export-postload.log; do
+            [ -f "$S/stage4/$f" ] && cp "$S/stage4/$f" "$R/"
+          done
+          for f in "$S"/stage4/stage-*.result "$S"/stage4/stage-*.log \
+                   "$S"/stage4/guest-samples.csv "$S"/stage4/generator-samples.csv; do
+            [ -f "$f" ] && cp "$f" "$R/"
+          done
+          if [ -f "$S/stage4/guest-evidence-postload.tar.gz" ]; then
+            SIZE=$(stat -c%s "$S/stage4/guest-evidence-postload.tar.gz")
+            if [ "$SIZE" -le 10485760 ]; then
+              cp "$S/stage4/guest-evidence-postload.tar.gz" "$R/"
+            else
+              echo "::warning title=retention::post-load archive is $SIZE bytes; keeping log only"
+            fi
+          fi
+          if ls "$R" | grep -Eq 'client-token|\.env$|\.key$|secrets'; then
+            echo "::error title=retention::a forbidden filename reached the Stage 4 set"
+            exit 1
+          fi
+
+      - name: Keep the Stage 4 evidence (non-secret only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-run-stage4-evidence
+          path: ${{ runner.temp }}/retained-stage4
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Stage 4 - terminate the instance and close the ingress
+        # The approved instance's job is done once the measurement (or its
+        # failure) is retained. This is the same cleanup authority as the
+        # failure path: the recorded instance id, the recorded rule id, and
+        # nothing else. The root volume's deletion is verified, not assumed.
+        if: always()
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          [ -f "$S/stage4-outcome" ] || exit 0
+          OUTCOME=$(cat "$S/stage4-outcome")
+          [ "$OUTCOME" = "approved" ] || { echo "Stage 4 never ran; cleanup already handled"; exit 0; }
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          fi
+          # The root volume: DeleteOnTermination was verified at launch; here
+          # it is verified in fact. A surviving volume is a warning the
+          # operator can act on, never a silent pass.
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
+          echo "Stage 4 cleanup complete: instance terminated, ingress closed"
 
       - name: Emit the failure diagnostics as annotations
         # The retained artifact needs authentication to download, and the job
@@ -671,3 +835,13 @@ jobs:
             exit 1
           fi
           echo "Stage 3 contract satisfied."
+          # The Stage 4 outcome rides the same summary: ran, failed, or
+          # explicitly not-run. Silence is never one of the options.
+          S4OUT=$(cat "$S/stage4-outcome" 2>/dev/null || echo 'no wait ran')
+          S4RC=$(cat "$S/stage4.rc" 2>/dev/null || echo '-')
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Stage 4: ${S4OUT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- wait outcome: \`${S4OUT}\`, load exit code: \`${S4RC}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$S/stage4-report-path" ]; then
+            echo "- report: \`$(cat "$S/stage4-report-path")\`" >> "$GITHUB_STEP_SUMMARY"
+          fi

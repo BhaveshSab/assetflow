@@ -1114,6 +1114,43 @@ jobs:
           $C logs --tail=60 api
           exit 1
 
+      - name: SMOKE - run the real k6 against the disposable stack
+        # A SMOKE TEST of the Stage 4 execution path, not capacity evidence:
+        # two virtual users for ten seconds against the disposable stack, to
+        # prove the exact pieces a real Stage 4 run depends on - the real k6
+        # binary, the pinned image, verified TLS against the run CA, one
+        # fixture account per VU, stage tagging, and the machine-readable
+        # summary format the driver parses. Short by design; the numbers here
+        # mean nothing beyond "the path works".
+        run: |
+          set -euo pipefail
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          test -n "$LT_PW" || { echo '::error::no fixture password'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/smoke"
+          docker run --rm --network host \
+            --add-host capacity-run.test:127.0.0.1 \
+            -e SSL_CERT_FILE=/trust/tls.crt \
+            -v "$RUN_DIR/trust:/trust:ro" \
+            -v "$GITHUB_WORKSPACE/infra/scripts:/work/infra/scripts:ro" \
+            -v "$RUNNER_TEMP/smoke:/work/out" -w /work/out \
+            grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8 \
+            run \
+            -e BASE_URL=https://capacity-run.test:8543 \
+            -e VUS=2 -e DURATION=10s -e TAG=smoke-stage4-path \
+            -e SLEEP=1 \
+            -e LOADTEST_USERS=200 -e LOADTEST_PASSWORD="$LT_PW" \
+            -e LOADTEST_RUN_ID=cap-ci-0001 \
+            -e SUMMARY_FILE=/work/out/smoke.result \
+            /work/infra/scripts/k6-load.js 2>&1 | tee "$RUNNER_TEMP/smoke/k6.log"
+          # The summary must carry the fields the Stage 4 driver parses.
+          S="$RUNNER_TEMP/smoke/smoke.result"
+          test -s "$S" || { echo '::error::no k6 summary was written'; exit 1; }
+          for key in rps requests p50_ms p95_ms p99_ms error_rate throttled_429; do
+            grep -q "^$key=" "$S" || { echo "::error::summary missing $key"; exit 1; }
+          done
+          grep -q '^tag=smoke-stage4-path$' "$S" || { echo '::error::the stage tag did not reach the summary'; exit 1; }
+          echo "SMOKE PASS: k6 ran, authenticated as fixture accounts, and wrote a parseable summary"
+
       - name: Readiness and checksum-verified export as a client
         run: |
           set -o pipefail
@@ -1230,13 +1267,23 @@ jobs:
             exit "$rc"
           fi
 
-      - name: Prove the Stage 4 runner hold is bounded
-        # The hold must never outlive the instance: a non-number is an error, a
-        # huge value is capped, a past guest deadline ends it, a terminated
-        # instance ends it, and a zero-minute hold closes immediately.
+      - name: Prove the Stage 4 approval wait is bounded and fail-closed
+        # The wait must never outlive the instance, and every mismatched,
+        # malformed, foreign-run, foreign-sha or re-attempted approval must
+        # fail closed. Only the exact "<this run>:<this launch sha>" value on
+        # attempt 1 approves.
         run: |
           set -euo pipefail
           bash infra/tests/integration/stage4-hold.sh
+
+      - name: Prove the Stage 4 load orchestration end to end
+        # The real stage4-load.sh in a stubbed world: every preflight refusal,
+        # the pacing-plan ceiling check, the ramp with threshold verdicts, the
+        # abort ceiling, a k6 crash, the early deadline stop, and the post-load
+        # export both succeeding and failing.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-load-orchestration.sh
 
       - name: Prove the guest-evidence export path for real
         # A checksum over runner-side snapshots is local integrity only. This

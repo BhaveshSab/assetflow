@@ -161,9 +161,20 @@ class GateStructureTests(unittest.TestCase):
         self.assertIn("did not reach readiness; terminating", self.text)
         self.assertIn("ingress.sh close", self.text)
 
-    def test_no_load_test(self):
-        self.assertNotIn("k6", self.text)
-        self.assertNotIn("load-test.sh", self.text)
+    def test_stage4_load_is_present_and_gated(self):
+        """Stage 4 now lives in this workflow - but only behind the approval
+        wait. The old guard asserted no load test at all; the approved design
+        replaced it with a sharper one: the load must exist, and it must be
+        unreachable without a matching approval, on attempt 1, inside the
+        bounded window."""
+        self.assertIn("stage4-load.sh", self.text)
+        self.assertIn("stage4-outcome", self.text)
+        # The load step must refuse to run unless the wait recorded 'approved'.
+        self.assertIn('[ "$OUTCOME" != "approved" ]', self.text)
+        # The approval wait itself must be the only path that writes it.
+        self.assertIn("hold-runner.sh", self.text)
+        # No approval must end in bounded cleanup, not in load.
+        self.assertIn("Close the run when no Stage 4 approval arrived", self.text)
 
 
 class StageBoundaryTests(unittest.TestCase):

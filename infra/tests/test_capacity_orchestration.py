@@ -539,9 +539,24 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_cleanup_runs_even_on_failure(self):
         self.assertIn("if: always()", self.text)
 
-    def test_no_load_test_in_the_launch_workflow(self):
-        self.assertNotIn("k6", self.text)
-        self.assertNotIn("load-test.sh", self.text)
+    def test_stage4_load_is_present_and_gated(self):
+        """The launch workflow now carries the approved Stage 4 path - behind
+        the approval wait, never without it. See test_capacity_gate for the
+        full contract; here the workflow-level facts are pinned."""
+        self.assertIn("stage4-load.sh", self.text)
+        self.assertIn("STAGE4_APPROVED", self.text)
+        self.assertIn("capacity-run-stage4-evidence", self.text)
+
+    def test_the_stage4_approval_is_bound_to_the_run_and_launch_sha(self):
+        hold = (ROOT / "infra" / "capacity-run" / "hold-runner.sh").read_text(encoding="utf-8")
+        # The variable value must be "<run id>:<40-hex sha>" - anything else,
+        # including a bare boolean, approves nothing.
+        self.assertIn("^[0-9]+:[0-9a-f]{40}$", hold)
+        self.assertIn('[ "$seen_run" = "$RUN_ID" ]', hold)
+        self.assertIn('[ "$seen_sha" = "$LAUNCH_SHA" ]', hold)
+        self.assertIn('[ "$RUN_ATTEMPT" = "1" ]', hold)
+        # The launch sha must be recorded at launch time.
+        self.assertIn("launch-sha", self.text)
 
     def test_workflow_dispatch_is_declared(self):
         self.assertIn("workflow_dispatch", self.text)
