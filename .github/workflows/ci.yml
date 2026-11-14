@@ -311,6 +311,9 @@ jobs:
       METRICS_ENABLED: 'true'
       LOADTEST_USERS: '5'
       LOADTEST_PASSWORD: ci-only-fixture-password
+      # The seeder and the driver must name the same run, or k6 signs in as an
+      # account that was never created. One value, defined once.
+      LOADTEST_RUN_ID: ci-load-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -324,7 +327,7 @@ jobs:
           npm ci --include=dev
           npx prisma generate
           npx prisma migrate deploy
-          npm run seed:loadtest -- --users 5 --assets 500
+          npm run seed:loadtest -- --run-id "$LOADTEST_RUN_ID" --users 5 --assets 500
           npm run build
       - name: Test k6 summary reporting
         run: node --test infra/tests/k6-summary.test.mjs
@@ -347,7 +350,7 @@ jobs:
             -v "$PWD:/work" -w /work \
             -e BASE_URL=http://localhost:4000 -e VUS=5 -e DURATION=45s \
             -e SLEEP=1 -e P95_THRESHOLD_MS=1000 -e ERROR_RATE_THRESHOLD=0.01 \
-            -e LOADTEST_USERS -e LOADTEST_PASSWORD -e TAG=ci \
+            -e LOADTEST_USERS -e LOADTEST_PASSWORD -e LOADTEST_RUN_ID -e TAG=ci \
             -e SUMMARY_FILE=test-results/k6-summary.txt \
             grafana/k6:0.54.0 run infra/scripts/k6-load.js
           node --input-type=module - <<'VERIFY'
@@ -373,3 +376,1302 @@ jobs:
           name: k6-regression-${{ github.sha }}
           path: test-results/
           retention-days: 14
+
+  # Real PostgreSQL 16 + the real Prisma migration image, synthetic data only.
+  #
+  # The unit tests model the restore script's orchestration with stubs. This job
+  # runs the *shipped* script against a real database so that the things a stub
+  # cannot show are actually observed: pg_get_constraintdef formatting, migration
+  # history checksums, Prisma migrate deploy on restored data, internal networking
+  # and owned-resource cleanup.
+  #
+  # No AWS access, no credentials, no production service. Every resource is named
+  # after the run and every case is bounded by the job timeout.
+  #
+  # This is an integration result. It is NOT an AWS performance measurement and
+  # NOT production recovery evidence.
+  restore-integration:
+    name: Restore integration (real PostgreSQL, synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck python3-yaml
+
+      - name: Lint the integration harness
+        run: |
+          shellcheck --severity=warning --external-sources infra/tests/integration/integration-restore.sh
+          python3 -c "import ast,sys; ast.parse(open('infra/tests/integration/verify-constraint-sql.py').read())"
+
+      - name: Run the isolated restore integration
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          rc=0
+          infra/tests/integration/integration-restore.sh "$PWD" 2>&1 | tee test-results/restore-integration.log || rc=$?
+          # The harness's own exit status is the verdict; summarise it plainly.
+          echo "harness exit status: ${rc}"
+          if [ -f test-results/restore-integration.txt ]; then
+            cat test-results/restore-integration.txt
+          else
+            echo "::error title=restore integration::the harness wrote no result summary"
+            exit 1
+          fi
+          exit "$rc"
+
+      - name: Publish the outcome in the job summary
+        if: always()
+        run: |
+          if [ -f test-results/restore-integration.txt ]; then
+            {
+              echo '## Isolated restore integration'
+              echo
+              echo '```text'
+              cat test-results/restore-integration.txt
+              echo '```'
+              echo
+              echo 'Synthetic data, disposable PostgreSQL 16, no AWS or production access.'
+              echo 'This is not an AWS performance measurement or production recovery evidence.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The harness produced no summary; see the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep restore-integration evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-integration-${{ github.sha }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Remove any leftover integration resources
+        if: always()
+        run: |
+          # Belt and braces: the harness cleans up per run, but a killed step can
+          # leave something behind. Only names this job created are touched.
+          docker ps -aq --filter "name=assetflow-restore-verify-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-restore-verify-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-restore-verify-" | xargs -r docker network rm
+          docker ps -aq --filter "name=assetflow-it-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-it-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-it-" | xargs -r docker network rm
+
+  loadtest-isolation:
+    name: Load-test fixture isolation (real PostgreSQL, synthetic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Lint the isolation harness
+        run: |
+          shellcheck --severity=warning --external-sources infra/tests/integration/integration-loadtest.sh
+          shellcheck --severity=warning --external-sources infra/scripts/load-test.sh
+          node --check infra/scripts/k6-load.js
+
+      - name: Type-check the seed script
+        working-directory: backend
+        run: |
+          npm ci
+          npx prisma generate
+          # Check against the project's own module mode. A bare
+          # `tsc --noEmit file.ts` ignores tsconfig.json and falls back to CommonJS,
+          # which cannot resolve the nodenext imports this project uses.
+          rc=0
+          npx tsc --noEmit -p tsconfig.json > /tmp/tsc.log 2>&1 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            # Surface the diagnostics: the log is not downloadable without admin
+            # rights, so an annotation is the only way this is visible.
+            head -40 /tmp/tsc.log
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=tsc::${line}"
+            done < <(head -20 /tmp/tsc.log)
+          fi
+          exit "$rc"
+
+      - name: Run the isolated load-test fixture integration
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          rc=0
+          infra/tests/integration/integration-loadtest.sh "$PWD" 2>&1 | tee test-results/loadtest-isolation.log || rc=$?
+          echo "harness exit status: ${rc}"
+          if [ -f test-results/loadtest-isolation.txt ]; then
+            cat test-results/loadtest-isolation.txt
+          else
+            echo "::error title=loadtest isolation::the harness wrote no result summary"
+            exit 1
+          fi
+          exit "$rc"
+
+      - name: Publish the outcome in the job summary
+        if: always()
+        run: |
+          if [ -f test-results/loadtest-isolation.txt ]; then
+            {
+              echo '## Isolated load-test fixture'
+              echo
+              echo '```text'
+              cat test-results/loadtest-isolation.txt
+              echo '```'
+              echo
+              echo 'Synthetic data, disposable PostgreSQL 16, no AWS or production access.'
+              echo 'This proves fixture ownership and refusals. It is not a performance'
+              echo 'measurement, and it does not turn the live-load gate on.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'The harness produced no summary; see the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep isolation evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-isolation-${{ github.sha }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Remove any leftover fixture resources
+        if: always()
+        run: |
+          docker ps -aq --filter "name=assetflow-lt-" | xargs -r docker rm -f
+          docker volume ls -q --filter "name=assetflow-lt-" | xargs -r docker volume rm
+          docker network ls -q --filter "name=assetflow-lt-" | xargs -r docker network rm
+
+  # Deploys the REAL capacity stack with freshly generated run settings: real
+  # images, real migrations, real seeding, real application health. This is the
+  # job that answers "does the bootstrap actually stand the application up",
+  # which shellcheck and an evidence-server test cannot answer.
+  capacity-stack:
+    name: Capacity stack (real compose, migrations, seeding, HTTPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install validators
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Lint the capacity-run scripts
+        run: |
+          for f in infra/capacity-run/*.sh infra/scripts/export-evidence.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Generate isolated run configuration
+        run: |
+          set -euo pipefail
+          RUN_DIR="$RUNNER_TEMP/capacity"
+          mkdir -p "$RUN_DIR"
+          infra/capacity-run/generate-trust.sh "$RUN_DIR/trust"
+          infra/capacity-run/generate-app-config.sh "$RUN_DIR/app.env" cap-ci-0001
+          # Compose reads infra/.env. Values are generated per run here; nothing
+          # is shared with any deployment.
+          cp "$RUN_DIR/app.env" infra/.env
+          echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+          sha256sum "$RUN_DIR/trust/tls.crt" | awk '{print "CA_SHA="$1}' >> "$GITHUB_ENV"
+
+      - name: Confirm compose accepts the generated environment
+        run: |
+          set -euo pipefail
+          docker compose --env-file infra/.env -f infra/docker-compose.yml config >/dev/null
+          echo "compose config accepted the generated .env"
+
+      - name: Build images
+        run: |
+          set -euo pipefail
+          # There is no `web` service: the frontend is built into the nginx image.
+          docker compose --env-file infra/.env -f infra/docker-compose.yml build api migrate nginx
+
+      - name: Migrate through the shared gate
+        run: |
+          set -euo pipefail
+          # The SAME gate the EC2 bootstrap runs. `up -d migrate` returns before
+          # the migration finishes, so this path requires the container to exit 0
+          # and then verifies the database's own schema state.
+          RUN_ID=cap-ci-0001 bash infra/capacity-run/migrate-db.sh             --evidence-dir "$RUNNER_TEMP/migrate-evidence" --timeout 600
+          docker compose --env-file infra/.env -f infra/docker-compose.yml logs --tail=20 migrate || true
+
+      - name: Prove migration is a gate, not a fire-and-forget start
+        run: |
+          set -euo pipefail
+          # Two failure modes the old `up -d migrate` could not refuse. Both run
+          # against a throwaway database name, so the real one is untouched.
+          #
+          # A) a SLOW migration: the gate must wait for it, not return early.
+          # B) a FAILING migration: the gate must exit non-zero, so seeding
+          #    cannot start against a half-migrated schema.
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+
+          echo "=== A) slow migration must be waited for ==="
+          start=$(date +%s)
+          $C run --rm --no-deps -e MIGRATE_TEST_DELAY=6 migrate             sh -c 'sleep 6; echo slow-migration-finished' > /tmp/slow.log 2>&1
+          elapsed=$(( $(date +%s) - start ))
+          cat /tmp/slow.log
+          test "$elapsed" -ge 6 || { echo "::error::foreground run returned before the work finished"; exit 1; }
+          grep -q slow-migration-finished /tmp/slow.log || { echo "::error::output was lost"; exit 1; }
+          echo "waited ${elapsed}s for a 6s migration: correct"
+
+          echo "=== B) failing migration must fail the gate ==="
+          rc=0
+          $C run --rm --no-deps migrate sh -c 'echo "migration blew up"; exit 9'             > /tmp/fail.log 2>&1 || rc=$?
+          cat /tmp/fail.log
+          test "$rc" -eq 9 || { echo "::error::a failing migration did not propagate its exit status (got $rc)"; exit 1; }
+          echo "failing migration surfaced as exit $rc: correct"
+
+      - name: Confirm the seeding toolchain exists before using it
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          # Assert the premise of the fix instead of discovering it later: the
+          # migrate stage must still have ts-node and the seed source, and the
+          # pruned runtime image must NOT.
+          $C run --rm --no-deps migrate npx ts-node --version
+          $C run --rm --no-deps migrate test -f prisma/seed-loadtest.ts
+          if $C run --rm --no-deps api test -f node_modules/.bin/ts-node; then
+            echo "::error::the api runtime image unexpectedly has ts-node; the premise changed"
+            exit 1
+          fi
+          echo "migrate has ts-node + seed source; api runtime does not"
+
+      - name: Seed 200 run-owned accounts in the image that has ts-node
+        run: |
+          set -euo pipefail
+          # The SAME helper the EC2 bootstrap runs. Two inline copies of this
+          # command used to drift: CI built the images, the bootstrap did not,
+          # so a real run pulled a prebuilt migrate image and seeded against a
+          # schema that did not match the code.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          test -n "$LT_PW" || { echo "::error::LOADTEST_PASSWORD missing from .env"; exit 1; }
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh             --run-id cap-ci-0001 --users 200 --evidence-dir "$RUNNER_TEMP/fixtures"
+
+      - name: Prove 200 usable accounts exist by querying the database
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          count=$($C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-cap-ci-0001-%@assetflow.test'" | tr -d '[:space:]')
+          echo "seeded accounts: $count"
+          test "$count" -ge 200
+          # Usable, not merely present: the login route must accept one of them.
+          $C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "SELECT count(*) FROM \"User\" WHERE email LIKE 'loadtest-cap-ci-0001-%' AND (\"passwordHash\" IS NULL OR \"passwordHash\" = '')" > /tmp/nohash
+          test "$(tr -d '[:space:]' < /tmp/nohash)" = "0"
+
+
+      - name: Refuse a mutable tag or a partial digest pin
+        run: |
+          set -euo pipefail
+          # The guest must pull immutable digests, never a tag: a mutable tag is
+          # how an earlier attempt ran code from a revision that had not been
+          # tested. These guards are the only thing standing between a typo and
+          # a silent substitution, so they are exercised directly.
+          REPO="ghcr.io/assetflow-capacity-test"
+          A64="$REPO/api@sha256:$(printf 'a%.0s' $(seq 64))"
+          B64="$REPO/web@sha256:$(printf 'b%.0s' $(seq 64))"
+
+          # 1. A tag, however it is spelled, is refused.
+          if FIXTURE_API_DIGEST="$REPO/api:latest" \
+             FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$B64" \
+             bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin1 --quiet \
+             2>/tmp/pin1.err; then
+            echo "::error title=pin::a mutable tag was accepted"; exit 1
+          fi
+          grep -q 'immutable image@sha256: digest' /tmp/pin1.err
+          echo "mutable tag refused: $(head -1 /tmp/pin1.err)"
+
+          # 2. A partial pin is refused rather than falling back to a build.
+          if FIXTURE_API_DIGEST="$A64" \
+             bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin2 --quiet \
+             2>/tmp/pin2.err; then
+            echo "::error title=pin::a partial pin was accepted"; exit 1
+          fi
+          grep -q 'partial pin' /tmp/pin2.err
+          echo "partial pin refused: $(head -1 /tmp/pin2.err)"
+
+          # 3. A well-formed pin pulls and never builds. The digests are
+          #    deliberately nonexistent, so the pull must fail - the property
+          #    under test is that it fails AT THE PULL, having attempted no build.
+          #    Not --quiet: the "pulling" marker is normal progress, and
+          #    suppressing it would hide the very thing being asserted.
+          set +e
+          FIXTURE_API_DIGEST="$A64" FIXTURE_MIGRATE_DIGEST="$A64" FIXTURE_WEB_DIGEST="$A64" \
+            bash infra/capacity-run/migrate-db.sh --evidence-dir /tmp/pin3 \
+            >/tmp/pin3.out 2>&1
+          set -e
+          grep -q 'pulling the pinned images by digest' /tmp/pin3.out \
+            || { echo "::error title=pin::pinned mode did not reach the pull"; cat /tmp/pin3.out; exit 1; }
+          grep -q 'cannot pull' /tmp/pin3.out \
+            || { echo "::error title=pin::pinned mode did not report the failed pull"; cat /tmp/pin3.out; exit 1; }
+          if grep -q 'building images' /tmp/pin3.out; then
+            echo "::error title=pin::pinned mode fell back to a build"; exit 1
+          fi
+          test ! -s /tmp/pin3/build.log \
+            || { echo "::error title=pin::pinned mode wrote a build log"; exit 1; }
+          echo "pinned mode pulls and never builds"
+
+      - name: Verify the committed digests are anonymously pullable
+        run: |
+          set -euo pipefail
+          # The launch pins these exact digests. If they are not pullable without
+          # credentials, the guest would fall back to building - the 58-minute
+          # compile that consumed the measurement instance's credits. Prove the
+          # property here, with the credential removed, not on the instance.
+          . infra/capacity-run/image-digests.env
+          missing=0
+          for value in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            case "$value" in
+              *@sha256:*) ;;
+              *) echo "::error title=digest::not a repository@sha256: reference: $value"; missing=1 ;;
+            esac
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+          for value in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            echo "anonymous pull of $value"
+            docker pull "$value" >/dev/null || {
+              echo "::error title=anonymous pull::$value is not publicly pullable"
+              exit 1; }
+            got=$(docker inspect --format '{{index .RepoDigests 0}}' "$value" | sed 's/.*@//')
+            want=${value##*@}
+            [ "$got" = "$want" ] || {
+              echo "::error title=digest::$value resolved to $got"; exit 1; }
+          done
+          echo "all three committed digests pull anonymously and resolve to themselves"
+
+      - name: Rehearse migrations and seeding against the committed pinned images
+        run: |
+          set -euo pipefail
+          # The pins are only meaningful if the deployment path actually runs
+          # against them. The steps above build images locally, which proves the
+          # mechanics but not the digests that will be pulled on the instance.
+          # This step uses the real pins and nothing else.
+          . infra/capacity-run/image-digests.env
+          export FIXTURE_API_DIGEST FIXTURE_MIGRATE_DIGEST FIXTURE_WEB_DIGEST
+
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+
+          E="$RUNNER_TEMP/pin-rehearsal"
+          rm -rf "$E"; mkdir -p "$E"
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+
+          # The mode marker is printed to stdout, not to pull.log: pull.log holds
+          # only docker pull's own output. Capture stdout and check it there.
+          RUN_ID=cap-ci-pinned bash infra/capacity-run/migrate-db.sh \
+            --evidence-dir "$E" --timeout 900 > "$E/run.out" 2>&1 || {
+              echo "::error title=rehearsal::pinned migration did not succeed"
+              tail -30 "$E/run.out"; exit 1; }
+
+          grep -q 'pulling the pinned images by digest' "$E/run.out" || {
+            echo "::error title=rehearsal::did not pull by digest"; tail -20 "$E/run.out"; exit 1; }
+          test -s "$E/pull.log" || { echo "::error title=rehearsal::no pull log"; exit 1; }
+          for f in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            grep -q "pull $f" "$E/pull.log" || {
+              echo "::error title=rehearsal::$f was not pulled"; exit 1; }
+          done
+          if [ -s "$E/build.log" ]; then
+            echo "::error title=rehearsal::an image was built instead of pulled"; exit 1
+          fi
+          echo "pinned images pulled by digest and used for the migration"
+
+          # The schema the pinned migration image produced is the schema the
+          # seeded fixtures are read from, so assert it before seeding.
+          $C exec -T postgres psql -U assetflow -d assetflow -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'" \
+            > "$E/tables.txt"
+          TABLES=$(tr -d '[:space:]' < "$E/tables.txt")
+          case "$TABLES" in ''|*[!0-9]*) TABLES=0 ;; esac
+          if [ "$TABLES" -lt 5 ]; then
+            echo "::error title=rehearsal::pinned migration produced $TABLES tables"; exit 1
+          fi
+          echo "pinned migration produced $TABLES tables"
+
+          # Seed through the SAME helper the instance bootstrap runs. An earlier
+          # inline copy drifted from it, so this rehearsal must not carry its own.
+          # The helper seeds via the migrate service, which has the toolchain; the
+          # api image runs unprivileged and cannot write its npm cache.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          test -n "$LT_PW" || { echo "::error title=rehearsal::LOADTEST_PASSWORD missing"; exit 1; }
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
+            --run-id cap-ci-pinned --users 4 --evidence-dir "$E/fixtures" \
+            > "$E/seed.out" 2>&1 || {
+              echo "::error title=rehearsal::seeding failed against the pinned images"
+              tail -20 "$E/seed.out"; exit 1; }
+          echo "seeding succeeded against the pinned images"
+      - name: Record the pinned rehearsal in the job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/pin-rehearsal"
+          {
+            echo "## Pinned-image rehearsal"
+            if [ -s "$E/pull.log" ] && [ ! -s "$E/build.log" ]; then
+              echo "- pulled by digest, nothing built"
+            else
+              echo "- NOT confirmed (see the rehearsal step log)"
+            fi
+            [ -s "$E/tables.txt" ] && echo "- tables: $(tr -d '[:space:]' < "$E/tables.txt")"
+            [ -s "$E/digests.txt" ] && echo '- resolved digests recorded'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Serve bootstrap status before the application is up
+        run: |
+          set -euo pipefail
+          # The whole point of the status endpoint is that it answers while the
+          # application is still failing or absent. The API is not started yet in
+          # this job, so a pass here proves the endpoint does not depend on it.
+          R="$RUNNER_TEMP/status-run"
+          mkdir -p "$R/evidence"
+          echo "fixtures" > "$R/evidence/stage-current"
+          printf 'failed: rc=137 line=88 stage=fixtures' > "$R/evidence/bootstrap-status"
+          echo 137 > "$R/evidence/seed-exit"
+          echo 61 > "$R/evidence/seed-elapsed"
+          seq 1 7 | sed 's/^/created loadtest-cap-ci-0001-00/; s/$/@assetflow.test/' > "$R/evidence/seed.log"
+          echo "postgresql://assetflow:SuperSecret123@postgres:5432/assetflow" >> "$R/evidence/seed.log"
+          TOKEN="ci-status-token-$$"
+
+          python3 "$GITHUB_WORKSPACE/infra/capacity-run/bootstrap-status.py" \
+            --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+            --run-dir "$R" --port 9444 --token "$TOKEN" >/tmp/status.log 2>&1 &
+          echo $! > /tmp/status.pid
+          for i in $(seq 1 30); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 \
+              -H "Authorization: Bearer $TOKEN" \
+              https://capacity-run.test:9444/status > /tmp/status.json && break
+            [ "$i" -eq 30 ] && { cat /tmp/status.log; exit 1; }
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          s = json.load(open('/tmp/status.json'))
+          assert s['stage'] == 'fixtures', s
+          assert s['application_ready'] is False, 'readiness must never be implied'
+          print('status: stage=%s application_ready=%s' % (s['stage'], s['application_ready']))
+          PY
+
+          # Credentials are rejected without the token, and a wrong one too.
+          for hdr in "" "Authorization: Bearer wrong-token"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 ${hdr:+-H "$hdr"} \
+              https://capacity-run.test:9444/status || echo 000)
+            test "$code" = "401" || { echo "::error title=auth::expected 401, got $code"; exit 1; }
+          done
+          echo "unauthenticated and wrong-token requests were both refused"
+
+          # A failure snapshot is retained and carries no secret.
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9444:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9444/status/failure > /tmp/failure.json
+          python3 - <<'PY'
+          import json
+          body = open('/tmp/failure.json').read()
+          assert 'SuperSecret123' not in body, 'a password leaked into the failure snapshot'
+          f = json.loads(body)
+          assert f['seed_log_tail'], 'the seed log tail was not retained'
+          print('failure snapshot retained %d tail line(s), no secret present' % len(f['seed_log_tail']))
+          PY
+
+          # A seed that fails must leave a readable exit status, not a bare error.
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9444:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9444/status/seed > /tmp/seed.json
+          python3 - <<'PY'
+          import json
+          s = json.load(open('/tmp/seed.json'))
+          assert s['exit_code'] == 137, s
+          assert s['state'] == 'failed', s
+          assert s['elapsed_seconds'] == '61', s
+          print('seed: exit=%s elapsed=%ss' % (s['exit_code'], s['elapsed_seconds']))
+          PY
+
+          # The run directory holds generated credentials and must not be served.
+          for path in /seed.log /evidence/seed.log /../evidence/seed.log; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9444:127.0.0.1 -H "Authorization: Bearer $TOKEN" \
+              "https://capacity-run.test:9444$path" || echo 000)
+            test "$code" = "404" || { echo "::error::path $path returned $code, not 404"; exit 1; }
+          done
+          echo "the run directory is not served"
+
+          kill "$(cat /tmp/status.pid)" 2>/dev/null || true
+
+      - name: A long seed exposes progress and a failed seed retains its exit status
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          R="$RUNNER_TEMP/seeddiag"
+          mkdir -p "$R/evidence"
+
+          # Run a genuinely long seed (300 accounts, bcrypt cost 12) in the
+          # background and poll the endpoint WHILE it is still running, which is
+          # the case that failed on real hardware.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          LOADTEST_PASSWORD="$LT_PW" bash infra/capacity-run/seed-fixtures.sh \
+            --run-id cap-ci-slow-0001 --users 500 --evidence-dir "$R/evidence" \
+            >/tmp/slowseed.log 2>&1 &
+          SEED_PID=$!
+
+          TOKEN="ci-seed-token-$$"
+          python3 "$GITHUB_WORKSPACE/infra/capacity-run/bootstrap-status.py" \
+            --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+            --run-dir "$R" --port 9445 --token "$TOKEN" >/tmp/seedstatus.log 2>&1 &
+          STATUS_PID=$!
+          trap 'kill $STATUS_PID 2>/dev/null || true' EXIT
+          # Wait only for the listener, not for a fixed sleep: a fixed sleep let
+          # the seed finish first, and the test then proved nothing.
+          for i in $(seq 1 30); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt"               --resolve capacity-run.test:9445:127.0.0.1               -H "Authorization: Bearer $TOKEN"               https://capacity-run.test:9445/status >/dev/null 2>&1 && break
+            [ "$i" -eq 30 ] && { cat /tmp/seedstatus.log; exit 1; }
+            sleep 1
+          done
+
+          observed_running=0
+          for i in $(seq 1 40); do
+            curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:9445:127.0.0.1 \
+              -H "Authorization: Bearer $TOKEN" \
+              https://capacity-run.test:9445/status/seed > /tmp/s.json || { sleep 2; continue; }
+            state=$(python3 -c "import json;print(json.load(open('/tmp/s.json'))['state'])")
+            echo "poll $i: seed state=$state"
+            # The seed process still running while the endpoint already answers
+            # is exactly the property the console could not provide.
+            if kill -0 "$SEED_PID" 2>/dev/null; then
+              observed_running=1
+              break
+            fi
+            sleep 2
+          done
+          test "$observed_running" = "1" || {
+            echo "::error title=progress::the seed finished before any poll; the test proves nothing"
+            cat /tmp/slowseed.log; exit 1; }
+          echo "the endpoint reported seed state while the seed was still running"
+
+          wait "$SEED_PID" && SEED_RC=0 || SEED_RC=$?
+          echo "slow seed finished with rc=$SEED_RC"
+
+          # Now the failure path: a seed run against a database that cannot be
+          # reached must leave an exit status and a redacted error behind.
+          LT_PW="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          # Stop PostgreSQL so the seed hits a genuinely unreachable database,
+          # which is the failure that has to leave a readable record. Restart it
+          # afterwards so later steps still have a working stack.
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          $C stop postgres >/dev/null
+          FAILED_SEED_RC=0
+          LOADTEST_PASSWORD="$LT_PW"             bash infra/capacity-run/seed-fixtures.sh               --run-id cap-ci-fail-0001 --users 5 --evidence-dir "$R/evidence"               >/tmp/failseed.log 2>&1 || FAILED_SEED_RC=$?
+          $C start postgres >/dev/null
+          test "$FAILED_SEED_RC" -ne 0 || {
+            echo "::error title=harness::the seed was expected to fail and did not"
+            cat /tmp/failseed.log; exit 1; }
+          echo "the seed failed as intended with rc=$FAILED_SEED_RC"
+          test -s "$R/evidence/seed-exit" || {
+            echo "::error title=exit::a failed seed left no exit status"; cat /tmp/failseed.log; exit 1; }
+          echo "failed seed recorded exit $(cat "$R/evidence/seed-exit")"
+          if grep -q 'SuperSecret123' /tmp/failseed.log; then
+            echo "::error title=redaction::the seed error leaked a password"; exit 1
+          fi
+
+          curl -sf --cacert "$RUN_DIR/trust/tls.crt" \
+            --resolve capacity-run.test:9445:127.0.0.1 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://capacity-run.test:9445/status/failure > /tmp/f.json
+          python3 - <<'PY'
+          import json
+          f = json.load(open('/tmp/f.json'))
+          body = json.dumps(f)
+          assert 'SuperSecret123' not in body, 'password leaked into the failure snapshot'
+          print('failure snapshot present and redacted')
+          PY
+
+      - name: Start the application and probe the real readiness route
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+
+          # The application's own nginx serves TLS on 443 from ./certs, which is
+          # where certbot writes on a real host. That directory does not exist in
+          # CI, so nginx would fail to start and the 8080 upstream would never
+          # listen. Supply the run certificate instead: it is the certificate this
+          # run actually trusts, and the single-port edge in front of it terminates
+          # TLS with the same file.
+          mkdir -p infra/certs/live/assetflow
+          cp "$RUN_DIR/trust/tls.crt"   infra/certs/live/assetflow/fullchain.pem
+          cp "$RUN_DIR/trust/tls.key"   infra/certs/live/assetflow/privkey.pem
+
+          $C up -d api nginx
+          # nginx is the upstream the edge proxies to; if it is not up, the HTTPS
+          # path cannot work, so say that here rather than as a proxy timeout.
+          if [ "$($C ps --status running --services | grep -c '^nginx$')" -ne 1 ]; then
+            echo "::error title=app edge::the application nginx is not running"
+            $C logs --tail=60 nginx
+            exit 1
+          fi
+          for i in $(seq 1 60); do
+            if $C exec -T api node -e "fetch('http://127.0.0.1:4000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              echo "API ready on 4000 /api/health/ready after ${i} attempt(s)"
+              break
+            fi
+            [ "$i" -eq 60 ] && { $C logs --tail=80 api; exit 1; }
+            sleep 3
+          done
+
+      - name: Exercise the HTTPS application path from the client side
+        run: |
+          set -euo pipefail
+          # Terminate TLS with the run certificate and route /api like the
+          # single-port edge does, then call the application through it.
+          # A CI-local copy of the edge config: same routes as production, but on
+          # a free port and pointed at the compose-published ports.
+          mkdir -p "$RUNNER_TEMP/edge"
+          sed -e 's|listen 8443 ssl;|listen 8543 ssl;|' \
+              infra/capacity-run/edge/edge.conf > "$RUNNER_TEMP/edge/edge.conf"
+          # The shipped nginx.conf already includes /etc/capacity-edge/edge.conf,
+          # which is where both files are mounted in the container.
+          cp infra/capacity-run/edge/nginx.conf "$RUNNER_TEMP/edge/nginx.conf"
+
+          # Validate first. `nginx -t` in the same image reports the exact config
+          # error on stdout, which "container exited" does not.
+          echo "--- nginx config test ---"
+          docker run --rm --entrypoint nginx \
+            -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
+            -v "$RUN_DIR/trust:/etc/capacity-run:ro" \
+            nginx:1.27-alpine \
+            -t -c /etc/capacity-edge/nginx.conf 2>&1 | tee /tmp/nginx-t.log || {
+              echo "::error title=nginx config::the edge config is invalid"; exit 1; }
+
+          # --entrypoint bypasses the image's default entrypoint, which rewrites
+          # configuration and starts its own nginx on :80; that ignores -c, fails
+          # to bind and the container exits.
+          docker run -d --name cap-proxy --network host --entrypoint nginx \
+            -v "$RUNNER_TEMP/edge:/etc/capacity-edge:ro" \
+            -v "$RUN_DIR/trust:/etc/capacity-run:ro" \
+            nginx:1.27-alpine \
+            -c /etc/capacity-edge/nginx.conf -g 'daemon off;' >/dev/null
+
+          # Fail early and loudly if the proxy exited instead of waiting 60s.
+          sleep 3
+          if [ "$(docker inspect -f '{{.State.Running}}' cap-proxy)" != "true" ]; then
+            echo "::error title=proxy::the edge container exited"
+            docker logs cap-proxy
+            exit 1
+          fi
+
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              --cacert "$RUN_DIR/trust/tls.crt" \
+              --resolve capacity-run.test:8543:127.0.0.1 \
+              https://capacity-run.test:8543/api/health/ready || echo 0)
+            [ "$code" = "200" ] && break
+            [ "$i" -eq 30 ] && { echo '::error title=edge::the proxy never returned 200';
+              docker logs cap-proxy; ss -ltnp || true; exit 1; }
+            sleep 2
+          done
+          echo "HTTPS application path returned $code"
+
+      - name: Sign in as a generated fixture account through the real API
+        run: |
+          set -euo pipefail
+          C="docker compose --env-file infra/.env -f infra/docker-compose.yml"
+          # A row count does not show an account can log in: the password, the
+          # hash format and the login route all have to agree. This is the check
+          # that a 200-account fixture is actually usable.
+          email="loadtest-cap-ci-0001-001@assetflow.test"
+          pw="$(grep '^LOADTEST_PASSWORD=' infra/.env | cut -d= -f2-)"
+          body="$(printf '{"email":"%s","password":"%s"}' "$email" "$pw")"
+          for i in $(seq 1 20); do
+            code="$($C exec -T api node -e "
+              fetch('http://127.0.0.1:4000/api/auth/login', {
+                method:'POST', headers:{'content-type':'application/json'},
+                body: process.argv[1]
+              }).then(r=>{process.stdout.write(String(r.status));process.exit(0)})
+                .catch(()=>{process.stdout.write('0');process.exit(0)})
+            " "$body")"
+            if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+              echo "fixture account signed in through the API (HTTP $code)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error title=fixture login::no fixture account could sign in (last HTTP $code)"
+          $C logs --tail=60 api
+          exit 1
+
+      - name: Readiness and checksum-verified export as a client
+        run: |
+          set -o pipefail
+          SNAP="$RUNNER_TEMP/capacity/evidence"
+          mkdir -p "$SNAP"
+          echo ready > "$SNAP/bootstrap-status"
+          echo "$GITHUB_SHA" > "$SNAP/deployed-commit"
+          echo $(( $(date +%s) + 3600 )) > "$SNAP/deadline-epoch"
+          echo active > "$SNAP/deadline-timer-state"
+          echo "ok remaining=3600s" > "$SNAP/deadline-status"
+          echo healthy > "$SNAP/app-health"
+          echo 200 > "$SNAP/fixture-users"
+          echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"mem_used_pct\":21.0,\"errors\":0}" > "$SNAP/host-metrics.jsonl"
+          tar -czf "$SNAP/snapshot-latest.tar.gz" -C "$SNAP" \
+            bootstrap-status deployed-commit deadline-epoch deadline-timer-state \
+            deadline-status app-health fixture-users host-metrics.jsonl
+
+          EVIDENCE_DIR="$SNAP" \
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+            python3 infra/scripts/evidence_server.py \
+              --cert "$RUN_DIR/trust/tls.crt" --key "$RUN_DIR/trust/tls.key" \
+              --port 9443 --host 127.0.0.1 &
+          sleep 2
+
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+          EVIDENCE_CA="$RUN_DIR/trust/tls.crt" \
+          CAPACITY_HOSTNAME=capacity-run.test \
+          EXPECTED_COMMIT="$GITHUB_SHA" \
+            infra/capacity-run/readiness-check.sh 127.0.0.1 9443
+
+          EVIDENCE_TOKEN="$(cat "$RUN_DIR/trust/evidence.token")" \
+          EVIDENCE_CA="$RUN_DIR/trust/tls.crt" \
+          EXPORT_RESOLVE="capacity-run.test:9443:127.0.0.1" \
+            infra/scripts/export-evidence.sh \
+              https://capacity-run.test:9443 snapshot-latest.tar.gz \
+              "$(sha256sum "$SNAP/snapshot-latest.tar.gz" | awk '{print $1}')" \
+              "$RUNNER_TEMP/exported.tar.gz"
+          echo "export verified by checksum"
+
+      - name: Confirm the live deadline timer re-activates
+        run: |
+          set -euo pipefail
+          # Real systemd activation repeated on a short timer, with a harmless
+          # shutdown stub substituted for /sbin/shutdown.
+          infra/tests/integration/deadline-activation.sh "$PWD"
+
+      - name: Publish the outcome
+        if: always()
+        run: |
+          {
+            echo '## Capacity stack'
+            echo
+            echo 'Real compose build, migrations, seeding, application readiness and'
+            echo 'the HTTPS client path, on GitHub-hosted CI hardware.'
+            echo
+            echo 'NOT covered here: a 1 GiB t3.micro, real EC2 provisioning, or the'
+            echo 'reboot survival of the deadline timer.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f cap-proxy >/dev/null 2>&1 || true
+          docker compose --env-file infra/.env -f infra/docker-compose.yml down -v >/dev/null 2>&1 || true
+          rm -f infra/.env
+          rm -rf infra/certs
+
+  edge-live:
+    name: Early edge and handoff (real nginx, real TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Lint the scripts this job runs
+        run: |
+          for f in infra/capacity-run/early-edge.sh \
+                   infra/capacity-run/hold-runner.sh \
+                   infra/tests/integration/edge-nginx-live.sh \
+                   infra/tests/integration/guest-export-live.sh \
+                   infra/tests/integration/stage4-hold.sh \
+                   infra/tests/integration/watchdog-supervisor.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Prove the early edge for real - nginx container, real TLS, real handoff
+        # The sixth attempt died during bootstrap with the guest unreachable from
+        # outside, and nothing could retrieve why. This runs the REAL edge the
+        # way the guest runs it: the nginx container on 8443, the real status
+        # service behind it, wrong-token/wrong-CA/wrong-hostname refusals, a held
+        # stage retained off-host across a kill, then the REAL handoff to full
+        # routing on the same listener, and the supervisor's own contract checks
+        # against the document served through the edge.
+        run: |
+          set -euo pipefail
+          # Job logs are admin-only; a bare exit code carries no diagnosis. Echo
+          # the failing lines back as workflow-command annotations, which the
+          # check-runs API does expose.
+          set +e
+          bash infra/tests/integration/early-status-live.sh 2>&1 | tee /tmp/edge-live.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # GitHub keeps only ~10 annotations per check run, so echo the
+            # failure lines themselves, not a tail that drowns them in PASSes.
+            grep -E '^(FAIL|fatal|edge:|Error|---- )' /tmp/edge-live.log | head -10 |
+              sed 's/%/%25/g; s/\r/%0D/g' | while IFS= read -r line; do
+                printf '::error::%s\n' "$line"
+              done
+            exit "$rc"
+          fi
+
+      - name: Prove the Stage 4 approval wait is bounded and fail-closed
+        # The wait must never outlive the instance, and every mismatched,
+        # malformed, foreign-run, foreign-sha or re-attempted approval must
+        # fail closed. Only the exact "<this run>:<this launch sha>" value on
+        # attempt 1 approves.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-hold.sh
+
+      - name: Prove the Stage 4 load orchestration end to end
+        # The real stage4-load.sh in a stubbed world: every preflight refusal,
+        # the pacing-plan ceiling check, the ramp with threshold verdicts, the
+        # abort ceiling, a k6 crash, the early deadline stop, and the post-load
+        # export both succeeding and failing.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-load-orchestration.sh
+
+      - name: Prove the guest-evidence export path for real
+        # A checksum over runner-side snapshots is local integrity only. This
+        # runs the REAL publisher, the REAL status service and the REAL
+        # evidence server behind the REAL nginx edge, and proves the digest is
+        # supplied independently over the authenticated status channel, the
+        # download is verified against it through the edge, a tampered digest
+        # is refused (exit 75, no bytes kept), and a missing token never
+        # fetches. No stub replaces any of the four real programs.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/guest-export-live.sh
+
+      - name: Prove the supervisor and the real watchdog work together
+        # The seventh attempt died 44 seconds after launch because the
+        # supervisor invoked the watchdog with flags it has never parsed and
+        # waited for a file it has never written; both unit tests passed
+        # because each met only a stub. This runs BOTH REAL SCRIPTS in one
+        # process tree - only the AWS control plane (a recording fake) and the
+        # guest's public HTTPS port are simulated - and proves the instance id
+        # and the 14,400s lifetime reach the watchdog, the heartbeat advances,
+        # a wrong tag is refused, an AWS read failure is not fake liveness,
+        # death/stall/malformed/future heartbeats each fail with the reason,
+        # and a deadline termination targets exactly the verified instance.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/watchdog-supervisor.sh
+
+  orchestration:
+    name: Capacity orchestration (offline, fake AWS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq shellcheck
+
+      - name: Lint the new orchestration scripts
+        run: |
+          for f in infra/capacity-run/aws-context.sh \
+                   infra/capacity-run/launch-once.sh \
+                   infra/capacity-run/verify-instance.sh \
+                   infra/capacity-run/ingress.sh \
+                   infra/capacity-run/supervise-run.sh \
+                   infra/capacity-run/early-edge.sh \
+                   infra/capacity-run/stage4-approval.sh \
+                   infra/capacity-run/stage4-load.sh \
+                   infra/capacity-run/hold-runner.sh; do
+            shellcheck --severity=warning --external-sources "$f"
+          done
+
+      - name: Run the orchestration tests with no AWS credentials present
+        env:
+          # Explicitly empty: every test must pass with no ambient credentials,
+          # which is the property the previous workflow lacked.
+          AWS_ACCESS_KEY_ID: ''
+          AWS_SECRET_ACCESS_KEY: ''
+          AWS_PROFILE: ''
+          AWS_DEFAULT_PROFILE: ''
+          AWS_SHARED_CREDENTIALS_FILE: ''
+        run: |
+          set -euo pipefail
+          python3 -m unittest infra.tests.test_capacity_orchestration -v
+          # The approval gate is tested by running its real script with every
+          # input combination that must SKIP, because a gate that opens on the
+          # wrong event would launch an instance on an ordinary push.
+          python3 -m unittest infra.tests.test_capacity_gate -v
+          # A launch once aborted before the instance existed because the ingress
+          # step depended on ec2:DescribeSecurityGroupRules, which this identity
+          # is not granted. These tests pin the granted-only design.
+          python3 -m unittest infra.tests.test_ingress_helpers -v
+          # A launch was spent on a payload that rendered to 17991 bytes against a
+          # 16384 limit. These pin the TLS shape that keeps it inside the budget.
+          python3 -m unittest infra.tests.test_payload_budget -v
+          # Runs the REAL supervisor against real TLS and a real HTTPS app. A
+          # launch was lost because it waited for a diagnostic field that is
+          # hard-coded false, then reported success anyway.
+          python3 -m unittest infra.tests.test_supervisor_contract -v
+          # The sixth attempt died during bootstrap with the guest unreachable
+          # from outside, so the failure left no retrievable cause. These pin the
+          # ordering fix: /status externally reachable BEFORE deploy, migration,
+          # seeding and app health, and reachable only after packages.
+          python3 -m unittest infra.tests.test_bootstrap_ordering -v
+
+      - name: Render the real payload with the same TLS shape the launcher uses
+        run: |
+          set -euo pipefail
+          # The payload has a hard 16 KiB limit and the launcher refuses to start
+          # an instance when it is exceeded. An ECDSA pair was chosen precisely so
+          # it fits. Render here, with full-length generated secrets, so a payload
+          # that will not fit fails in CI instead of on the launch runner after
+          # ingress has already been opened.
+          W="$RUNNER_TEMP/udcheck"
+          rm -rf "$W"; mkdir -p "$W"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -nodes -days 1 -keyout "$W/tls.key" -out "$W/tls.crt" \
+            -subj "/CN=capacity-run.test" \
+            -addext "subjectAltName=DNS:capacity-run.test" >/dev/null 2>&1
+
+          gen() { openssl rand -base64 36 | tr -d '\n'; }
+          set -a
+          . infra/capacity-run/image-digests.env
+          LAUNCH_EPOCH=$(date +%s)
+          EXPECTED_COMMIT=$(git rev-parse HEAD)
+          RUN_ID=cap-ci-render
+          CAPACITY_HOSTNAME=capacity-run.test
+          EVIDENCE_TOKEN=$(openssl rand -hex 32)
+          TLS_CRT_B64=$(base64 -w0 < "$W/tls.crt")
+          TLS_KEY_B64=$(base64 -w0 < "$W/tls.key")
+          POSTGRES_PASSWORD=$(gen); REDIS_PASSWORD=$(gen)
+          GRAFANA_ADMIN_PASSWORD=$(gen); JWT_SECRET=$(openssl rand -hex 32)
+          LOADTEST_PASSWORD=$(gen)
+          set +a
+
+          bash infra/capacity-run/render-user-data.sh > "$W/ud.sh"
+          bytes=$(wc -c < "$W/ud.sh")
+          echo "rendered payload: $bytes bytes (limit 16384)"
+          head -1 "$W/ud.sh" | grep -qx '#!/bin/bash' \
+            || { echo "::error title=payload::not raw shell"; exit 1; }
+          # The real digest pins must be carried by the committed file, not the
+          # user-data block, which is what keeps the payload inside the limit.
+          for d in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            grep -q "${d##*@}" infra/capacity-run/image-digests.env \
+              || { echo "::error title=payload::pin missing"; exit 1; }
+            if grep -q "${d##*@}" "$W/ud.sh"; then
+              echo "::error title=payload::a 64-char digest is inlined in user-data: $d"
+              exit 1
+            fi
+          done
+          echo "pins are carried by image-digests.env, not by the payload"
+
+      - name: Confirm the launcher generates an ECDSA key that fits
+        run: |
+          set -euo pipefail
+          # Guards against a future edit reintroducing RSA into the payload.
+          grep -q 'prime256v1' .github/workflows/capacity-run.yml || {
+            echo "::error title=tls::the launcher no longer uses ECDSA P-256"; exit 1; }
+          echo "launcher uses ECDSA P-256"
+
+      - name: Prove the launcher never falls back to a default profile
+        run: |
+          set -euo pipefail
+          # With no credentials configured at all, every AWS call must still be
+          # spelled with --profile, so it fails loudly rather than silently
+          # using an ambient default.
+          grep -n 'cap_aws() {' -A2 infra/capacity-run/aws-context.sh
+          if grep -nE '^\s*aws\s+ec2' .github/workflows/capacity-run.yml; then
+            echo "::error title=profile::a bare aws call bypasses the profile"
+            exit 1
+          fi
+          echo "no bare aws calls in the launch workflow"
+
+      - name: Prove the rendered payload is raw executable shell
+        run: |
+          set -euo pipefail
+          base64 -w0 < README.md > "$RUNNER_TEMP/fake-crt" 2>/dev/null || true
+          export LAUNCH_EPOCH=1700000000 EXPECTED_COMMIT="$(git rev-parse HEAD)" \
+                 EVIDENCE_TOKEN="$(printf 't%.0s' $(seq 40))" \
+                 TLS_CRT_B64="$(printf 'crt' | base64 -w0)" \
+                 TLS_KEY_B64="$(printf 'key' | base64 -w0)" \
+                 RUN_ID=cap-20261109t0800z-a7f3 \
+                 POSTGRES_PASSWORD=p REDIS_PASSWORD=r GRAFANA_ADMIN_PASSWORD=g \
+                 JWT_SECRET="$(printf 'j%.0s' $(seq 40))" LOADTEST_PASSWORD=l
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          bash infra/capacity-run/render-user-data.sh > "$RUNNER_TEMP/ud.sh"
+          head -1 "$RUNNER_TEMP/ud.sh" | grep -qx '#!/bin/bash'
+          SIZE=$(wc -c < "$RUNNER_TEMP/ud.sh")
+          echo "raw payload: $SIZE bytes"
+          test "$SIZE" -le 16384
+          # What the CLI does: base64-encode those bytes. Decoding must give the
+          # script back, not base64 text.
+          python3 -c 'import base64,sys,pathlib; raw=pathlib.Path(sys.argv[1]).read_bytes(); assert base64.b64decode(base64.b64encode(raw))==raw, "roundtrip changed bytes"; assert raw.startswith(b"#!/bin/bash"), raw[:40]; print("CLI roundtrip returns executable shell")' "$RUNNER_TEMP/ud.sh"
+
+      - name: Prove the readback uses the APIs that report those fields
+        run: |
+          set -euo pipefail
+          grep -q 'describe-instance-credit-specifications' infra/capacity-run/verify-instance.sh
+          grep -q 'describe-instance-attribute' infra/capacity-run/verify-instance.sh
+          grep -q 'describe-volumes' infra/capacity-run/verify-instance.sh
+          # describe-instances does not return these two, so asserting them from
+          # it would fail on a correctly configured instance.
+          if grep -qE '\.(CreditSpecification|InstanceInitiatedShutdownBehavior)' \
+               infra/capacity-run/verify-instance.sh; then
+            echo "::error title=readback::a field describe-instances does not report is being asserted"
+            exit 1
+          fi
+          echo "readback uses the correct APIs"
+
+  stage4-approval-transport:
+    name: Stage 4 approval transport (real token, no AWS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The point of this job is the permission contract: does a workflow's own
+    # GITHUB_TOKEN, granted exactly what the launch workflow grants, really
+    # read the approvals issue? No AWS credentials are present and nothing is
+    # launched, so this is free and safe on every push.
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck jq
+
+      - name: Prove the approval transport is fail-closed, offline
+        # Every documented response shape - absent, matched, stale, denied,
+        # throttled, malformed, attempt != 1 - driven through the real
+        # stage4-approval.sh with a stubbed transport.
+        run: |
+          set -euo pipefail
+          bash infra/tests/integration/stage4-approval.sh
+
+      - name: Prove the real token can read the approvals issue
+        # The question the repository-variable mechanism got wrong, asked of
+        # the actual credential rather than assumed. Success here means three
+        # separate things, each checked: the API answered HTTP 200, the body
+        # parsed as a comment list, and the classifier reached a verdict.
+        # `malformed` is NOT accepted as proof - a response that cannot be
+        # parsed has not demonstrated that the token can read anything.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          API_REPO: ${{ github.repository }}
+          STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
+          STAGE4_APPROVER: ${{ vars.STAGE4_APPROVER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGE4_ISSUE:-}" ]; then
+            echo "::error title=transport::STAGE4_APPROVAL_ISSUE is unset, so the live read cannot run"
+            echo "### Transport: live read NOT EXERCISED (no approval issue configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ -z "${STAGE4_APPROVER:-}" ]; then
+            echo "::error title=transport::STAGE4_APPROVER is unset, so no author could be verified"
+            echo "### Transport: live read NOT EXERCISED (no approver configured)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # A run id and sha that cannot match anything: this proves the READ
+          # and can never mistake an old approval for a new one.
+          S="$(mktemp -d)"
+          RUN_ID=0 \
+          LAUNCH_SHA=0000000000000000000000000000000000000000 \
+          RUN_ATTEMPT=1 \
+          STATE_DIR="$S" \
+            bash infra/capacity-run/stage4-approval.sh --check 2>&1 || true
+
+          OUTCOME="$(cat "$S/stage4-approval-outcome" 2>/dev/null || echo none)"
+          STATUS="$(cat "$S/stage4-approval-status" 2>/dev/null || echo none)"
+          echo "transport read: HTTP $STATUS, outcome $OUTCOME"
+          printf -- '- transport read: HTTP %s, outcome %s\n' "$STATUS" "$OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error title=transport::the approvals endpoint answered HTTP $STATUS, not 200"
+            exit 1
+          fi
+          # HTTP 200 and a real verdict. `absent` is the expected outcome here,
+          # because nothing authorizes run 0.
+          case "$OUTCOME" in
+            absent|matched|stale|unauthorized|refused)
+              echo "the workflow token read the approvals issue (HTTP 200) and the body parsed: transport proven" ;;
+            malformed)
+              echo "::error title=transport::HTTP 200 but the response did not parse; this is not proof of a working read"
+              exit 1 ;;
+            denied|throttled|invalid|none)
+              echo "::error title=transport::the read failed ($OUTCOME, HTTP $STATUS)"
+              exit 1 ;;
+            *)
+              echo "::error title=transport::unexpected outcome '$OUTCOME'"
+              exit 1 ;;
+          esac
+
+
+  capacity-images:
+    name: Publish capacity-test images (digest-pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only from this branch, and only after the capacity stack has proven the
+    # same code path. Publishing on every push would produce images nobody
+    # measured.
+    needs: [capacity-stack]
+    # Runs on this branch and on pull requests from it. github.ref is
+    # refs/pull/N/merge for a pull_request event, so comparing it to a branch
+    # name silently skipped the job - and then there would be no digests to pin.
+    if: github.head_ref == 'arena/595baf83-assetflow' || github.ref == 'refs/heads/arena/595baf83-assetflow'
+    permissions:
+      contents: read
+      # Scoped to this job only. Nothing on EC2 receives a token: the guest pulls
+      # anonymously by digest.
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Refuse to publish anything from a secret-bearing context
+        run: |
+          set -euo pipefail
+          # A published layer is permanent. Check the build context BEFORE
+          # building: anything matching these would be readable by anyone who
+          # pulls the image.
+          offenders=$(git ls-files | grep -E '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|token|credentials|.*\.tar\.gz)$' \
+            | grep -vE '\.env\.example$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error title=secret in context::tracked files that must never be published:"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "no tracked env/key/token/archive files"
+
+      - name: Confirm .dockerignore excludes secrets
+        run: |
+          set -euo pipefail
+          for pattern in '.env' 'infra/certs' '**/*.log'; do
+            grep -qF "$pattern" .dockerignore || {
+              echo "::error title=dockerignore::$pattern is not excluded"; exit 1; }
+          done
+          echo ".dockerignore excludes env files, certs and logs"
+
+      - name: Log in to GitHub Container Registry
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build the three capacity images from this commit
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          echo "building from $SHA"
+          # Paths and targets taken from infra/docker-compose.yml so the published
+          # image is the same one compose would have built locally.
+          docker build \
+            --build-arg GIT_SHA="$SHA" \
+            -f infra/docker/Dockerfile.api --target runtime \
+            -t "capacity-api:$SHA" .
+          docker build \
+            --build-arg GIT_SHA="$SHA" \
+            -f infra/docker/Dockerfile.api --target migrate \
+            -t "capacity-migrate:$SHA" .
+          docker build \
+            --build-arg GIT_SHA="$SHA" \
+            -f infra/docker/Dockerfile.nginx \
+            -t "capacity-web:$SHA" .
+
+      - name: Prove no secret reached a layer
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          for img in capacity-api capacity-migrate capacity-web; do
+            echo "--- $img ---"
+            # A published layer is permanent, so scan the built filesystem for the
+            # shapes that would matter. A hit here aborts before publication,
+            # which is the point of building locally first.
+            hits=$(docker run --rm --entrypoint sh "$img:$SHA" -c \
+              'ls -a /app 2>/dev/null; find /app /usr/src -maxdepth 4 \( -name ".env" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null' \
+              | grep -E '(^|/)\.env$|\.pem$|\.key$' || true)
+            if [ -n "$hits" ]; then
+              echo "::error title=layer secret::$img contains credential-shaped files"
+              echo "$hits"
+              exit 1
+            fi
+          done
+          echo "no env/key files inside any image"
+
+      - name: Publish by digest and record it
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          : > "$RUNNER_TEMP/digests.txt"
+          for pair in "api:capacity-api" "migrate:capacity-migrate" "web:capacity-web"; do
+            target="${pair%%:*}"
+            local_tag="${pair##*:}"
+            remote="ghcr.io/$OWNER/assetflow-capacity-$target"
+            # Never publish `latest`: a mutable tag is what let a previous run
+            # pull an image from a different revision. Only the commit tag
+            # exists, so what runs is what was measured.
+            docker tag "$local_tag:$SHA" "$remote:$SHA"
+            # Take the digest from the push output itself: RepoDigests is a
+            # list whose order and membership vary with what was pulled or
+            # pushed under other names, and one run recorded a bare local
+            # repository name there, which no client can pull.
+            push_out=$(docker push "$remote:$SHA") || { echo "push of $remote:$SHA failed"; exit 1; }
+            printf '%s\n' "$push_out" | tail -2
+            digest=$(printf '%s\n' "$push_out" | grep -o 'sha256:[a-f0-9]\{64\}' | tail -1)
+            case "$digest" in
+              sha256:*) ;;
+              *) echo "::error title=digest::push did not report a digest for $remote:$SHA"; exit 1 ;;
+            esac
+            ref="$remote@$digest"
+            printf '%s=%s\n' "$(echo "$target" | tr '[:lower:]' '[:upper:]')" "$ref" >> "$RUNNER_TEMP/digests.txt"
+            echo "$target -> $ref"
+          done
+          cat "$RUNNER_TEMP/digests.txt"
+          # Emit the file the bootstrap sources, so the guest form is provably
+          # the same as the form verified here.
+          {
+            printf 'FIXTURE_API_DIGEST="%s"\n' "$(grep '^API=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+            printf 'FIXTURE_MIGRATE_DIGEST="%s"\n' "$(grep '^MIGRATE=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+            printf 'FIXTURE_WEB_DIGEST="%s"\n' "$(grep '^WEB=' "$RUNNER_TEMP/digests.txt" | cut -d= -f2-)"
+          } > "$RUNNER_TEMP/image-digests.env"
+          cat "$RUNNER_TEMP/image-digests.env"
+
+      - name: Verify anonymous pull using only the digest
+        run: |
+          set -euo pipefail
+          # Public repository visibility does NOT make packages public. Prove the
+          # pull works with no credentials before anything depends on it.
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f "$HOME/.docker/config.json" 2>/dev/null || true
+          while IFS='=' read -r name ref; do
+            case "$name" in API|MIGRATE|WEB) ;; *) continue ;; esac
+            echo "anonymous pull of $ref"
+            docker pull "$ref" >/dev/null || {
+              echo "::error title=anonymous pull::$ref is not publicly pullable"
+              exit 1; }
+          done < "$RUNNER_TEMP/digests.txt"
+          echo "all three images pull anonymously by digest"
+
+      - name: Upload the digest record
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-image-digests
+          path: |
+            ${{ runner.temp }}/digests.txt
+            ${{ runner.temp }}/image-digests.env
+          retention-days: 30

@@ -1,0 +1,911 @@
+name: Capacity run (single launch, gated)
+
+# One bounded measurement run, driven from a GitHub-hosted runner because that
+# runner is the only authorized client: its public address is discovered inside
+# the job and is the single /32 allowed to reach the instance.
+#
+# THE GATE
+# This workflow must never launch on an ordinary push. GitHub does not offer a
+# "run on push but only when a human approved it" trigger, so the approval is a
+# repository variable that names the exact commit to run:
+#
+#   CAPACITY_APPROVED_SHA = <full 40-character commit sha>
+#
+# The launch job runs only when ALL of these hold:
+#   * the event is a push
+#   * to exactly refs/heads/arena/595baf83-assetflow
+#   * CAPACITY_APPROVED_SHA is non-empty
+#   * CAPACITY_APPROVED_SHA equals the pushed commit in full
+#   * github.run_attempt is 1 - a re-run must not launch a second instance
+#
+# Anything else SKIPS before any AWS call, before ingress, before rendering.
+# Skipping is the default: the variable being absent fails closed.
+#
+# WHY NOT A CONFIRMATION INPUT
+# A hardcoded environment value such as LAUNCH-ONE is not an approval: it is a
+# constant, so every push carries it. A workflow_dispatch input is a real manual
+# action but is unavailable while this file is absent from the default branch.
+# Naming the exact commit is the approval: it is a specific, single-use value
+# that only a human can set, and it cannot be satisfied by a later push.
+
+on:
+  push:
+    branches:
+      - arena/595baf83-assetflow
+  # Declared for the day this file reaches the default branch. The gate above
+  # applies to it identically: a dispatch still needs the exact approved sha.
+  workflow_dispatch:
+
+concurrency:
+  group: capacity-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # The Stage 4 approval is read AT RUNTIME by the held job from an ISSUE
+  # COMMENT. It is NOT a repository variable: GET /repos/{o}/{r}/actions/
+  # variables/{n} needs the "Variables" repository permission, which does not
+  # exist in the GITHUB_TOKEN permission list at all (so no YAML can grant it),
+  # and vars.* is interpolated before the job reaches the runner, so it can
+  # never see a mid-run change. `issues: read` IS a documented GITHUB_TOKEN
+  # scope and is the entire requirement: read-only, on comments in this repo.
+  actions: read
+  issues: read
+
+env:
+  # One credential mechanism. Every AWS call goes through cap_aws, which passes
+  # these explicitly, so an ambient default profile can never be used.
+  AWS_PROFILE: capacity
+  AWS_REGION: ap-southeast-2
+  RUN_ID: cap-20261109t0800z-a7f3
+  SG_ID: sg-012a0191f4e4a9a8c
+  SUBNET_ID: subnet-01f25dc99e013aa6a
+  AMI_ID: ami-01e91e94accc42eec
+  INSTANCE_TYPE: t3.micro
+  CAPACITY_HOSTNAME: capacity-run.test
+  EXPECTED_ACCOUNT: '459252806274'
+  APPROVED_BRANCH: arena/595baf83-assetflow
+
+jobs:
+  gate:
+    name: Approval gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      approved: ${{ steps.check.outputs.approved }}
+      reason: ${{ steps.check.outputs.reason }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - name: Decide whether this run is approved
+        id: check
+        # Expression-derived values arrive as environment variables. Event text
+        # (a branch name, a commit message) is never interpolated into a shell
+        # command, so it cannot be executed by the runner.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
+          APPROVED_SHA: ${{ vars.CAPACITY_APPROVED_SHA }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_BRANCH: ${{ env.APPROVED_BRANCH }}
+        run: |
+          set -euo pipefail
+          approved=false
+          reason=""
+
+          if [ "$EVENT_NAME" != "push" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            reason="event is $EVENT_NAME, not a push dispatch"
+          elif [ "$REF_NAME" != "$EXPECTED_BRANCH" ]; then
+            reason="branch is '$REF_NAME', not '$EXPECTED_BRANCH'"
+          elif [ -z "$APPROVED_SHA" ]; then
+            reason="CAPACITY_APPROVED_SHA is unset: no approval, so nothing runs"
+          elif [ "$APPROVED_SHA" != "$HEAD_SHA" ]; then
+            reason="CAPACITY_APPROVED_SHA does not equal this commit"
+          elif [ "$RUN_ATTEMPT" != "1" ]; then
+            reason="run attempt is $RUN_ATTEMPT: a re-run must not launch again"
+          else
+            approved=true
+            reason="approved: $APPROVED_SHA on $REF_NAME, attempt 1"
+          fi
+
+          # Also require the approved value to look like a full commit sha. A short
+          # or malformed value must not match a real commit by prefix, or root-commits
+          # could be approved accidentally.
+          if [ "$approved" = "true" ]; then
+            case "$APPROVED_SHA" in
+              *[!0-9a-f]*|'') approved=false; reason="approved value is not a hex sha" ;;
+            esac
+            if [ "${#APPROVED_SHA}" -ne 40 ]; then
+              approved=false
+              reason="approved value is ${#APPROVED_SHA} chars, not a full 40-character sha"
+            fi
+          fi
+
+          echo "approved=$approved" >> "$GITHUB_OUTPUT"
+          printf 'reason=%s\n' "$reason" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "$approved" = "true" ]; then
+            echo "## Capacity run: APPROVED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Capacity run: SKIPPED" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- $reason" >> "$GITHUB_STEP_SUMMARY"
+          echo "gate: $approved ($reason)"
+
+  run:
+    name: Launch, observe, clean up
+    needs: [gate]
+    # Skipped runs cost nothing and touch nothing: this is the only job that
+    # reaches AWS, and it does not start at all unless the gate approved.
+    if: needs.gate.outputs.approved == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Re-verify the gate inside the job that spends money
+        # Defence in depth: a job-level `if` is evaluated once. Re-check here so a
+        # misconfigured gate cannot silently become a launch.
+        env:
+          APPROVED_SHA: ${{ vars.CAPACITY_APPROVED_SHA }}
+          HEAD_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REF_NAME: ${{ github.ref_name }}
+          EXPECTED_BRANCH: ${{ env.APPROVED_BRANCH }}
+        run: |
+          set -euo pipefail
+          [ "$RUN_ATTEMPT" = "1" ] || { echo "::error title=gate::not the first attempt"; exit 1; }
+          [ "$REF_NAME" = "$EXPECTED_BRANCH" ] || { echo "::error title=gate::wrong branch"; exit 1; }
+          [ -n "$APPROVED_SHA" ] || { echo "::error title=gate::no approved sha"; exit 1; }
+          [ "$APPROVED_SHA" = "$HEAD_SHA" ] || { echo "::error title=gate::approved sha is not this commit"; exit 1; }
+          [ "${#APPROVED_SHA}" -eq 40 ] || { echo "::error title=gate::approved sha is not full length"; exit 1; }
+          echo "gate re-verified for $HEAD_SHA"
+
+      - name: Write the AWS profile once, for the whole job
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          # Secrets go in through the environment, never argv, so they cannot
+          # appear in a process listing.
+          echo "::add-mask::$AWS_ACCESS_KEY_ID"
+          source infra/capacity-run/aws-context.sh
+          write_profile
+          source infra/capacity-run/aws-context.sh
+          ACCOUNT=$(require_profile)
+          echo "authenticated as account $ACCOUNT"
+          if [ "$ACCOUNT" != "$EXPECTED_ACCOUNT" ]; then
+            echo "::error title=account::profile authenticated as $ACCOUNT, expected $EXPECTED_ACCOUNT"
+            exit 1
+          fi
+
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq curl
+
+      - name: Generate run-scoped secrets and TLS trust on this runner
+        id: trust
+        run: |
+          set -euo pipefail
+          # Generated here and masked, so eight generated values do not have to be
+          # copied by hand. They live only for this job and are never uploaded.
+          DIR="$RUNNER_TEMP/trust"
+          mkdir -p "$DIR"; chmod 700 "$DIR"
+          umask 077
+
+          gen() { openssl rand -base64 48 | tr -d '\n=+/' | cut -c1-48; }
+          # URL-safe by construction: the compose file builds DATABASE_URL and
+          # REDIS_URL by raw interpolation, so a '/' or '+' in a password
+          # terminates the URL authority and Prisma fails with P1013 "invalid
+          # port number" (the twelfth attempt's captured failure). Same
+          # alphabet as generate-app-config.sh, which CI itself uses.
+          {
+            printf 'POSTGRES_PASSWORD=%s\n' "$(gen)"
+            printf 'REDIS_PASSWORD=%s\n' "$(gen)"
+            printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(gen)"
+            printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'LOADTEST_PASSWORD=%s\n' "$(gen | cut -c1-40)"
+            printf 'EVIDENCE_TOKEN=%s\n' "$(openssl rand -hex 32)"
+          } > "$DIR/secrets.env"
+          chmod 600 "$DIR/secrets.env"
+          while IFS='=' read -r _k v; do echo "::add-mask::$v"; done < "$DIR/secrets.env"
+
+          # TLS material for capacity-run.test, so the client can verify the
+          # certificate against a CA it holds. The trust is retained for the whole
+          # job, which is what lets this same runner serve a later Stage 4 test.
+          # ECDSA P-256, not RSA-2048: the key and certificate are carried
+          # inside the 16 KiB user-data limit, and an RSA pair consumed ~3 KB of
+          # it on its own. P-256 gives the same TLS guarantees in a third of the
+          # space. With RSA the payload rendered to 17991 bytes and the launcher
+          # correctly refused to start an instance with it.
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -nodes -days 1 \
+            -keyout "$DIR/tls.key" -out "$DIR/tls.crt" \
+            -subj "/CN=$CAPACITY_HOSTNAME" \
+            -addext "subjectAltName=DNS:$CAPACITY_HOSTNAME" >/dev/null 2>&1
+          cp "$DIR/tls.crt" "$DIR/ca.crt"
+          chmod 600 "$DIR/tls.key" "$DIR/tls.crt" "$DIR/ca.crt"
+          openssl x509 -in "$DIR/tls.crt" -noout -checkend 3600
+
+      - name: Discover this runner's public address
+        id: ip
+        run: |
+          set -euo pipefail
+          IP="$(curl -fsS --max-time 20 https://api.ipify.org)"
+          case "$IP" in
+            *[!0-9.]*|'') echo "::error title=ip::no public IPv4"; exit 1 ;;
+          esac
+          echo "runner public IPv4: $IP"
+          echo "addr=$IP" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight - zero active run instances and zero run volumes
+        id: preflight
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          LIVE=$(cap_aws ec2 describe-instances \
+            --filters "Name=tag:RunId,Values=$RUN_ID" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text) || {
+            echo "::error title=preflight::describe-instances failed"; exit 1; }
+          if [ -n "$LIVE" ]; then
+            echo "::error title=preflight::a run instance is still active"; printf '%s\n' "$LIVE"; exit 1
+          fi
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text) || {
+            echo "::error title=preflight::describe-volumes failed"; exit 1; }
+          if [ -n "$VOLS" ]; then
+            echo "::error title=preflight::a run volume still exists"; printf '%s\n' "$VOLS"; exit 1
+          fi
+          echo "zero active run instances and zero run volumes"
+
+      - name: Verify the AMI's real root device name
+        id: rootdev
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          ROOT=$(cap_aws ec2 describe-images --image-ids "$AMI_ID" \
+            --query 'Images[0].RootDeviceName' --output text)
+          [ -n "$ROOT" ] && [ "$ROOT" != "None" ] || {
+            echo "::error title=root-device::cannot read RootDeviceName for $AMI_ID"; exit 1; }
+          echo "ami root device: $ROOT"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Render the exact payload, validate it, and prove it would launch
+        id: render
+        env:
+          # The renderer must not be able to reach AWS.
+          AWS_ACCESS_KEY_ID: ''
+          AWS_SECRET_ACCESS_KEY: ''
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          UD="$S/user-data.sh"
+          mkdir -p "$S"
+
+          # One render, used for validation AND for the launch. The bytes are
+          # never regenerated, appended to, or re-encoded afterwards: what is
+          # validated here is exactly what is submitted.
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          export LAUNCH_EPOCH="$(date +%s)" \
+                 EXPECTED_COMMIT="$(git rev-parse HEAD)" \
+                 RUN_ID CAPACITY_HOSTNAME \
+                 TLS_CRT_B64="$(base64 -w0 < "$RUNNER_TEMP/trust/tls.crt")" \
+                 TLS_KEY_B64="$(base64 -w0 < "$RUNNER_TEMP/trust/tls.key")"
+          bash infra/capacity-run/render-user-data.sh > "$UD"
+
+          # Persist the launch instant and the derived guest deadline: the hold
+          # below must never outlive the instance's own 4-hour lifetime.
+          printf '%s' "$LAUNCH_EPOCH" > "$S/launch-epoch"
+          printf '%s' "$(( LAUNCH_EPOCH + 14400 ))" > "$S/deadline-epoch"
+
+          BYTES=$(wc -c < "$UD")
+          echo "payload: $BYTES bytes, limit 16384, headroom $((16384 - BYTES))"
+
+          # Size, against the ACTUAL generated bytes rather than an estimate.
+          [ "$BYTES" -le 16384 ] || {
+            echo "::error title=payload::$BYTES bytes exceeds the 16384 limit"; exit 1; }
+          [ "$BYTES" -gt 1000 ] || {
+            echo "::error title=payload::suspiciously small ($BYTES bytes)"; exit 1; }
+
+          # Executable raw shell, not base64 text.
+          head -1 "$UD" | grep -qx '#!/bin/bash' || {
+            echo "::error title=payload::first line is not a bash shebang"; exit 1; }
+
+          # Shell syntax, before anything is launched with it.
+          bash -n "$UD" || { echo "::error title=payload::shell syntax error"; exit 1; }
+
+          # Carries no base64 blob that would indicate a double-encoded payload.
+          if head -1 "$UD" | grep -qE '^[A-Za-z0-9+/]{60,}={0,2}$'; then
+            echo "::error title=payload::payload looks base64-encoded"; exit 1
+          fi
+
+          # The full pinned sha must be present, and must be THIS commit.
+          EXPECTED_COMMIT="$(git rev-parse HEAD)"
+          case "$EXPECTED_COMMIT" in
+            ????????????????????????????????????????) ;;
+            *) echo "::error title=payload::EXPECTED_COMMIT is not a full sha"; exit 1 ;;
+          esac
+          grep -q "$EXPECTED_COMMIT" "$UD" || {
+            echo "::error title=payload::pinned sha absent from the payload"; exit 1; }
+
+          # The digests must NOT be inlined: they are carried by the committed file.
+          . infra/capacity-run/image-digests.env
+          for d in "$FIXTURE_API_DIGEST" "$FIXTURE_MIGRATE_DIGEST" "$FIXTURE_WEB_DIGEST"; do
+            if grep -q "${d##*@}" "$UD"; then
+              echo "::error title=payload::a digest is inlined in user-data"; exit 1
+            fi
+          done
+
+          # The secrets rendered into the payload must equal the generated ones,
+          # so a failed substitution cannot ship a placeholder.
+          for v in POSTGRES_PASSWORD JWT_SECRET LOADTEST_PASSWORD EVIDENCE_TOKEN; do
+            eval "want=\${$v:?}"
+            grep -qF "$want" "$UD" || {
+              echo "::error title=payload::$v was not substituted"; exit 1; }
+          done
+          echo "payload validated: raw shell, syntax clean, pinned sha and secrets present"
+
+          # Full launch request, with the real payload and configuration, before
+          # any ingress rule exists. A rejected request stops the run here.
+          bash infra/capacity-run/launch-once.sh \
+            --user-data "$UD" \
+            --token-file "$S/client-token.dryrun" \
+            --out "$S/instance-id.dryrun" \
+            --dry-run
+
+      - name: Open tcp/8443 for this runner only, recording the rule id
+        id: ingress
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          bash infra/capacity-run/ingress.sh open \
+            --cidr "${{ steps.ip.outputs.addr }}/32" \
+            --state-dir "$RUNNER_TEMP/state"
+          # Stage 4 runs on this same runner, so this exact /32 is the only
+          # source that will be allowed through tcp/8443.
+          printf '%s/32' "${{ steps.ip.outputs.addr }}" > "$RUNNER_TEMP/state/ingress-cidr"
+
+      - name: Launch exactly one instance
+        id: launch
+        env:
+          ROOT_DEVICE: ${{ steps.rootdev.outputs.root }}
+        run: |
+          set -euo pipefail
+          # Reuses the payload validated earlier: same bytes, no re-render.
+          UD="$RUNNER_TEMP/state/user-data.sh"
+          test -s "$UD" || { echo "::error title=launch::no validated payload"; exit 1; }
+          test "$(wc -c < "$UD")" -le 16384 || {
+            echo "::error title=launch::payload exceeds the limit"; exit 1; }
+          bash infra/capacity-run/launch-once.sh \
+            --user-data "$UD" \
+            --token-file "$RUNNER_TEMP/state/client-token" \
+            --out "$RUNNER_TEMP/state/instance-id"
+          echo "id=$(cat "$RUNNER_TEMP/state/instance-id")" >> "$GITHUB_OUTPUT"
+          # The launch sha, recorded while the truth is in hand: the Stage 4
+          # approval binds to exactly the commit whose code launched this
+          # instance, so a later approval can never be applied to a run whose
+          # guest code differs from what was approved.
+          printf '%s' "$GITHUB_SHA" > "$RUNNER_TEMP/state/launch-sha"
+
+      - name: Read back the configuration that was actually created
+        run: |
+          set -euo pipefail
+          bash infra/capacity-run/verify-instance.sh "$(cat "$RUNNER_TEMP/state/instance-id")"
+
+      - name: P3 - prove terminating this instance would be permitted
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          ID=$(cat "$RUNNER_TEMP/state/instance-id")
+          if cap_aws ec2 terminate-instances --instance-ids "$ID" --dry-run 2>/tmp/p3.err \
+             || grep -q DryRunOperation /tmp/p3.err; then
+            echo "P3 accepted: terminate dry-run returned DryRunOperation for $ID"
+          else
+            echo "::error title=P3::terminate dry-run refused"
+            sed 's/Encoded authorization.*//' /tmp/p3.err
+            exit 1
+          fi
+
+      - name: Observe the run - watchdog, status polling, readiness
+        id: observe
+        # Bounded by the run's own deadline. A Stage 4 test may follow on the same
+        # runner; nothing here terminates the instance on success.
+        timeout-minutes: 240
+        run: |
+          set -uo pipefail
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          # The supervisor exits nonzero when the Stage 3 contract is not met.
+          # Its status is captured rather than aborting the job: cleanup and
+          # retention must always run, and the verdict is published so the job
+          # can fail afterwards. A green job must never mean "cleanup succeeded".
+          set +e
+          # The supervisor's own output is evidence: tee it into the state dir
+          # so retention keeps it even if the step log becomes unreadable.
+          # pipefail keeps RC = the supervisor's exit code, not tee's.
+          bash infra/capacity-run/supervise-run.sh \
+            --instance "$(cat "$RUNNER_TEMP/state/instance-id")" \
+            --host "$CAPACITY_HOSTNAME" \
+            --trust-dir "$RUNNER_TEMP/trust" \
+            --state-dir "$RUNNER_TEMP/state" \
+            --max-minutes 230 2>&1 | tee "$RUNNER_TEMP/state/supervisor.out"
+          RC=$?
+          set -e
+          echo "supervisor rc=$RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -eq 0 ]; then
+            echo "stage3=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "stage3=fail" >> "$GITHUB_OUTPUT"
+            V="$(cat "$RUNNER_TEMP/state/verdict" 2>/dev/null || echo 'no verdict recorded')"
+            echo "::error title=Stage 3::$V"
+          fi
+
+      - name: Record the outcome
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          echo "## Capacity run outcome" >> "$GITHUB_STEP_SUMMARY"
+          for f in instance-id p3 watchdog-status ready-code; do
+            [ -f "$S/$f" ] && echo "- $f: \`$(cat "$S/$f")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+          COUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
+          echo "- retained snapshots: $COUNT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the run evidence (named files, non-secret only)
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          R="$RUNNER_TEMP/retained"
+          mkdir -p "$R/snapshots"
+          # Every retained file is NAMED, never globbed: a glob is how a secret
+          # rides along. The set is the full diagnostic record of the run -
+          # supervisor output, watchdog state, poller output, readiness and the
+          # guest-export verification - so a post-mortem does not depend on the
+          # step log still being readable.
+          for f in supervisor.out verdict ready-code app-ready                    watchdog-status watchdog.log watchdog-pid heartbeat                    poll.log last-ready.body last-ready.err                    p3 p3.err instance-id                    guest-export.txt guest-export.log evidence.sha256; do
+            if [ -f "$S/$f" ]; then
+              cp "$S/$f" "$R/$f"
+            else
+              echo "::warning title=retention::expected evidence '$f' is absent"
+            fi
+          done
+          # Redacted status snapshots, including the per-poll failure records.
+          SCOUNT=$(ls -1 "$S/snapshots"/*.json 2>/dev/null | wc -l || echo 0)
+          if [ "$SCOUNT" -gt 0 ]; then
+            cp "$S"/snapshots/*.json "$R/snapshots/"
+          else
+            echo "::warning title=retention::no status snapshots were retained"
+          fi
+          # The exported guest archive itself, when it exists and is small
+          # enough to keep; its verification result and log are always kept.
+          if [ -f "$S/guest-evidence.tar.gz" ]; then
+            SIZE=$(stat -c%s "$S/guest-evidence.tar.gz")
+            if [ "$SIZE" -le 10485760 ]; then
+              cp "$S/guest-evidence.tar.gz" "$R/"
+            else
+              echo "::warning title=retention::guest archive is $SIZE bytes; keeping checksum and log only"
+            fi
+          else
+            echo "::warning title=retention::no guest evidence archive was exported"
+          fi
+          # Deliberately NOT retained, wherever they live: client-token, every
+          # *.env (secrets.env included), the trust directory (private keys),
+          # the rendered user-data payload, and anything named *.key. The
+          # bearer token never appears in any retained log: no script in this
+          # run echoes its commands and every /status body is redacted.
+          if ls "$R" | grep -Eq 'client-token|\.env$|\.key$|user-data'; then
+            echo "::error title=retention::a forbidden filename reached the retained set"
+            exit 1
+          fi
+
+      - name: Keep the retained evidence (non-secret only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-run-evidence
+          path: ${{ runner.temp }}/retained
+          retention-days: 14
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------------
+      # Stage 3 ends here. The instance is NOT terminated on success: the guest
+      # keeps running under its own 4-hour deadline, and this runner keeps its
+      # trust material, so a separately approved Stage 4 test can use the same
+      # client. Termination and ingress removal below happen on failure, or when
+      # the deadline is reached - never merely because readiness passed.
+      # ---------------------------------------------------------------------
+
+      - name: Terminate only if this run did not reach readiness
+        if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          if [ ! -f "$S/instance-id" ]; then
+            echo "no instance-id recorded; reconciling by client token before concluding anything"
+            if [ -s "$S/client-token" ]; then
+              FOUND=$(cap_aws ec2 describe-instances \
+                --filters "Name=client-token,Values=$(cat "$S/client-token")" \
+                --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text)
+              # An absent file is not proof that no resource exists.
+              if [ -n "$FOUND" ]; then
+                echo "::warning title=reconcile::an instance exists for this token"; printf '%s\n' "$FOUND"
+                printf '%s\n' "$FOUND" | awk '{print $1}' | head -1 > "$S/instance-id"
+              else
+                echo "token reconciles to no instance"
+                exit 0
+              fi
+            else
+              exit 0
+            fi
+          fi
+
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          echo "instance $ID is $STATE"
+
+          READY=""
+          [ -f "$S/ready-code" ] && READY=$(cat "$S/ready-code")
+          if [ "$STAGE3_OK" = "pass" ] && [ "$READY" = "200" ]; then
+            echo "Stage 3 reached readiness; NOT terminating. The guest deadline terminates it."
+            echo "- instance retained for a possibly approved Stage 4: $ID" >> "$GITHUB_STEP_SUMMARY"
+            echo "retain" > "$S/retain-instance"
+            exit 0
+          fi
+
+          echo "Stage 3 did not reach readiness; terminating $ID"
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+          fi
+          cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+
+      - name: Remove the ingress rule unless the instance was retained
+        if: always()
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          if [ -f "$S/retain-instance" ]; then
+            echo "instance retained for Stage 4: leaving tcp/8443 open for this runner"
+            echo "- ingress retained for the approved client" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Fails loudly if a tcp/8443 rule survives, rather than assuming every
+          # revoke error means "already absent".
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
+
+      - name: Confirm the account state
+        if: always()
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          echo "run instances:"
+          cap_aws ec2 describe-instances --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text
+          echo "run volumes:"
+          cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text
+          echo "sg inbound:"
+          cap_aws ec2 describe-security-groups --group-ids "$SG_ID" \
+            --query 'SecurityGroups[0].IpPermissions' --output json
+          if [ -f "$S/retain-instance" ]; then
+            echo "NOTE: the instance and its ingress were retained for Stage 4."
+            echo "The guest terminates itself at the 4-hour deadline."
+          fi
+
+      - name: Wait bounded for a Stage 4 approval
+        # Retaining the INSTANCE is not enough for Stage 4. The runner's own
+        # public address is the only address allowed through tcp/8443, and its
+        # private CA, token and state are the only things that can verify the
+        # run's TLS. If the job exits, the runner is destroyed and all three
+        # are lost - so the job, not just the instance, is held, and the hold
+        # itself polls for the approval: a COMMENT on the approvals issue, read
+        # live over the REST API, bound to this run's id and the launch sha.
+        # To approve a Stage 4 run, comment on that issue with exactly
+        #   stage4-approve <run_id>:<launch_sha>
+        # (this step prints those values). A passive hold could never turn an
+        # approval into work; this one can.
+        # Bounded by STAGE4_HOLD_MINUTES, the run's absolute deadline, and a
+        # hard cap so it can never outlive the 4-hour instance lifetime.
+        if: always() && steps.observe.outputs.stage3 == 'pass'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          # The issue whose comments carry approvals. A repository variable so
+          # the number is configuration, not code.
+          STAGE4_ISSUE: ${{ vars.STAGE4_APPROVAL_ISSUE }}
+          # The ONLY login whose comment can approve load. A run id and a
+          # launch sha are public, so text alone must never authorize a run:
+          # the comment's author is verified against this name using the
+          # identity GitHub returns, not anything written in the comment.
+          STAGE4_APPROVER: ${{ vars.STAGE4_APPROVER }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          echo "Stage 3 passed. Waiting bounded for a Stage 4 approval on this
+          same runner: same source /32, same private CA, same token, same
+          state directory and the same retained instance."
+          # A missing issue number is a configuration error, not a reason to
+          # hold silently: fail before the wait starts, with a recorded outcome.
+          if [ -z "${STAGE4_ISSUE:-}" ]; then
+            echo "::error title=hold::STAGE4_APPROVAL_ISSUE is unset; no approval can be read"
+            echo denied > "$S/stage4-outcome"
+            exit 2
+          fi
+          # Without an approver there is no one whose comment counts. Refusing
+          # here is strictly safer than admitting any author.
+          if [ -z "${STAGE4_APPROVER:-}" ]; then
+            echo "::error title=hold::STAGE4_APPROVER is unset; no comment can authorize load"
+            echo denied > "$S/stage4-outcome"
+            exit 2
+          fi
+          STATE_DIR="$S" HOLD_MINUTES="${{ vars.STAGE4_HOLD_MINUTES || '45' }}" \
+            CAP_PROFILE="${{ env.AWS_PROFILE || 'capacity' }}" \
+            CAP_REGION="${{ env.AWS_REGION || 'ap-southeast-2' }}" \
+            STAGE4_APPROVER="$STAGE4_APPROVER" STAGE4_ISSUE="$STAGE4_ISSUE" \
+            bash infra/capacity-run/hold-runner.sh
+
+      - name: Close the run when no Stage 4 approval arrived
+        # The instance was retained ONLY for a possibly approved Stage 4. No
+        # approval means no reason to keep either the instance or its ingress:
+        # this is the bounded cleanup the "no approval" path owes, and it uses
+        # the same authority as every other cleanup in this workflow - the
+        # recorded instance id and the recorded rule id, nothing else.
+        if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          [ -f "$S/stage4-outcome" ] || { echo "no Stage 4 wait ran (Stage 3 did not pass); nothing to close"; exit 0; }
+          OUTCOME=$(cat "$S/stage4-outcome")
+          echo "Stage 4 wait outcome: $OUTCOME"
+          case "$OUTCOME" in
+            timeout) ;;
+            instance-gone)
+              # The guest ended itself at its deadline. The ingress rule it was
+              # retained with outlives it only until this step: close it now.
+              bash infra/capacity-run/ingress.sh close --state-dir "$S"
+              echo "instance gone; ingress closed"
+              exit 0 ;;
+            *) exit 0 ;;
+          esac
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          fi
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
+          echo "no approval arrived: the instance was terminated and the ingress closed"
+
+      - name: Stage 4 - revalidate and run the approved load
+        # Runs only on an approval that matched this run's id and launch sha,
+        # on attempt 1, inside the bounded window. The script revalidates the
+        # instance, the Stage 3 evidence, HTTPS readiness, the watchdog and the
+        # remaining lifetime BEFORE any load, and never touches cleanup
+        # authority itself.
+        id: stage4
+        if: always()
+        env:
+          STAGE3_OK: ${{ steps.observe.outputs.stage3 }}
+        run: |
+          set -uo pipefail
+          S="$RUNNER_TEMP/state"
+          OUTCOME=$(cat "$S/stage4-outcome" 2>/dev/null || echo none)
+          if [ "$OUTCOME" != "approved" ]; then
+            echo "stage4=not-run" >> "$GITHUB_OUTPUT"
+            echo "Stage 4 did not run: the wait outcome was '$OUTCOME'"
+            exit 0
+          fi
+          set -a; . "$RUNNER_TEMP/trust/secrets.env"; set +a
+          # The script asserts every one of these and dies on the first that is
+          # missing - it has no defaults, by design, because a wrong trust dir
+          # or a wrong instance id would mean loading the wrong system. Attempt
+          # 23 failed at line 68 with "STATE_DIR is required" because this step
+          # sourced secrets.env and passed nothing else. Export the whole
+          # contract explicitly, and fail with a named reason if any source is
+          # absent rather than letting the script die on a bare parameter
+          # expansion.
+          export STATE_DIR="$S"
+          export TRUST_DIR="$RUNNER_TEMP/trust"
+          export CAPACITY_HOSTNAME="capacity-run.test"
+          export PORT=8443
+          export INSTANCE_ID="${{ steps.launch.outputs.id }}"
+          export DEADLINE_EPOCH="$(cat "$S/deadline-epoch" 2>/dev/null || echo '')"
+          export LOADTEST_RUN_ID="cap-20261109t0800z-a7f3"
+          export EVIDENCE_TOKEN="${EVIDENCE_TOKEN:-}"
+          export LOADTEST_PASSWORD="${LOADTEST_PASSWORD:-}"
+
+          missing=""
+          for v in STATE_DIR TRUST_DIR CAPACITY_HOSTNAME INSTANCE_ID \
+                   DEADLINE_EPOCH EVIDENCE_TOKEN LOADTEST_PASSWORD LOADTEST_RUN_ID; do
+            eval "val=\${$v:-}"
+            [ -n "$val" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Stage 4::preflight refused: missing$missing"
+            echo "stage4=failed" >> "$GITHUB_OUTPUT"
+            echo "1" > "$S/stage4.rc"
+            exit 0
+          fi
+          case "$DEADLINE_EPOCH" in
+            ''|*[!0-9]*)
+              echo "::error title=Stage 4::preflight refused: deadline-epoch is not unix seconds ('$DEADLINE_EPOCH')"
+              echo "stage4=failed" >> "$GITHUB_OUTPUT"
+              echo "1" > "$S/stage4.rc"
+              exit 0 ;;
+          esac
+
+          set +e
+          bash infra/capacity-run/stage4-load.sh 2>&1 | tee "$S/stage4.out"
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "stage4 rc=$RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          printf '%s' "$RC" > "$S/stage4.rc"
+          if [ "$RC" -eq 0 ]; then
+            echo "stage4=ran" >> "$GITHUB_OUTPUT"
+          else
+            echo "stage4=failed" >> "$GITHUB_OUTPUT"
+            echo "::error title=Stage 4::the load sequence failed (rc=$RC)"
+          fi
+
+      - name: Stage 4 - retain the measurement evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          R="$RUNNER_TEMP/retained-stage4"
+          mkdir -p "$R"
+          if [ ! -d "$S/stage4" ]; then
+            echo "no Stage 4 directory was created; nothing to retain"
+            exit 0
+          fi
+          # Named files only, same rule as the Stage 3 retention: a glob is how
+          # a secret rides along. The fixture password lives in the trust env,
+          # never in these files; k6 receives it through -e and writes none of
+          # it into summaries or logs.
+          for f in stage4-report.md guest-export-postload.log; do
+            [ -f "$S/stage4/$f" ] && cp "$S/stage4/$f" "$R/"
+          done
+          for f in "$S"/stage4/stage-*.result "$S"/stage4/stage-*.log \
+                   "$S"/stage4/guest-samples.csv "$S"/stage4/generator-samples.csv; do
+            [ -f "$f" ] && cp "$f" "$R/"
+          done
+          if [ -f "$S/stage4/guest-evidence-postload.tar.gz" ]; then
+            SIZE=$(stat -c%s "$S/stage4/guest-evidence-postload.tar.gz")
+            if [ "$SIZE" -le 10485760 ]; then
+              cp "$S/stage4/guest-evidence-postload.tar.gz" "$R/"
+            else
+              echo "::warning title=retention::post-load archive is $SIZE bytes; keeping log only"
+            fi
+          fi
+          if ls "$R" | grep -Eq 'client-token|\.env$|\.key$|secrets'; then
+            echo "::error title=retention::a forbidden filename reached the Stage 4 set"
+            exit 1
+          fi
+
+      - name: Keep the Stage 4 evidence (non-secret only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-run-stage4-evidence
+          path: ${{ runner.temp }}/retained-stage4
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Stage 4 - terminate the instance and close the ingress
+        # The approved instance's job is done once the measurement (or its
+        # failure) is retained. This is the same cleanup authority as the
+        # failure path: the recorded instance id, the recorded rule id, and
+        # nothing else. The root volume's deletion is verified, not assumed.
+        if: always()
+        run: |
+          set -euo pipefail
+          source infra/capacity-run/aws-context.sh
+          S="$RUNNER_TEMP/state"
+          [ -f "$S/stage4-outcome" ] || exit 0
+          OUTCOME=$(cat "$S/stage4-outcome")
+          [ "$OUTCOME" = "approved" ] || { echo "Stage 4 never ran; cleanup already handled"; exit 0; }
+          ID=$(cat "$S/instance-id")
+          STATE=$(cap_aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
+          if [ "$STATE" = "running" ] || [ "$STATE" = "pending" ]; then
+            cap_aws ec2 terminate-instances --instance-ids "$ID" >/dev/null
+            cap_aws ec2 wait instance-terminated --instance-ids "$ID" || true
+          fi
+          # The root volume: DeleteOnTermination was verified at launch; here
+          # it is verified in fact. A surviving volume is a warning the
+          # operator can act on, never a silent pass.
+          VOLS=$(cap_aws ec2 describe-volumes --filters "Name=tag:RunId,Values=$RUN_ID" \
+            --query 'Volumes[].[VolumeId,State]' --output text)
+          [ -z "$VOLS" ] || echo "::warning title=volumes::run volumes still present: $VOLS"
+          bash infra/capacity-run/ingress.sh close --state-dir "$S"
+          echo "Stage 4 cleanup complete: instance terminated, ingress closed"
+
+      - name: Emit the failure diagnostics as annotations
+        # The retained artifact needs authentication to download, and the job
+        # logs are admin-only - both were dead ends for the operator's offline
+        # agent. Check-run annotations ARE readable through the public API, so
+        # the redacted failure detail rides on them: bounded, pre-redacted by
+        # bootstrap-status.py, and capped so the annotation stream stays sane.
+        if: always()
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          LAST="$(ls -1 "$S"/snapshots/*-failure.json 2>/dev/null | tail -1 || true)"
+          if [ -z "$LAST" ]; then
+            echo "::warning title=diagnostics::no failure snapshot was captured"
+            exit 0
+          fi
+          python3 - "$LAST" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          lines = []
+          lines.append("status: %s" % d.get("bootstrap_status", "unknown"))
+          for s in d.get("summary", [])[:6]:
+              lines.append("summary: %s" % s)
+          for key in ("api_log_tail", "stack_up_tail", "stack_ps"):
+              for x in d.get(key, [])[:12]:
+                  lines.append("%s: %s" % (key, x))
+          for x in d.get("migrate_progress", [])[-6:]:
+              lines.append("progress: %s" % x)
+          for x in d.get("failure_detail", [])[:12]:
+              lines.append("detail: %s" % x)
+          for x in d.get("seed_log_tail", [])[-4:]:
+              lines.append("seed: %s" % x)
+          for line in lines[:40]:
+              text = line.replace("%", "%25")
+              print("::warning title=stage3-diag::%s" % text[:180])
+          PY
+
+      - name: Fail the job when Stage 3 did not meet its contract
+        # Cleanup and retention above always run first. This step is what makes
+        # the job's colour mean something: a green job means the Stage 3
+        # contract was satisfied, not merely that cleanup succeeded.
+        if: always()
+        env:
+          STAGE3: ${{ steps.observe.outputs.stage3 }}
+          OBSERVE_OUTCOME: ${{ steps.observe.outcome }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/state"
+          V="$(cat "$S/verdict" 2>/dev/null || echo 'no verdict recorded')"
+          echo "Stage 3 verdict: $STAGE3 ($V)"
+          echo "### Stage 3: ${STAGE3:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$V" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STAGE3" != "pass" ]; then
+            echo "::error title=Stage 3 FAILED::$V"
+            exit 1
+          fi
+          echo "Stage 3 contract satisfied."
+          # The Stage 4 outcome rides the same summary: ran, failed, or
+          # explicitly not-run. Silence is never one of the options.
+          S4OUT=$(cat "$S/stage4-outcome" 2>/dev/null || echo 'no wait ran')
+          S4RC=$(cat "$S/stage4.rc" 2>/dev/null || echo '-')
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Stage 4: ${S4OUT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- wait outcome: \`${S4OUT}\`, load exit code: \`${S4RC}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$S/stage4-report-path" ]; then
+            echo "- report: \`$(cat "$S/stage4-report-path")\`" >> "$GITHUB_STEP_SUMMARY"
+          fi

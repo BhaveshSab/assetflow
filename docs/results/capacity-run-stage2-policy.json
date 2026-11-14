@@ -1,0 +1,303 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "01ReadOnlyInventoryAndPricing",
+      "Effect": "Allow",
+      "Action": [
+        "ce:GetCostAndUsage",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeImages",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstances",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVpcs",
+        "pricing:GetProducts",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "02DenyMutationOnProductionInstanceVolumeGroup",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StopInstances",
+        "ec2:StartInstances",
+        "ec2:RebootInstances",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyInstanceCreditSpecification",
+        "ec2:DeleteVolume",
+        "ec2:ModifyVolume",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:CreateSnapshot",
+        "ec2:CreateImage",
+        "ec2:DisassociateAddress",
+        "ec2:AssociateAddress",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifyNetworkInterfaceAttribute",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": [
+        "arn:aws:ec2:ap-southeast-2:459252806274:instance/i-0ff4690ec52d0dc01",
+        "arn:aws:ec2:ap-southeast-2:459252806274:volume/vol-0fec8fdb85d35bfa3",
+        "arn:aws:ec2:ap-southeast-2:459252806274:security-group/sg-088b1c3707a9eb215"
+      ]
+    },
+    {
+      "Sid": "03DenyProductionElasticIpAllActions",
+      "Effect": "Deny",
+      "Action": "ec2:*",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:elastic-ip/eipalloc-013fd2f80167e20a9"
+    },
+    {
+      "Sid": "04DenyDangerousAndOutOfScopeServices",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:ModifyVpcAttribute",
+        "ec2:ModifySubnetAttribute",
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:CreateRoute",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:ReplaceRoute",
+        "ec2:AllocateAddress",
+        "ec2:ReleaseAddress",
+        "ec2:AssignIpv6Addresses",
+        "ec2:UnassignIpv6Addresses",
+        "ec2:CreateKeyPair",
+        "ec2:ImportKeyPair",
+        "ec2:DeleteKeyPair",
+        "iam:*",
+        "organizations:*",
+        "s3:*",
+        "rds:*",
+        "lambda:*",
+        "ecs:*",
+        "eks:*",
+        "ssm:*",
+        "cloudformation:*",
+        "autoscaling:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "05LaunchImageExactAmi",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2::image/ami-01e91e94accc42eec"
+    },
+    {
+      "Sid": "06LaunchSubnetExactSubnet",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:subnet/subnet-01f25dc99e013aa6a"
+    },
+    {
+      "Sid": "07LaunchVolumeTagControlled",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "08LaunchNetworkInterfaceTagControlled",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:network-interface/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "09LaunchInstanceTypeAndTagControlled",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:InstanceType": "t3.micro",
+          "ec2:Tenancy": "default",
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "10LaunchRunOwnedSecurityGroupOnly",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Project": "assetflow-capacity",
+          "ec2:ResourceTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "11CreateSecurityGroupInApprovedVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:vpc/vpc-0bcfe8d7f2e811bb3",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "11bCreateSecurityGroupResourceTagControlled",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "12TagSecurityGroupAtCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:CreateAction": "CreateSecurityGroup",
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "13TagInstanceVolumeAndNetworkInterfaceAtRunInstances",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:ap-southeast-2:459252806274:instance/*",
+        "arn:aws:ec2:ap-southeast-2:459252806274:volume/*",
+        "arn:aws:ec2:ap-southeast-2:459252806274:network-interface/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:CreateAction": "RunInstances",
+          "aws:RequestTag/Project": "assetflow-capacity",
+          "aws:RequestTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "14AuthorizeIngressOnRunOwnedGroupOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:ResourceTag/Project": "assetflow-capacity",
+          "ec2:ResourceTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "15TerminateRunOwnedInstancesOnly",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:ResourceTag/Project": "assetflow-capacity",
+          "ec2:ResourceTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "16DeleteRunOwnedVolumesOnly",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteVolume",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:ResourceTag/Project": "assetflow-capacity",
+          "ec2:ResourceTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "17DeleteRunOwnedSecurityGroupOnly",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteSecurityGroup",
+      "Resource": "arn:aws:ec2:ap-southeast-2:459252806274:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-2",
+          "ec2:ResourceTag/Project": "assetflow-capacity",
+          "ec2:ResourceTag/RunId": "cap-20261109t0800z-a7f3"
+        }
+      }
+    },
+    {
+      "Sid": "18RunScopedAlarms",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms"
+      ],
+      "Resource": "arn:aws:cloudwatch:ap-southeast-2:459252806274:alarm:cap-20261109t0800z-a7f3-*"
+    },
+    {
+      "Sid": "19RunScopedBudget",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:ModifyBudget"
+      ],
+      "Resource": "arn:aws:budgets::459252806274:budget/cap-20261109t0800z-a7f3"
+    },
+    {
+      "Sid": "20ReadBudgets",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:DescribeBudgetActionsForAccount"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
