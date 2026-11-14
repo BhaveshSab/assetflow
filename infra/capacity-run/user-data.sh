@@ -388,6 +388,12 @@ stage_begin "single-port edge"
 docker compose --env-file infra/.env -f infra/docker-compose.yml stop nginx >/dev/null 2>&1 || true
 sed -i 's|^HTTP_PORT=.*|HTTP_PORT=127.0.0.1:8080|' infra/.env
 sed -i 's|^HTTPS_PORT=.*|HTTPS_PORT=127.0.0.1:8440|' infra/.env
+# The application nginx redirects every HTTP path except the health endpoints to
+# https, and this run proxies to the HTTP listener, so the API answered 301 and
+# the target-binding login failed. Route /api/ on that loopback-only vhost; the
+# script explains why the HTTPS vhost is left alone and why it is not inlined.
+bash "$APP_DIR/infra/capacity-run/api-http-route.sh" \
+    || die "capacity /api route could not be applied"
 $COMPOSE up -d nginx || die "application edge failed to restart on loopback"
 
 # The evidence server moves to a loopback-only port; nothing external is exposed
