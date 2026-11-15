@@ -1,0 +1,181 @@
+#!/bin/bash
+#
+# Render the user-data payload for the capacity run.
+#
+# This is the ONE explicit provisioning path. Every input the guest needs is
+# assembled here, on the operator machine, and embedded into the user-data
+# payload as base64. Nothing is read from IMDS that could be wrong, and no AWS
+# user credentials ever reach the guest.
+#
+# Secrets: the TLS key and bearer token are generated locally by
+# generate-trust.sh and passed in through its trust.env. They are embedded in
+# user-data, which is NOT a secret store - AWS stores it, it is readable via
+# ec2:DescribeInstanceAttribute and by root on the guest, and base64 is an encoding
+# rather than encryption. That is acceptable only because the material is
+# short-lived and run-scoped. No AWS credentials and no production secrets go in.
+#
+# Usage
+#   infra/capacity-run/generate-trust.sh .capacity-run-trust
+#   set -a; . .capacity-run-trust/trust.env; set +a
+#   LAUNCH_EPOCH=$(date +%s) EXPECTED_COMMIT=<sha> RUN_ID=cap-... \
+#     infra/capacity-run/render-user-data.sh > user-data.b64
+#
+# Keep the output file out of Git: it contains the rendered key and token.
+set -euo pipefail
+
+: "${LAUNCH_EPOCH:?LAUNCH_EPOCH must be set to the intended launch instant}"
+: "${EXPECTED_COMMIT:?EXPECTED_COMMIT must be the pinned SHA}"
+: "${EVIDENCE_TOKEN:?EVIDENCE_TOKEN must be set (from generate-trust.sh)}"
+: "${TLS_CRT_B64:?TLS_CRT_B64 must be set (from generate-trust.sh)}"
+: "${TLS_KEY_B64:?TLS_KEY_B64 must be set (from generate-trust.sh)}"
+# The certificate and key are the largest fixed part of the payload, and EC2 caps
+# user-data at 16 KiB. They travel gzipped so the diagnostic service fits inside
+# that limit instead of pushing the payload over it.
+TLS_CRT_GZ="$(printf '%s' "$TLS_CRT_B64" | base64 -d | gzip -9 | base64 -w0)"
+TLS_KEY_GZ="$(printf '%s' "$TLS_KEY_B64" | base64 -d | gzip -9 | base64 -w0)"
+: "${RUN_ID:?RUN_ID must be set}"
+# The compose file has no defaults for these; without them the stack cannot
+# start at all, so rendering without them is a hard error.
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (generate-app-config.sh)}"
+: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set (generate-app-config.sh)}"
+: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}"
+: "${JWT_SECRET:?JWT_SECRET must be set (generate-app-config.sh)}"
+: "${LOADTEST_PASSWORD:?LOADTEST_PASSWORD must be set: the seed refuses >1 account without it}"
+: "${CAPACITY_HOSTNAME:=capacity-run.test}"
+
+if [ "${#EVIDENCE_TOKEN}" -lt 32 ]; then
+    echo "EVIDENCE_TOKEN must be at least 32 characters" >&2
+    exit 2
+fi
+
+# Long-lived AWS credentials must never be rendered onto the guest.
+for forbidden in AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_ACCESS_KEY_ID; do
+    eval "present=\${$forbidden:-}"
+    if [ -n "${present:-}" ]; then
+        echo "refusing to embed $forbidden: no AWS credentials on the guest" >&2
+        exit 3
+    fi
+done
+
+case "$LAUNCH_EPOCH" in
+    ''|*[!0-9]*) echo "LAUNCH_EPOCH must be a unix timestamp" >&2; exit 2 ;;
+esac
+
+# Output encoding. The AWS CLI's --user-data file:// takes the RAW bytes of the
+# file and base64-encodes them itself. So this script must emit raw shell, not
+# base64: passing base64 text through file:// installs the base64 characters as
+# the user-data, and cloud-init then runs a script that is not a script. That
+# failure is silent - the instance boots, does nothing, and reports no error.
+#
+# Raw is therefore the default. --base64 exists for transports that want the
+# encoded form, and is never used for --user-data file://.
+RENDER_ENCODING=raw
+for arg in "$@"; do
+    case "$arg" in
+        --raw) RENDER_ENCODING=raw ;;
+        --base64) RENDER_ENCODING=base64 ;;
+        *) echo "render-user-data: unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Remove whole-line comments and blank lines from a shell script. Single-quoted
+    # heredoc bodies inside the script are preserved verbatim, because those are
+    # content (unit files, env files), not commentary.
+    strip_comments() {
+        awk '
+            # A shebang is not a comment: dropping it leaves a file with no
+            # interpreter, and systemd ExecStart then fails instantly with no
+            # message. That is exactly how capacity-deadline.service failed.
+            NR == 1 && /^#!/ { print; next }
+            /^[[:space:]]*<<'"'"'?[A-Za-z_][A-Za-z_0-9]*'"'"'?[[:space:]]*$/ { inheredoc=1; print; next }
+            inheredoc && /^[[:space:]]*[A-Za-z_][A-Za-z_0-9]*[[:space:]]*$/ {
+                if ($0 ~ /^[[:space:]]*(UNIT|ENVEOF|GUARDEOF|CAPCONFIG)[[:space:]]*$/) { inheredoc=0 }
+                print; next
+            }
+            inheredoc { print; next }
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*$/ { next }
+            { print }
+        ' "$1"
+    }
+    GUARD_GZ="$(strip_comments "$HERE/deadline-guard.sh" | gzip -9 | base64 -w0)"
+
+{
+    cat <<PROLOGUE
+#!/bin/bash
+set -e
+
+# prelude_fail: the prelude runs before the bootstrap has a log file or die(),
+# so a failure here would otherwise abort silently; report to /dev/console.
+prelude_fail() {
+    rc=\$?
+    msg="prelude failed (rc=\$rc) at line \$1"
+    printf 'capacity-bootstrap: %s\\n' "\$msg" > /dev/console 2>/dev/null || true
+    echo "[bootstrap][FATAL] \$msg" >&2
+    exit "\$rc"
+}
+trap 'prelude_fail \$LINENO' ERR
+echo "capacity-bootstrap: prelude start" > /dev/console 2>/dev/null || true
+mkdir -p /etc/capacity-run
+chmod 700 /etc/capacity-run
+
+echo '${TLS_CRT_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.crt
+echo '${TLS_KEY_GZ}' | base64 -d | gzip -d > /etc/capacity-run/tls.key
+chmod 600 /etc/capacity-run/tls.key /etc/capacity-run/tls.crt
+
+mkdir -p /usr/local/lib/capacity-run-src
+echo '${GUARD_GZ}' | base64 -d | gzip -d > /usr/local/lib/capacity-run-src/deadline-guard.sh
+chmod 755 /usr/local/lib/capacity-run-src/deadline-guard.sh
+
+cat > /etc/capacity-run/run-config.env <<'CAPCONFIG'
+LAUNCH_EPOCH=${LAUNCH_EPOCH}
+EXPECTED_COMMIT=${EXPECTED_COMMIT}
+EVIDENCE_TOKEN=${EVIDENCE_TOKEN}
+CAPACITY_HOSTNAME=${CAPACITY_HOSTNAME}
+RUN_ID=${RUN_ID}
+FIXTURE_USERS=${FIXTURE_USERS:-200}
+POSTGRES_USER=${POSTGRES_USER:-assetflow}
+POSTGRES_DB=${POSTGRES_DB:-assetflow}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+REDIS_PASSWORD=${REDIS_PASSWORD}
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+JWT_SECRET=${JWT_SECRET}
+LOADTEST_PASSWORD=${LOADTEST_PASSWORD}
+HTTP_PORT=${HTTP_PORT:-127.0.0.1:8080}
+HTTPS_PORT=${HTTPS_PORT:-127.0.0.1:8440}
+CAPCONFIG
+chmod 600 /etc/capacity-run/run-config.env
+PROLOGUE
+    echo
+    # Comments are stripped from the payload only. EC2 caps user-data at 16 KiB
+    # raw and the annotated sources exceed that; the explanations live in the
+    # repo, not on the instance.
+    strip_comments "$HERE/user-data.sh"
+} > "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+
+# The limit is on the RAW bytes, because that is what the CLI encodes. Checking
+# the base64 length instead would let a payload through that EC2 rejects.
+RAW_BYTES=$(wc -c < "${TMPDIR:-/tmp}/capacity-user-data.raw.$$")
+if [ "$RAW_BYTES" -gt 16384 ]; then
+    echo "render-user-data: payload is $RAW_BYTES bytes, over the 16384 limit" >&2
+    rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+    exit 4
+fi
+
+# A payload with no shebang would be executed by cloud-init as a shell fragment
+# and fail on the first non-shell line. This is the check that would have caught
+# a stripped shebang.
+head -1 "${TMPDIR:-/tmp}/capacity-user-data.raw.$$" | grep -qx '#!/bin/bash' || {
+    echo "render-user-data: payload does not start with #!/bin/bash" >&2
+    rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+    exit 5
+}
+
+if [ "$RENDER_ENCODING" = base64 ]; then
+    base64 < "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+else
+    cat "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"
+fi
+rm -f "${TMPDIR:-/tmp}/capacity-user-data.raw.$$"

@@ -126,20 +126,36 @@ echo "ASSETFLOW_DEPLOY_COMPLETE ${IMAGE##*:}"
                     os.killpg(process.pid, signal.SIGKILL)
                 process.communicate()
 
-    def test_final_verification_requires_200_not_redirect_or_503(self):
+    def test_final_verification_requires_the_edge_check_to_pass(self):
+        # The step no longer accepts an API readiness code as proof of a deploy:
+        # a green run once left Nginx serving the previous SPA build while
+        # /api/health/ready answered 200. It must run verify-edge.sh and fail
+        # when that reports a stale edge.
         run = next(s['run'] for s in JOB['steps'] if s.get('name') == 'Verify the deployment on the host')
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
-            executable(path / 'ssh', 'bash -c "${@: -1}"\n')
-            executable(path / 'curl', 'printf "%s" "$HTTP_STATUS"\n')
+            # Consume the piped script (as the real ssh does), then report the
+            # stub's verdict. `cat` also proves the script is sent on stdin
+            # rather than interpolated into the remote command line.
+            executable(path / 'ssh', 'cat >/dev/null; [ "${SSH_EXIT:-0}" != 0 ] || echo "ASSETFLOW_EDGE_VERIFIED $WEB_IMAGE"; exit "${SSH_EXIT:-0}"\n')
             executable(path / 'sleep', 'exit 0\n')
-            for status in ['200', '301', '503']:
-                with self.subTest(status=status):
-                    result = subprocess.run(['bash', '-e', '-c', run], capture_output=True, text=True, timeout=5,
+            for ssh_exit, code, expected in (('0', 0, 'the live edge is serving'),
+                                             ('1', 1, 'Edge is not serving the deployed build')):
+                with self.subTest(ssh_exit=ssh_exit):
+                    result = subprocess.run(
+                        ['bash', '-e', '-c', run], cwd=ROOT, capture_output=True, text=True, timeout=15,
                         env={**os.environ, 'PATH': f'{path}:{os.environ["PATH"]}', 'HOST': 'invalid.test',
-                             'USER': 'deploy', 'HTTP_STATUS': status})
-                    self.assertEqual(result.returncode, 0 if status == '200' else 1, result.stderr)
-                    self.assertIn(f'readiness HTTP {status}', result.stdout)
+                             'USER': 'deploy', 'SSH_EXIT': ssh_exit, 'WEB_IMAGE': WEB})
+                    self.assertEqual(result.returncode, code, result.stderr)
+                    self.assertIn(expected, result.stdout)
+
+    def test_the_verification_step_pipes_verify_edge_and_does_not_inline_it(self):
+        # stdin must come from the script file: the same stdin-consumption bug
+        # PR #30 fixed for the deploy step applies to any `ssh ... bash -s`.
+        run = next(s['run'] for s in JOB['steps'] if s.get('name') == 'Verify the deployment on the host')
+        self.assertIn('< infra/scripts/verify-edge.sh', run)
+        self.assertIn('verify-edge.sh', run)
+        self.assertNotIn('curl -sS --max-time 5 -o /dev/null', run)
 
     def test_host_lock_refuses_second_run_before_touching_checkout(self):
         with tempfile.TemporaryDirectory() as folder:

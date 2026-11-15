@@ -4,8 +4,10 @@
 > what the price is, and what happens when it grows.**
 >
 > The prices below are the on-demand list prices for **ap-southeast-2
-> (Sydney)**, read on 2026-10-28. Your bill is the authority; this table is
-> the model that predicts it.
+> (Sydney)**. Your bill is the authority; this table is the model that predicts
+> it. See [Where these prices come from](#where-these-prices-come-from) for the
+> source and query date of each figure — the table is *current* pricing, and the
+> historical estimates from earlier measurements are kept separate and labelled.
 
 ## The formula
 
@@ -24,17 +26,62 @@ the data transfer. Everything else is fixed.
 | Item | Size | Unit price | Monthly | Note |
 |------|------|-----------|---------|------|
 | EC2 `t3.micro` | 730 h | $0.0132 / h | **$9.64** | the API + PostgreSQL + Redis + all five monitoring containers |
-| EBS `gp3` | 30 GB | $0.08 / GB-month | **$2.40** | the database volume |
+| EBS `gp3` | 30 GB | $0.096 / GB-month | **$2.88** | the database volume |
 | S3 — backups | < 1 MB | $0.0245 / GB-month | **≈ $0.00** | 43 KiB dumps in `assetflow-backups-bhavesh-2026`, versioned, SSE-S3; older versions live 30 days, objects expire at 365 |
 | S3 — archive | none yet | $0.0245 / GB-month | **$0.00** | the old rows move to Glacier after 30 days |
 | S3 requests | ~30 PUT/month | $0.005 / 1 000 | **$0.00** | one `PutObject` per nightly backup |
 | Data transfer | < 1 GB | first 100 GB free | **$0.00** | the S3 traffic inside the region is free |
 | Monitoring | — | — | **$0.00** | Prometheus, Grafana, Alertmanager, two exporters — containers on the same host |
-| **Total** | | | **$12.04 / month** | plus a few cents of S3 once the dumps accumulate |
+| **Total** | | | **$12.52 / month** | plus a few cents of S3 once the dumps accumulate |
 
 > **Free tier:** a new account gets 750 h of `t3.micro` and 30 GB of EBS per
 > month for 12 months. In that window the bill for this stack is **$0.00** —
 > which is exactly why the budget alarm matters in month 13, not month 1.
+
+## Where these prices come from
+
+Two different kinds of number live in this repository, and mixing them is how a
+cost model drifts away from reality:
+
+* **Current pricing** — the unit prices in the table above. These are queried
+  from the AWS Price List API (`pricing:GetProducts`), not copied from memory.
+* **Historical estimates** — figures recorded during earlier measurements or
+  runs. These describe what a previous run *cost* or *was expected to cost*.
+  They are evidence about the past, not a price you should reuse today.
+
+### Verified unit prices
+
+| Item | Price | Region filter | Source | Queried |
+|------|-------|---------------|--------|---------|
+| EC2 `t3.micro` | $0.0132 / h | Asia Pacific (Sydney) | AWS Price List API, service `AmazonEC2` | 2026-11-09 |
+| EBS `gp3` storage | **$0.096 / GB-month** | Asia Pacific (Sydney) | AWS Price List API, service `AmazonEC2`, dimension `GB-Mo` | 2026-11-09 |
+| EBS `gp3` IOPS | $0.006 / provisioned IOPS-month | Asia Pacific (Sydney) | AWS Price List API, service `AmazonEC2`, dimension `IOPS-Mo` | 2026-11-09 |
+| Public IPv4 (in use) | $0.005 / h | Asia Pacific (Sydney) | AWS Price List API, service `AmazonVPC`, `APS2-PublicIPv4:InUseAddress` | 2026-11-09 |
+
+> **Correction (2026-11-09).** This document previously listed `gp3` at
+> **$0.08 / GB-month**. The verified Sydney list price is **$0.096 / GB-month**,
+> so the old figure understated the volume cost by 20% — $2.40/month instead of
+> $2.88/month. The total moved from $12.04 to $12.52. Anyone budgeting from the
+> old number was budgeting about 4% low overall.
+
+### How to re-verify
+
+```bash
+aws pricing get-products --service-code AmazonEC2 --region us-east-1   --filters "Type=TERM_MATCH,Field=volumeApiName,Value=gp3"             "Type=TERM_MATCH,Field=location,Value=Asia Pacific (Sydney)"   --query 'PriceList' --output json
+# then read the dimension whose unit is GB-Mo (the IOPS-Mo dimension is a
+# different price and reading the wrong one silently gives an unrelated figure)
+```
+
+The Price List API is a global endpoint in `us-east-1`; the *region* you are
+pricing appears as a `location` filter, not as a request region.
+
+### Historical estimates (do not reuse as current pricing)
+
+| Estimate | Figure | Basis | Status |
+|----------|--------|-------|--------|
+| Isolated capacity run, 4 hours (t3.micro + 30 GB gp3 + public IPv4) | $0.0886 | verified unit prices × 4 h | HISTORICAL — a specific past plan, not the monthly cost |
+| Same run, worst case with 30 min buffer | $0.0997 | verified unit prices × 4.5 h | HISTORICAL |
+| Monthly cost before the gp3 correction | $12.04 | gp3 at $0.08 (unverified) | SUPERSEDED — retained to show what changed |
 
 ## How the cost grows
 

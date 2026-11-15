@@ -220,15 +220,26 @@ describe('Asset extensions: HTTP + migrated Postgres, mocked S3 boundary', () =>
     await processImport(db, p.id, 0);
     await processImport(db, p.id, 0);
     expect(await db.asset.count()).toBe(3);
-    expect(
-      (await db.asset.findMany({ orderBy: { assetTag: 'asc' } })).map(
-        (a) => a.assetTag,
-      ),
-    ).toEqual(
-      [0, 1, 2].map(
-        (i) => `AF-${String(Number(tag.slice(3)) + i).padStart(4, '0')}`,
-      ),
-    );
+    // The two imported assets must continue the counter sequence from the
+    // setup asset. Two things made the old assertion wrong:
+    //
+    //   1. it rebuilt each tag with `padStart(4)`, which silently discards the
+    //      width of the tag it started from. Tags are `^AF-[0-9]{4,12}$`, so a
+    //      5-digit tag such as AF-05498 is legal and was being rewritten to
+    //      AF-5498 - a tag the implementation never issued.
+    //   2. it compared tags as strings via `orderBy: { assetTag: 'asc' }`,
+    //      which is lexicographic: 'AF-09999' sorts before 'AF-10000' and a
+    //      5-digit tag sorts before its 4-digit neighbours.
+    //
+    // So compare the *numbers* in issuance order and keep the original width.
+    const rows = await db.asset.findMany({ orderBy: { createdAt: 'asc' } });
+    const numbers = rows
+      .map((a) => Number(a.assetTag.slice('AF-'.length)))
+      .sort((a, b) => a - b);
+    const start = Number(tag.slice('AF-'.length));
+    expect(numbers).toEqual([start, start + 1, start + 2]);
+    // Every tag still satisfies the documented contract.
+    for (const row of rows) expect(row.assetTag).toMatch(/^AF-[0-9]{4,12}$/);
     const job = await request(app.getHttpServer())
       .get(`/api/asset-imports/${p.id}`)
       .set(auth(admin))

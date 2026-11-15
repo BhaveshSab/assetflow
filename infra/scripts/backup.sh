@@ -83,27 +83,55 @@ else
 fi
 
 # 3. The upload -------------------------------------------------------------
+# A backup is only off-host once the upload has been verified. Track that
+# explicitly: the local prune below must not delete dumps that have no verified
+# remote copy, which is how a failing bucket could quietly reduce the number of
+# backups to zero while the script exited 0.
+UPLOAD_VERIFIED=false
 if [ -n "${S3_BUCKET:-}" ]; then
     require_s3
     if [ "$DRY_RUN" = true ]; then
         say "[dry-run] aws s3 cp ${DUMP_FILE} s3://${S3_BUCKET}/${S3_PREFIX}/"
         say "[dry-run] aws s3 cp ${CHECKSUM_FILE} s3://${S3_BUCKET}/${S3_PREFIX}/"
+        UPLOAD_VERIFIED=true
     else
         say "+ aws s3 cp (dump)"
-        aws s3 cp "$DUMP_FILE" "s3://${S3_BUCKET}/${S3_PREFIX}/" --only-show-errors
+        aws s3 cp "$DUMP_FILE" "s3://${S3_BUCKET}/${S3_PREFIX}/" --only-show-errors \
+            || die "the dump upload failed — the backup is NOT off-host. Local copies were kept."
         say "+ aws s3 cp (checksum)"
-        aws s3 cp "$CHECKSUM_FILE" "s3://${S3_BUCKET}/${S3_PREFIX}/" --only-show-errors
+        aws s3 cp "$CHECKSUM_FILE" "s3://${S3_BUCKET}/${S3_PREFIX}/" --only-show-errors \
+            || die "the checksum upload failed — the backup is NOT verifiably off-host. Local copies were kept."
+        # Confirm the objects exist rather than trusting the exit status alone.
+        for object in "$(basename "$DUMP_FILE")" "$(basename "$CHECKSUM_FILE")"; do
+            listing="$(aws s3 ls "s3://${S3_BUCKET}/${S3_PREFIX}/${object}")" \
+                || die "${object} is not listed in s3://${S3_BUCKET}/${S3_PREFIX}/ after upload"
+            [ -n "$listing" ] || die "${object} is not listed in the backup prefix"
+            # Fetch bytes independently; listing alone cannot prove integrity.
+            remote_hash="$(aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/${object}" - --only-show-errors | sha256sum)" \
+                || die "cannot verify uploaded ${object}; local copies were kept"
+            local_hash="$(sha256sum "${BACKUP_DIR}/${object}")"
+            [ "${remote_hash%% *}" = "${local_hash%% *}" ] \
+                || die "uploaded ${object} checksum mismatch; local copies were kept"
+        done
+        say "  both S3 objects match the local bytes (restore not yet verified)"
+        UPLOAD_VERIFIED=true
     fi
 else
     warn "S3_BUCKET is not set — the backup stays on the local disk only"
 fi
 
 # 4. The retention ----------------------------------------------------------
-say "pruning local backups older than ${RETENTION_DAYS} days"
-if [ "$DRY_RUN" = true ]; then
-    say "[dry-run] find ${BACKUP_DIR} -name 'assetflow-*.dump*' -mtime +${RETENTION_DAYS} -delete"
+# Pruning is gated on a verified upload. Pruning before (or regardless of) the
+# upload is what turns "the bucket was misconfigured" into "there are no backups".
+if [ "$UPLOAD_VERIFIED" != true ] && [ "${PRUNE_WITHOUT_UPLOAD:-no}" != yes ]; then
+    warn "skipping the local prune: no verified off-host copy of this run (set PRUNE_WITHOUT_UPLOAD=yes to prune anyway)"
 else
-    find "$BACKUP_DIR" -name 'assetflow-*.dump*' -type f -mtime "+${RETENTION_DAYS}" -delete
+    say "pruning local backups older than ${RETENTION_DAYS} days"
+    if [ "$DRY_RUN" = true ]; then
+        say "[dry-run] find ${BACKUP_DIR} -name 'assetflow-*.dump*' -mtime +${RETENTION_DAYS} -delete"
+    else
+        find "$BACKUP_DIR" -name 'assetflow-*.dump*' -type f -mtime "+${RETENTION_DAYS}" -delete
+    fi
 fi
 
 if [ -n "${S3_BUCKET:-}" ]; then
@@ -119,8 +147,14 @@ fi
 if [ "$DRY_RUN" = true ]; then
     say "[dry-run] write_textfile_metric assetflow_backup_last_success_timestamp_seconds $(date +%s)"
 else
+    if [ "$UPLOAD_VERIFIED" = true ]; then
+        metric=assetflow_backup_last_success_timestamp_seconds
+    else
+        metric=assetflow_local_backup_last_success_timestamp_seconds
+        warn "local-only backup; off-host backup success metric was not updated"
+    fi
     write_textfile_metric \
-        assetflow_backup_last_success_timestamp_seconds \
+        "$metric" \
         "$(date +%s)" \
         "Unix timestamp of the last successful database backup"
     say "backup finished"

@@ -92,6 +92,97 @@ describe('Assets (e2e)', () => {
       expect(res.body.assetTag).toBe('AF-10001');
     });
 
+    // Regressions for a CI failure where an assertion expected AF-5498 and saw
+    // AF-05498. Two separate defects produced it; both are pinned here.
+    describe('tag width is not fixed at four digits', () => {
+      it('writes tags of a stable width in a single reservation', async () => {
+        // The counter hands out AF-9999 then AF-10000; the width grows exactly
+        // once and never shrinks back, so no two live tags disagree in width.
+        const prisma = app.get(PrismaService);
+        await prisma.$executeRawUnsafe(
+          'UPDATE "AssetTagCounter" SET "value" = 9999 WHERE "id" = 1',
+        );
+        const a = await request(app.getHttpServer())
+          .post('/api/assets')
+          .set(auth(adminToken))
+          .send({ name: 'W 9999', categoryId: fixtures.electronics.id })
+          .expect(201);
+        expect(a.body.assetTag).toBe('AF-10000');
+
+        const b = await request(app.getHttpServer())
+          .post('/api/assets')
+          .set(auth(adminToken))
+          .send({ name: 'W 10000', categoryId: fixtures.electronics.id })
+          .expect(201);
+        // Must not be re-padded down to four digits (which would be AF-0001 and
+        // collide with an existing tag); the number keeps its own width.
+        expect(b.body.assetTag).toBe('AF-10001');
+        expect(b.body.assetTag).toMatch(/^AF-[0-9]{4,12}$/);
+      });
+
+      it('never emits two different strings for the same number', async () => {
+        // AF-5498 and AF-05498 are different strings for the same value. Both
+        // are valid under ^AF-[0-9]{4,12}$, so the tag format alone cannot
+        // catch this - it is the allocator that must pick one width per value.
+        const prisma = app.get(PrismaService);
+        await prisma.$executeRawUnsafe(
+          'UPDATE "AssetTagCounter" SET "value" = 5497 WHERE "id" = 1',
+        );
+        const created = await request(app.getHttpServer())
+          .post('/api/assets')
+          .set(auth(adminToken))
+          .send({ name: 'Width', categoryId: fixtures.electronics.id })
+          .expect(201);
+        expect(created.body.assetTag).toBe('AF-5498');
+
+        // The zero-padded twin must be insertable as a distinct string, which is
+        // exactly why an assertion must not rebuild a tag with padStart(4).
+        const twin = await prisma.asset.create({
+          data: {
+            assetTag: 'AF-05498',
+            name: 'Zero-padded twin',
+            categoryId: fixtures.electronics.id,
+          },
+        });
+        expect(twin.assetTag).toBe('AF-05498');
+        expect(twin.assetTag).not.toBe(created.body.assetTag);
+
+        // Sorting as strings puts the padded twin first; sorting as numbers
+        // puts them equal. An assertion must compare numbers, not strings.
+        const rows = await prisma.asset.findMany({
+          orderBy: { assetTag: 'asc' },
+        });
+        const order = rows.map((r) => r.assetTag);
+        expect(order.indexOf('AF-05498')).toBeLessThan(
+          order.indexOf('AF-5498'),
+        );
+      });
+
+      it('createAsset helper allocates from the counter, not at random', async () => {
+        // The helper used to default to a random AF-##### tag, so a test that
+        // asserted on counter arithmetic was reasoning about an asset the
+        // counter never issued.
+        const prisma = app.get(PrismaService);
+        await prisma.$executeRawUnsafe(
+          'UPDATE "AssetTagCounter" SET "value" = 40 WHERE "id" = 1',
+        );
+        const first = await createAsset(app, {
+          name: 'Helper one',
+          categoryId: fixtures.electronics.id,
+        });
+        const second = await createAsset(app, {
+          name: 'Helper two',
+          categoryId: fixtures.electronics.id,
+        });
+        expect(first.assetTag).toBe('AF-0041');
+        expect(second.assetTag).toBe('AF-0042');
+        const counter = await prisma.assetTagCounter.findUniqueOrThrow({
+          where: { id: 1 },
+        });
+        expect(Number(counter.value)).toBe(42);
+      });
+    });
+
     it('rejects an unknown category', async () => {
       await request(app.getHttpServer())
         .post('/api/assets')

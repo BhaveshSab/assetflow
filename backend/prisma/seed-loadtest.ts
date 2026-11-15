@@ -1,15 +1,22 @@
 /**
  * The load-test fixture: accounts (and optionally assets) for a saturation run.
  *
- *   npm run seed:loadtest -- --users 30
- *   npm run seed:loadtest -- --users 30 --assets 5000
- *   npm run seed:loadtest -- --delete
+ *   npm run seed:loadtest -- --run-id <id> --users 30
+ *   npm run seed:loadtest -- --run-id <id> --users 30 --assets 5000
+ *   npm run seed:loadtest -- --run-id <id> --delete
  *
  * Why this exists: the API limits a client to 300 requests a minute. A load
  * test that reuses one account therefore measures the rate limiter, not the
  * stack — every request is over the same budget. This script creates N
  * accounts so each virtual user can carry its own budget, exactly like N
  * people with N browsers would.
+ *
+ * Ownership. Every row is named after the run that created it
+ * (`loadtest-<run-id>-001@...`, asset tag `LT-<run-id>-000001`). Before that,
+ * two runs shared one name space: a second run overwrote the first run's
+ * accounts and passwords, and `--delete` removed whichever rows happened to
+ * match — possibly another run's, possibly while it was still running.
+ * `--delete` now refuses to touch rows that do not carry the given run id.
  *
  * The password is **not** stored here: it arrives in `LOADTEST_PASSWORD`
  * (generated per run by `infra/scripts/load-test.sh`, thrown away afterwards).
@@ -34,6 +41,25 @@ const EMAIL_DOMAIN = 'assetflow.test';
 const EMAIL_PREFIX = 'loadtest-';
 const TAG_PREFIX = 'LT-';
 
+/**
+ * The run id is embedded in every row this script creates, so one run's data
+ * can never be confused with another's. Restricted to characters that are safe
+ * in an email local part and an asset tag, and long enough to be unique.
+ */
+function requireRunId(): string {
+  const value = process.env.LOADTEST_RUN_ID ?? arg('run-id');
+  if (!value) {
+    throw new Error(
+      '--run-id (or LOADTEST_RUN_ID) is required: fixtures are owned by a run, ' +
+        'so one run cannot delete or reuse another run\'s data',
+    );
+  }
+  if (!/^[a-z0-9][a-z0-9-]{7,47}$/.test(value)) {
+    throw new Error('--run-id must be 8-48 chars of lowercase letters, digits and hyphens');
+  }
+  return value;
+}
+
 function arg(name: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
   if (index === -1) return fallback;
@@ -45,24 +71,46 @@ function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
 }
 
-function emailFor(index: number): string {
-  return `${EMAIL_PREFIX}${String(index).padStart(3, '0')}@${EMAIL_DOMAIN}`;
+function emailFor(runId: string, index: number): string {
+  return `${EMAIL_PREFIX}${runId}-${String(index).padStart(3, '0')}@${EMAIL_DOMAIN}`;
 }
 
-/** Removes every row this script creates (assets first — they reference users). */
-async function remove(): Promise<void> {
+/** Escapes a run id for use inside a `LIKE` pattern. */
+function likeSafe(value: string): string {
+  return value.replace(/([\\%_])/g, '\\$1');
+}
+
+/** Removes every row this run created (assets first — they reference users). */
+async function remove(runId: string): Promise<void> {
+  const tagPattern = `${TAG_PREFIX}${likeSafe(runId)}-%`;
   const assets = await prisma.$executeRaw`
-    DELETE FROM "Asset" WHERE "assetTag" LIKE ${`${TAG_PREFIX}%`}
+    DELETE FROM "Asset" WHERE "assetTag" LIKE ${tagPattern}
   `;
+  // The exact prefix, so a neighbouring run id is never caught by a wildcard.
   const users = await prisma.user.deleteMany({
     where: {
       AND: [
-        { email: { startsWith: EMAIL_PREFIX } },
+        { email: { startsWith: `${EMAIL_PREFIX}${runId}-` } },
         { email: { endsWith: `@${EMAIL_DOMAIN}` } },
       ],
     },
   });
-  console.log(`removed ${assets} load-test asset(s) and ${users.count} load-test account(s)`);
+  console.log(
+    `removed ${assets} load-test asset(s) and ${users.count} account(s) owned by run ${runId}`,
+  );
+}
+
+/** Refuses to run when this run id already owns rows, so a rerun is deliberate. */
+async function assertNotAlreadySeeded(runId: string): Promise<void> {
+  const existing = await prisma.user.count({
+    where: { email: { startsWith: `${EMAIL_PREFIX}${runId}-` } },
+  });
+  if (existing > 0) {
+    throw new Error(
+      `run ${runId} already owns ${existing} account(s): delete them first with ` +
+        `--run-id ${runId} --delete, or use a new run id`,
+    );
+  }
 }
 
 /**
@@ -70,11 +118,12 @@ async function remove(): Promise<void> {
  * longer than the test itself, and the point of them is to make the asset list
  * a realistic query (a sort over a table that does not fit in the CPU cache).
  */
-async function seedAssets(count: number): Promise<void> {
+async function seedAssets(runId: string, count: number): Promise<void> {
+  const categoryName = `Load test ${runId}`;
   const category = await prisma.assetCategory.upsert({
-    where: { name: 'Load test' },
+    where: { name: categoryName },
     update: {},
-    create: { name: 'Load test' },
+    create: { name: categoryName },
   });
 
   await prisma.$executeRaw`
@@ -83,10 +132,10 @@ async function seedAssets(count: number): Promise<void> {
       status, condition, "isBookable", location, "createdAt", "updatedAt"
     )
     SELECT
-      'lt-asset-' || g,
-      ${TAG_PREFIX} || lpad(g::text, 6, '0'),
+      'lt-asset-' || ${runId} || '-' || g,
+      ${TAG_PREFIX} || ${runId} || '-' || lpad(g::text, 6, '0'),
       'Load test asset ' || g,
-      'LT-SN-' || g,
+      'LT-SN-' || ${runId} || '-' || g,
       ${category.id},
       ${AssetStatus.AVAILABLE}::"AssetStatus",
       ${AssetCondition.GOOD}::"AssetCondition",
@@ -97,12 +146,14 @@ async function seedAssets(count: number): Promise<void> {
     FROM generate_series(1, ${count}) AS g
     ON CONFLICT ("assetTag") DO NOTHING
   `;
-  console.log(`upserted up to ${count} asset(s) tagged ${TAG_PREFIX}NNNNNN`);
+  console.log(`upserted up to ${count} asset(s) tagged ${TAG_PREFIX}${runId}-NNNNNN`);
 }
 
 async function main(): Promise<void> {
+  const runId = requireRunId();
+
   if (flag('delete')) {
-    await remove();
+    await remove(runId);
     return;
   }
 
@@ -123,9 +174,11 @@ async function main(): Promise<void> {
     );
   }
 
+  await assertNotAlreadySeeded(runId);
+
   console.warn(
-    `creating ${users} account(s) ${EMAIL_PREFIX}***@${EMAIL_DOMAIN} — ` +
-      'delete them with: npm run seed:loadtest -- --delete',
+    `creating ${users} account(s) ${EMAIL_PREFIX}${runId}-***@${EMAIL_DOMAIN} — ` +
+      `delete them with: npm run seed:loadtest -- --run-id ${runId} --delete`,
   );
 
   // One hash is enough: every fixture account shares the run's password.
@@ -134,7 +187,7 @@ async function main(): Promise<void> {
     : undefined;
 
   for (let i = 1; i <= users; i++) {
-    const email = emailFor(i);
+    const email = emailFor(runId, i);
     await prisma.user.upsert({
       where: { email },
       update: passwordHash
@@ -142,15 +195,15 @@ async function main(): Promise<void> {
         : { status: RecordStatus.ACTIVE },
       create: {
         email,
-        name: `Load Test ${String(i).padStart(3, '0')}`,
+        name: `Load Test ${runId} ${String(i).padStart(3, '0')}`,
         role: Role.EMPLOYEE,
         ...(passwordHash ? { passwordHash } : {}),
       },
     });
   }
-  console.log(`upserted ${users} account(s); the first is ${emailFor(1)}`);
+  console.log(`upserted ${users} account(s); the first is ${emailFor(runId, 1)}`);
 
-  if (assets > 0) await seedAssets(assets);
+  if (assets > 0) await seedAssets(runId, assets);
 }
 
 main()

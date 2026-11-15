@@ -129,7 +129,9 @@ jobs:
           CONFIGURED_PATH: ${{ vars.DEPLOY_PATH }}
         run: |
           set -uo pipefail
-          hosts=$(printf '%s\n' "${CONFIGURED_HOST:-}" 3.107.83.86 13.55.90.25 | awk 'NF && !seen[$0]++')
+          # The fallbacks are historical addresses only. Keep the current one
+          # last so a changed address is still found if DEPLOY_HOST is unset.
+          hosts=$(printf '%s\n' "${CONFIGURED_HOST:-}" 13.55.90.25 | awk 'NF && !seen[$0]++')
           users=$(printf '%s\n' "${CONFIGURED_USER:-}" ubuntu ec2-user | awk 'NF && !seen2[$0]++')
           attempts=/tmp/ssh-attempts.log
           : > "$attempts"
@@ -266,9 +268,13 @@ jobs:
 
           # Images were compiled on the runner and pulled by deploy.sh. Never
           # fall back to compiling a missing image on the production server.
+          # --force-recreate: the edge image is a full SPA build, so a container
+          # that survives this step keeps serving the previous release's assets.
+          # Recreate deliberately, retain the PR30 image-ID checks below, and
+          # additionally verify the served HTML and JavaScript bytes.
           echo "=== activating prebuilt web image $web_image ==="
           WEB_IMAGE="$web_image" docker compose --project-directory infra -f infra/docker-compose.yml \
-            up -d --no-deps --no-build --pull never --wait --wait-timeout 90 nginx || exit 7
+            up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 90 nginx || exit 7
 
           # Healthy old containers must not make a release look successful.
           # Compare actual running image IDs, not mutable tags or bundle dates.
@@ -304,25 +310,62 @@ jobs:
           tail -40 "$out"
 
       - name: Verify the deployment on the host
-        timeout-minutes: 4
+        timeout-minutes: 6
         env:
           HOST: ${{ steps.find.outputs.host }}
           USER: ${{ steps.find.outputs.user }}
+          WEB_IMAGE: ${{ steps.image.outputs.web }}:${{ github.sha }}
+          # The public name to verify TLS against. Without it verify-edge.sh says
+          # so explicitly instead of implying TLS was checked.
+          VERIFY_HOST: ${{ vars.VERIFY_HOST }}
         run: |
           set -uo pipefail
-          # Probe from the host itself. Over the public interface Nginx answers
-          # HTTP with a 301 to HTTPS, and `curl -f` accepts a 301 — the check
-          # would pass even with the API down.
-          for attempt in $(seq 1 10); do
-            if timeout --kill-after=5s 12s ssh -o BatchMode=yes -o ConnectTimeout=5 \
+          # Assert what was actually deployed, not merely that something answers.
+          # This step used to exit 0 as soon as /api/health/ready returned 200,
+          # which alone cannot prove the served frontend is current. verify-edge.sh checks the edge
+          # container's image reference, that the served HTML references an asset
+          # present inside that image, and readiness — probing from the host, so
+          # the public 301 to HTTPS cannot mask a broken TLS listener.
+          #
+          # Transport follows PR #30 exactly, for the same reason: the script is
+          # spooled to a file on the remote and run with stdin closed. Handing it
+          # to `bash -s` shares the command stream with every child's stdin, so a
+          # greedy child (docker/curl reading a TTY-ified handle) can swallow the
+          # rest of the script and return 0. This is a reproduced failure mode,
+          # not attribution of the historical host incident. `ssh -T` only removes the pseudo-terminal; it does not close
+          # stdin. Remote exit status is the script's, and only when it really ran.
+          remote_bootstrap=$(cat <<'BOOTSTRAP'
+          set -euo pipefail
+          umask 077
+          script=$(mktemp)
+          trap 'rm -f "$script"' EXIT
+          cat > "$script"
+          bash "$script" "$@" </dev/null
+          BOOTSTRAP
+          )
+          printf -v remote_command '%q ' timeout --signal=TERM --kill-after=5s 40s \
+            bash -c "$remote_bootstrap" -- "${WEB_IMAGE}" "${VERIFY_HOST:-}"
+          umask 077
+          out=$(mktemp)
+          trap 'rm -f "$out"' EXIT
+          for attempt in $(seq 1 5); do
+            if [ "$attempt" -gt 1 ]; then sleep 5; fi
+            if timeout --kill-after=5s 45s ssh -T -o BatchMode=yes -o ConnectTimeout=5 \
                  -o ServerAliveInterval=5 -o ServerAliveCountMax=1 \
                  -o StrictHostKeyChecking=accept-new \
-                 "${USER}@${HOST}" \
-                 'status=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1/api/health/ready); printf "readiness HTTP %s\n" "$status"; [ "$status" = 200 ]'; then
-              echo "the API is healthy"
-              exit 0
+                 "${USER}@${HOST}" "$remote_command" \
+                 < infra/scripts/verify-edge.sh 2>&1 | tee "$out"; then
+              # The exit status is not enough. A greedy child inside the script
+              # can swallow the rest of it — including the failing statement —
+              # and leave a 0 behind. verify-edge.sh prints a commit-and-image
+              # specific marker only on the success path; require it literally.
+              if grep -Fxq "ASSETFLOW_EDGE_VERIFIED ${WEB_IMAGE}" "$out"; then
+                echo "the live edge is serving ${WEB_IMAGE}"
+                exit 0
+              fi
+              echo "::warning title=Edge check did not confirm::exit 0 without the completion marker; retrying"
             fi
-            sleep 10
           done
-          echo "::error title=Unhealthy after deploy::/api/health/ready did not answer on the host after bounded retries. Inspect the host; this verification step does not roll back the deployment."
+          tail -40 "$out" 2>/dev/null || true
+          echo "::error title=Edge is not serving the deployed build::verify-edge.sh exited 0 without the ASSETFLOW_EDGE_VERIFIED marker, or failed outright: the edge image reference, the served asset or readiness did not match ${WEB_IMAGE}. Inspect the host; this step does not roll back."
           exit 1

@@ -24,11 +24,19 @@
 # Usage:
 #   ./load-test.sh [--stages LIST] [--stage-duration TIME] [--keep-going]
 #                  [--single-user] [--users N] [--assets N] [--no-sample]
+#
+#   --users defaults to 200, the agreed account count for the capacity run.
+#   The bootstrap seeds the same number (FIXTURE_USERS), so the two must
+#   agree or the run measures a different workload than it seeded.
 #                  [--cleanup] [--dry-run] [--help]
 #
 # Environment:
-#   BASE_URL             the API origin, no /api (default http://localhost:8080).
-#                        On the server: BASE_URL=https://3.107.83.86.sslip.io
+#   BASE_URL             the API origin, no /api (default http://localhost:8080,
+#                        which is the local override's published port).
+#                        Point it at a disposable or staging stack. Production
+#                        origins are refused unless ALLOW_PRODUCTION_LOAD_TEST=yes
+#                        is set explicitly, because this run is designed to bend
+#                        the stack it targets.
 #   P95_THRESHOLD_MS     the p95 that counts as "bending" (default 1000)
 #   ERROR_RATE_THRESHOLD the error rate that counts as "bending" (default 0.01)
 #   SLEEP                seconds between requests per VU (default 1)
@@ -45,8 +53,12 @@ STAGES="${STAGES:-5,10,25,50,100,200}"
 STAGE_DURATION="${STAGE_DURATION:-2m}"
 P95_THRESHOLD_MS="${P95_THRESHOLD_MS:-1000}"
 ERROR_RATE_THRESHOLD="${ERROR_RATE_THRESHOLD:-0.01}"
+# The abort ceiling: above this failure rate the target is failing, not bending.
+ABORT_ERROR_RATE="${ABORT_ERROR_RATE:-0.5}"
+# Set when the abort ceiling stops the ramp, so the report can say where.
+ABORTED_AT=""
 SLEEP="${SLEEP:-1}"
-LOADTEST_USERS="${LOADTEST_USERS:-30}"
+LOADTEST_USERS="${LOADTEST_USERS:-200}"
 LOADTEST_ASSETS="${LOADTEST_ASSETS:-0}"
 
 KEEP_GOING=false
@@ -86,6 +98,54 @@ else
     SAY_MODE="${LOADTEST_USERS} accounts (one budget per virtual user)"
 fi
 
+# A denylist alone cannot establish isolation. Validate syntax before printing
+# any origin (userinfo could contain credentials); actual execution is gated below.
+command -v python3 >/dev/null 2>&1 || die "python3 is required for origin validation"
+BASE_URL="$(python3 "${INFRA_DIR}/scripts/lib/validate-load-origin.py" "$BASE_URL")" \
+    || die "invalid BASE_URL"
+
+# ----------------------------------------------------- production guard --
+# This script exists to find the point where the stack bends. Pointing it at the
+# live deployment would create an outage to measure one, so production origins
+# are refused unless the operator names that intent explicitly. Staging and
+# disposable stacks are unaffected.
+#
+# This runs BEFORE the banner and BEFORE the --dry-run branch: a dry run that
+# prints a plan against the production host is still a mistake being rehearsed,
+# and the guard previously sat below both, so `--dry-run` exited 0 against
+# production and the operator learned nothing.
+#
+# Matching is case-insensitive and covers every name the instance answers to.
+# A string compare against two literals missed `HTTPS://13.55.90.25.sslip.IO`
+# and the EC2 public DNS, so a dotted/uppercase spelling of production passed.
+PRODUCTION_HOSTS="13.55.90.25 13.55.90.25.sslip.io ec2-13-55-90-25.ap-southeast-2.compute.amazonaws.com"
+# Any origin under these suffixes is production too (a subdomain or a CNAME).
+PRODUCTION_SUFFIXES=".sslip.io"
+load_host="${BASE_URL#*://}"
+load_host="${load_host%%/*}"
+load_host="${load_host%%:*}"
+# Strip a trailing dot (fully-qualified form) and compare lower-cased.
+load_host="${load_host%.}"
+load_host="$(printf '%s' "$load_host" | tr '[:upper:]' '[:lower:]')"
+load_is_production=false
+for production_host in $PRODUCTION_HOSTS; do
+    if [ "$load_host" = "$production_host" ]; then load_is_production=true; break; fi
+done
+for production_suffix in $PRODUCTION_SUFFIXES; do
+    case "$load_host" in *"$production_suffix") load_is_production=true; break ;; esac
+done
+# An EC2 public DNS name of this instance, in any region, is production.
+case "$load_host" in ec2-13-55-90-25.*.compute.amazonaws.com) load_is_production=true ;; esac
+if [ "$load_is_production" = true ] && [ "${ALLOW_PRODUCTION_LOAD_TEST:-no}" != yes ]; then
+    die "${BASE_URL} resolves to the production deployment. A saturation run must not target it; use a staging or disposable stack, or set ALLOW_PRODUCTION_LOAD_TEST=yes if that is genuinely intended."
+fi
+
+# STAGES and its siblings are positional arguments in this script; the banner
+# below is the first thing that reads them. Under `set -u` an invocation without
+# an explicit --stages/STAGES assignment aborted with "STAGES: unbound variable"
+# before the guard could ever be reached.
+STAGES="${STAGES:-5,10,25,50,100,200}"
+
 say "=== AssetFlow saturation test ==="
 say "target:     ${BASE_URL}"
 say "stages:     ${STAGES} (${STAGE_DURATION} each)"
@@ -106,6 +166,12 @@ if [ "$DRY_RUN" = true ]; then
     say "[dry-run] nothing was changed"
     exit 0
 fi
+
+# Fail closed. Run-owned fixtures, target binding, abort and failure-safe cleanup
+# are now implemented and covered by the loadtest-isolation integration job, but
+# the gate stays ON until that evidence has been reviewed. No environment
+# override is sufficient approval. Remove this gate only in a reviewed follow-up.
+die "load execution disabled: run-owned fixtures and target binding are implemented and under review; --dry-run remains available"
 
 # ---------------------------------------------------------------- preflight --
 say "+ preflight"
@@ -129,12 +195,34 @@ fi
 
 if command -v k6 >/dev/null 2>&1; then
     K6=(k6)
+    K6_LOCAL=true
 elif command -v docker >/dev/null 2>&1; then
-    say "  k6 is not installed — using the grafana/k6 container"
-    K6=(docker run --rm --network host -v "${REPO_ROOT}:/work" -w /work grafana/k6)
+    say "  k6 is not installed — using the grafana/k6:2.3.0 container"
+    # Pinned by version AND digest: a floating `grafana/k6` silently changes
+    # the measurement between runs, and a broken or replaced `latest` would
+    # arrive unannounced in a capacity report. The digest is the multi-arch
+    # index published 2026-10-24. Bump deliberately, with the report.
+    # --user keeps every generated file owned by the invoking user instead of
+    # root, which otherwise leaves docs/results/ unwritable for the next run.
+    K6=(docker run --rm --network host --user "$(id -u):$(id -g)" -v "${REPO_ROOT}:/work" -w /work \
+        "${K6_IMAGE:-grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8}")
+    K6_LOCAL=false
 else
     die "k6 is not installed and Docker is unavailable (https://k6.io/docs/get-started/installation/)"
 fi
+
+# Inside the container the repository is mounted at /work, so a host absolute
+# path is invisible there. Every path handed to k6 has to be translated; without
+# this the summary was written to a path k6 could not create and the script then
+# reported "missing/invalid k6 measurement" — or, worse, an empty summary that
+# looked like a healthy stage.
+to_k6_path() {
+    if [ "$K6_LOCAL" = true ]; then
+        printf '%s' "$1"
+    else
+        printf '/work%s' "${1#"$REPO_ROOT"}"
+    fi
+}
 
 K6_TLS=()
 if [ "${K6_INSECURE:-false}" = true ]; then
@@ -143,29 +231,109 @@ fi
 
 mkdir -p "$RUN_DIR"
 
+# --------------------------------------------------------------- cleanup ----
+# A run-owned sampler must not outlive the run. Without this, Ctrl-C (or a
+# failing stage) leaves `sample_csv` writing into docs/results/ forever, on a
+# host that may only have a few hundred MiB free. Installed BEFORE any fixture
+# or sampler is created, and it preserves the original exit status while still
+# reporting its own failures.
+SAMPLER_PID=""
+CLEANUP_DONE=false
+cleanup() {
+    local status=$?
+    if [ "$CLEANUP_DONE" = true ]; then return "$status"; fi
+    CLEANUP_DONE=true
+    if [ -n "$SAMPLER_PID" ]; then
+        if kill -0 "$SAMPLER_PID" 2>/dev/null; then
+            kill "$SAMPLER_PID" 2>/dev/null || true
+            wait "$SAMPLER_PID" 2>/dev/null || true
+        fi
+    fi
+    # The sentinel file is the sampler's own stop condition; remove it here so
+    # a later run cannot inherit a stale sampler from this one.
+    for sentinel in "${RUN_DIR}"/samples-stage-*.csv.running; do
+        [ -e "$sentinel" ] || continue
+        rm -f "$sentinel" 2>/dev/null || warn "could not remove ${sentinel}"
+    done
+    return "$status"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+
 # The accounts exist only for this run: the password is generated here, used by
 # the seed and by k6, and never written down.
-LOADTEST_PASSWORD="$(base64 </dev/urandom | tr -d '/+=' | cut -c1-40)"
+#
+# The read must be bounded. `base64 </dev/urandom` reads an endless stream: when
+# the consumer stops, the writer keeps producing until it is killed, so the
+# assignment could spin a CPU indefinitely on a small host instead of returning
+# a password. 64 random bytes are plenty for 40 alphanumerics.
+new_loadtest_password() {
+    head -c 64 /dev/urandom | base64 | tr -d '/+=\n' | cut -c1-40
+}
+
+LOADTEST_PASSWORD="$(new_loadtest_password)"
+if [ "${#LOADTEST_PASSWORD}" -ne 40 ]; then
+    die "could not generate a load-test password (got ${#LOADTEST_PASSWORD} characters)"
+fi
+
+# ------------------------------------------------------------ run ownership --
+# Every row this run creates is named after it, so a concurrent run can neither
+# overwrite this run's accounts nor delete them when it cleans up.
+LOADTEST_RUN_ID="${LOADTEST_RUN_ID:-$(date -u +%Y%m%dt%H%M%sz)-$(new_loadtest_password | cut -c1-8 | tr '[:upper:]' '[:lower:]')}"
+case "$LOADTEST_RUN_ID" in
+    [a-z0-9]*) ;;
+    *) die "LOADTEST_RUN_ID must start with a lowercase letter or digit" ;;
+esac
+say "run id:     ${LOADTEST_RUN_ID}"
+
+# Cleanup is registered before anything is created, so an interrupt, a failed
+# stage or a failed seed all leave the database as it was found.
+CLEANUP_REQUIRED=false
+load_cleanup() {
+    local status=$?
+    if [ "$CLEANUP_REQUIRED" = true ]; then
+        say "+ removing this run's fixture (${LOADTEST_RUN_ID})"
+        compose run --rm -T \
+            -e LOADTEST_RUN_ID="$LOADTEST_RUN_ID" \
+            migrate npm run seed:loadtest -- --run-id "$LOADTEST_RUN_ID" --delete \
+            >&2 || warn "fixture cleanup failed — remove run ${LOADTEST_RUN_ID} by hand"
+    fi
+    return "$status"
+}
+trap load_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 say "+ seeding the fixture (${LOADTEST_USERS} accounts, ${LOADTEST_ASSETS} assets)"
+CLEANUP_REQUIRED=true
 compose run --rm -T \
     -e LOADTEST_PASSWORD="$LOADTEST_PASSWORD" \
-    migrate npm run seed:loadtest -- --users "$LOADTEST_USERS" --assets "$LOADTEST_ASSETS" \
+    -e LOADTEST_RUN_ID="$LOADTEST_RUN_ID" \
+    migrate npm run seed:loadtest -- \
+        --run-id "$LOADTEST_RUN_ID" --users "$LOADTEST_USERS" --assets "$LOADTEST_ASSETS" \
     >&2
 say "  fixture ready"
 
-# A sign-in must work before the ramp does — otherwise every stage would just
-# measure a 401.
-LOGIN_EMAIL="loadtest-001@assetflow.test"
-if [ "$SINGLE_USER" = false ] && [ "$LOADTEST_USERS" -gt 1 ]; then
-    LOGIN_BODY="$(printf '{"email":"%s","password":"%s"}' "$LOGIN_EMAIL" "$LOADTEST_PASSWORD")"
-    LOGIN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -m 10 \
-        -H 'Content-Type: application/json' --data "$LOGIN_BODY" \
-        "${BASE_URL}/api/auth/login" || true)"
-    [ "$LOGIN_CODE" = "200" ] \
-        || die "the load-test account ${LOGIN_EMAIL} cannot sign in (HTTP ${LOGIN_CODE})"
-    say "  ${LOGIN_EMAIL} signs in"
+# ------------------------------------------------------------ target binding --
+# The fixture is written through local Compose; the traffic goes to BASE_URL.
+# Those were independent, so a run could seed one database and measure another —
+# every request a 401, and the report would blame the stack. The binding proof
+# is a sign-in: only the database the fixture lives in can authenticate a
+# run-owned account whose password was generated seconds ago.
+#
+# This runs for every run, including single-user mode, because it is a
+# correctness check about *which* system is being measured, not about identity.
+LOGIN_EMAIL="loadtest-${LOADTEST_RUN_ID}-001@assetflow.test"
+LOGIN_BODY="$(printf '{"email":"%s","password":"%s"}' "$LOGIN_EMAIL" "$LOADTEST_PASSWORD")"
+LOGIN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -m 10 \
+    -H 'Content-Type: application/json' --data "$LOGIN_BODY" \
+    "${BASE_URL}/api/auth/login" || true)"
+if [ "$LOGIN_CODE" != "200" ]; then
+    say "  fixture account ${LOGIN_EMAIL} -> HTTP ${LOGIN_CODE}" >&2
+    die "target binding failed: ${BASE_URL} cannot sign in as this run's fixture account. The seeder writes to the local Compose database, so a mismatch means the traffic would hit a different system than the one holding the fixture. Point BASE_URL at that same stack."
 fi
+say "  target bound: ${BASE_URL} authenticated this run's fixture account"
 
 # ------------------------------------------------------------------ sampler --
 # One row per second: the host, the two containers and Postgres itself. This is
@@ -254,11 +422,13 @@ for stage in "${STAGE_LIST[@]}"; do
         -e SLEEP="$SLEEP" \
         -e P95_THRESHOLD_MS="$P95_THRESHOLD_MS" \
         -e ERROR_RATE_THRESHOLD="$ERROR_RATE_THRESHOLD" \
+        -e ABORT_ERROR_RATE="$ABORT_ERROR_RATE" \
         -e LOADTEST_USERS="$LOADTEST_USERS" \
         -e LOADTEST_PASSWORD="$LOADTEST_PASSWORD" \
+        -e LOADTEST_RUN_ID="$LOADTEST_RUN_ID" \
         -e SINGLE_USER="$SINGLE_USER" \
-        -e SUMMARY_FILE="$SUMMARY" \
-        "${REPO_ROOT}/infra/scripts/k6-load.js" >"$RAW" 2>&1
+        -e SUMMARY_FILE="$(to_k6_path "$SUMMARY")" \
+        "$(to_k6_path "${REPO_ROOT}/infra/scripts/k6-load.js")" >"$RAW" 2>&1
     K6_EXIT=$?
     set -e
 
@@ -299,7 +469,13 @@ for stage in "${STAGE_LIST[@]}"; do
     VERDICT="ok"
     broke_p95="$(awk -v p="$P95" -v t="$P95_THRESHOLD_MS" 'BEGIN{print (p+0 >= t+0) ? 1 : 0}')"
     broke_err="$(awk -v e="$ERR" -v t="$ERROR_RATE_THRESHOLD" 'BEGIN{print (e+0 >= t+0) ? 1 : 0}')"
-    if [ "$broke_err" = "1" ] && [ "$THROTTLED" -gt 0 ]; then
+    # A target failing past the abort ceiling was stopped, not measured to the end.
+    # Saying ABORTED keeps that distinct from a stage that bent and completed.
+    aborted="$(awk -v e="$ERR" -v t="$ABORT_ERROR_RATE" 'BEGIN{print (e+0 >= t+0) ? 1 : 0}')"
+    if [ "$aborted" = "1" ]; then
+        VERDICT="ABORTED · error rate passed the ${ABORT_ERROR_RATE} ceiling"
+        ABORTED_AT="$stage"
+    elif [ "$broke_err" = "1" ] && [ "$THROTTLED" -gt 0 ]; then
         VERDICT="SATURATED · 429 (rate limit)"
     elif [ "$broke_err" = "1" ]; then
         VERDICT="SATURATED · errors"
@@ -309,7 +485,7 @@ for stage in "${STAGE_LIST[@]}"; do
         VERDICT="SATURATED · correctness/iteration threshold"
     fi
 
-    if [ "$(awk -v r="$RPS" -v p="$PEAK_RPS" 'BEGIN{print (r+0 > p+0) ? 1 : 0}')" = "1" ]; then
+    if [ "$VERDICT" = ok ] && [ "$(awk -v r="$RPS" -v p="$PEAK_RPS" 'BEGIN{print (r+0 > p+0) ? 1 : 0}')" = "1" ]; then
         PEAK_RPS="$RPS"; PEAK_RPS_VUS="$stage"
     fi
 
@@ -350,8 +526,15 @@ ASSET_COUNT="${ASSET_COUNT:-unknown}"
     for row in "${STAGE_ROWS[@]}"; do echo "$row"; done
     echo ""
     if [ -n "$SATURATED_AT" ]; then
-        echo "**Held ${PEAK_RPS} req/s at the top healthy stage (${PEAK_RPS_VUS} VUs);"
+        echo "**Highest healthy stage: ${PEAK_RPS} req/s (${PEAK_RPS_VUS:-none} VUs);"
         echo "saturated at ${SATURATED_AT} VUs — ${SATURATED_WHY}.**"
+        if [ -n "$ABORTED_AT" ]; then
+            echo ""
+            echo "The ramp was **aborted** at ${ABORTED_AT} VUs, not measured to completion:"
+            echo "the error rate passed the ${ABORT_ERROR_RATE} ceiling, so the target was failing"
+            echo "rather than degrading. The numbers for that stage are partial and should not be"
+            echo "read as a capacity figure."
+        fi
     else
         echo "**No stage broke the thresholds.** The highest stage held ${PEAK_RPS} req/s;"
         echo "the ramp was too shallow to find the wall — add stages with \`--stages\`."
@@ -404,16 +587,18 @@ ASSET_COUNT="${ASSET_COUNT:-unknown}"
 say ""
 say "=== the ramp is done ==="
 if [ -n "$SATURATED_AT" ]; then
-    say "held ${PEAK_RPS} req/s at ${PEAK_RPS_VUS} VUs; saturated at ${SATURATED_AT} VUs — ${SATURATED_WHY}"
+    say "highest healthy throughput ${PEAK_RPS} req/s at ${PEAK_RPS_VUS:-none} VUs; saturated at ${SATURATED_AT} VUs — ${SATURATED_WHY}"
 else
     say "no stage broke the thresholds; the highest was ${PEAK_RPS} req/s at ${PEAK_RPS_VUS} VUs"
 fi
 say "report:   ${REPORT}"
 say "evidence: ${RUN_DIR}/"
+# The EXIT trap removes this run's fixture whether the ramp completed, was
+# aborted by a threshold, or was interrupted. --cleanup is kept for
+# compatibility and only says so; leaving rows behind is no longer a supported
+# outcome.
 if [ "$CLEANUP" = true ]; then
-    say "removing the fixture accounts"
-    compose run --rm -T migrate npm run seed:loadtest -- --delete >&2 || warn "the cleanup failed — remove them by hand"
+    say "removing this run's fixture accounts and assets"
 else
-    say "the fixture accounts stay (random password, EMPLOYEE role) — remove them with:"
-    say "  docker compose -f infra/docker-compose.yml run --rm migrate npm run seed:loadtest -- --delete"
+    say "removing this run's fixture on exit (run ${LOADTEST_RUN_ID})"
 fi

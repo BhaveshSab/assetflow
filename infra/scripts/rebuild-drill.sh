@@ -83,6 +83,14 @@ case "$PHASE" in
     *) die "unknown phase: ${PHASE}" ;;
 esac
 
+# The destructive path is not a reviewed recovery plan. Keep planning/reporting
+# available, but never permit termination/launch through an environment override.
+# A follow-up must implement protected configuration recovery and pass isolated
+# integration tests before this gate can be removed in a reviewed code change.
+if [ "$DRY_RUN" != true ] && [ "$PHASE" != report ]; then
+    die "rebuild execution disabled pending protected recovery implementation and exact-instance approval; use --dry-run for planning only"
+fi
+
 require_aws() {
     if [ "$DRY_RUN" = true ]; then
         command -v aws >/dev/null 2>&1 \
@@ -274,15 +282,10 @@ phase_teardown() {
         }' >"${dir}/instance.json"
     say "  recorded: ${dir}/instance.json"
 
-    # The configuration the new host needs. It never goes to git — the bucket is
-    # private and the object is the operator's own secret file.
-    [ -f "${REPO_ROOT}/infra/.env" ] \
-        || die "infra/.env is missing — the new host would come back without its secrets"
-    cp "${REPO_ROOT}/infra/.env" "${dir}/infra.env"
-    chmod 600 "${dir}/infra.env"
+    # No .env upload is permitted. This legacy destructive flow cannot continue
+    # until a reviewed protected configuration-recovery path replaces it.
+    die "protected configuration recovery is not implemented; refusing teardown"
 
-    aws s3 cp --only-show-errors "${dir}/instance.json" "$(drill_uri "${RUN_STAMP}/instance.json")" >/dev/null
-    aws s3 cp --only-show-errors "${dir}/infra.env" "$(drill_uri "${RUN_STAMP}/infra.env")" >/dev/null
     printf '%s' "$RUN_STAMP" | aws s3 cp --only-show-errors - "$(drill_uri latest)" >/dev/null
     : >"${dir}/timeline.txt"
     timeline_add "$dir" "rpo_dump_object" "$GATE_DUMP"
@@ -332,7 +335,7 @@ phase_rebuild() {
         say "[dry-run]   --user-data file://<the recorded user data> --block-device-mappings <the recorded root volume>"
         say "[dry-run] aws ec2 associate-address --instance-id <new> --allocation-id <eipalloc> --allow-reassociation"
         say "[dry-run] aws ec2 wait instance-running --instance-ids <new>"
-        say "[dry-run] ssh ubuntu@<the Elastic IP>: git clone, provision-host.sh --secrets-file s3://.../infra.env"
+        say "[dry-run] ssh ubuntu@<the Elastic IP>: review pinned checkout and protected configuration recovery (NOT IMPLEMENTED)"
         say "[dry-run] ssh: restore-verify.sh, then the live pg_restore, then GET /api/health/ready"
         say "[dry-run] report: docs/results/rebuild-drill-${RUN_STAMP}.md"
         say "[dry-run] nothing was changed"

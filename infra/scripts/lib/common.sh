@@ -44,7 +44,9 @@ init_script() {
         shift
     done
 
-    if [ -z "${LOG_FILE:-}" ]; then
+    if [ "$DRY_RUN" = true ]; then
+        LOG_FILE=""  # A plan must not create log directories or files.
+    elif [ -z "${LOG_FILE:-}" ]; then
         LOG_DIR="${LOG_DIR:-/var/log/assetflow}"
         mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="$(mktemp -d)"
         LOG_FILE="${LOG_DIR}/$(basename "$0" .sh)-$(date -u '+%Y%m%dT%H%M%SZ').log"

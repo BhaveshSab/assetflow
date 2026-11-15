@@ -36,6 +36,14 @@ const DURATION = env('DURATION', '2m');
 const TAG = env('TAG', 'adhoc');
 const P95_THRESHOLD_MS = Number(env('P95_THRESHOLD_MS', 1000));
 const ERROR_RATE_THRESHOLD = Number(env('ERROR_RATE_THRESHOLD', 0.01));
+/**
+ * The abort ceiling. Crossing P95/error thresholds means "this stage bent", which
+ * is the measurement and must not stop the run. This is different: when the
+ * failure rate passes this fraction, the target is not degrading, it is failing,
+ * and continuing to push turns a measurement into an outage. k6 stops the stage
+ * immediately (`abortOnFail`), the script records ABORTED, and cleanup runs.
+ */
+const ABORT_ERROR_RATE = Number(env('ABORT_ERROR_RATE', 0.5));
 /** Seconds each virtual user waits between requests (0 pushes as hard as it can). */
 const SLEEP_SECONDS = Number(env('SLEEP', 1));
 
@@ -46,6 +54,11 @@ const PASSWORD = env('PASSWORD', 'password123');
 /** The fixture from `npm run seed:loadtest` (see load-test.sh). */
 const LOADTEST_USERS = Number(env('LOADTEST_USERS', 0));
 const LOADTEST_PASSWORD = env('LOADTEST_PASSWORD', '');
+/**
+ * The run that owns the fixture. Seeded accounts are named after it, so this run
+ * can only ever sign in as its own accounts — never a concurrent run's.
+ */
+const LOADTEST_RUN_ID = env('LOADTEST_RUN_ID', '');
 /** Force every VU onto account #1 — the "one client" mode, for comparison. */
 const SINGLE_USER = env('SINGLE_USER', 'false') === 'true';
 /** Where `handleSummary` writes the machine-readable result. */
@@ -64,9 +77,12 @@ function env(name, fallback) {
 /** The account a virtual user signs in with. */
 function credentialsFor(vu) {
   if (LOADTEST_USERS > 0) {
+    if (!/^[a-z0-9][a-z0-9-]{7,47}$/.test(LOADTEST_RUN_ID)) {
+      throw new Error('LOADTEST_RUN_ID is required to sign in to the fixture');
+    }
     const index = SINGLE_USER ? 1 : ((Math.max(vu, 1) - 1) % LOADTEST_USERS) + 1;
     return {
-      email: `loadtest-${String(index).padStart(3, '0')}@assetflow.test`,
+      email: `loadtest-${LOADTEST_RUN_ID}-${String(index).padStart(3, '0')}@assetflow.test`,
       password: LOADTEST_PASSWORD,
     };
   }
@@ -104,6 +120,10 @@ export const options = {
     http_req_duration: [`p(95)<${P95_THRESHOLD_MS}`],
     checks: ['rate>0.99'],
     iterations: ['count>20'],
+    // The only aborting threshold: a target that is failing, not bending.
+    'http_req_failed{abort:true}': [
+      { threshold: `rate<${ABORT_ERROR_RATE}`, abortOnFail: true, delayAbortEval: '5s' },
+    ],
   },
 };
 

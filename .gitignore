@@ -41,3 +41,15 @@ infra/textfile/
 # Python validation caches
 __pycache__/
 *.pyc
+
+# Capacity-run generated trust material and rendered payloads.
+# These contain a private key and a bearer token. They are generated locally by
+# infra/capacity-run/generate-trust.sh and must never be committed.
+.capacity-run-trust/
+*.capacity-run/
+tls.key
+tls.crt
+evidence.token
+trust.env
+user-data.b64
+user-data.rendered
